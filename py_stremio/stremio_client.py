@@ -1,0 +1,241 @@
+"""Stremio addon client for discovering and downloading streams."""
+import httpx
+from dataclasses import dataclass
+from typing import Any
+import urllib.parse
+
+from .settings import settings
+
+
+@dataclass
+class StreamInfo:
+    name: str
+    url: str | None = None
+    info_hash: str | None = None
+    file_idx: int | None = None
+    title: str | None = None
+
+
+def get_imdb_id(title: str) -> str | None:
+    """Search for IMDB ID using Cinemeta (metadata addon)."""
+    search_url = f"https://cinemeta.strem.io/metadata/{urllib.parse.quote(title.lower().replace(' ', '-'))}"
+
+    try:
+        response = httpx.get(search_url, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("imdb_id")
+    except Exception as e:
+        print(f"  IMDB lookup error: {e}")
+
+    return None
+
+
+def get_series_imdb_id(title: str, season: int) -> str | None:
+    """Get IMDB ID for a specific season of a series."""
+    search_url = f"https://cinemeta.strem.io/meta/series/{urllib.parse.quote(title.lower().replace(' ', '-'))}.json"
+
+    try:
+        response = httpx.get(search_url, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("imdb_id")
+    except Exception as e:
+        print(f"  Series IMDB lookup error: {e}")
+
+    return None
+
+
+def query_addon_for_streams(
+    addon_url: str,
+    type_: str,
+    id_: str
+) -> list[StreamInfo]:
+    """Query a Stremio addon for streams."""
+    streams = []
+    url = f"{addon_url.rstrip('/')}/stream/{type_}/{id_}.json"
+
+    print(f"    Querying: {url}")
+
+    try:
+        response = httpx.get(
+            url,
+            timeout=30,
+            headers={"User-Agent": "Stremio/4.4.168", "Accept": "application/json"}
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        for stream in data.get("streams", []):
+            name = stream.get("name", "unknown")
+            url = stream.get("url")
+            info_hash = stream.get("infoHash")
+            file_idx = stream.get("fileIdx")
+
+            streams.append(StreamInfo(
+                name=name,
+                url=url,
+                info_hash=info_hash,
+                file_idx=file_idx,
+                title=stream.get("title"),
+            ))
+    except httpx.RequestError as e:
+        print(f"    Network error: {e}")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    return streams
+
+
+def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> str | None:
+    """Resolve torrent via RealDebrid to get direct download URL."""
+    if not settings.REAL_DEBRID_API_KEY:
+        return None
+
+    base_url = "https://api.real-debrid.com/api/1.0"
+
+    try:
+        torrent_response = httpx.post(
+            f"{base_url}/torrents/addMagnet",
+            headers={"Authorization": f"Bearer {settings.REAL_DEBRID_API_KEY}"},
+            data={"magnet": f"magnet:?xt=urn:btih:{info_hash}"},
+            timeout=60
+        )
+        if torrent_response.status_code != 201:
+            return None
+
+        torrent_data = torrent_response.json()
+        torrent_id = torrent_data["id"]
+
+        select_response = httpx.post(
+            f"{base_url}/torrents/selectFiles/{torrent_id}",
+            headers={"Authorization": f"Bearer {settings.REAL_DEBRID_API_KEY}"},
+            data={"files": str(file_idx) if file_idx else "all"},
+            timeout=30
+        )
+
+        for _ in range(60):
+            info_response = httpx.get(
+                f"{base_url}/torrents/info/{torrent_id}",
+                headers={"Authorization": f"Bearer {settings.REAL_DEBRID_API_KEY}"},
+                timeout=30
+            )
+            if info_response.status_code == 200:
+                info = info_response.json()
+                if info["status"] == "downloaded":
+                    for file in info["files"]:
+                        if file_idx is None or file["id"] == file_idx:
+                            return file["links"][0] if file.get("links") else None
+                elif info["status"] in ["error", "virus", "duplicate"]:
+                    return None
+            import time
+            time.sleep(2)
+
+    except Exception as e:
+        print(f"RealDebrid error: {e}")
+
+    return None
+
+
+def build_stremio_id(imdb_id: str | None, title: str, season: int | None = None, episode: int | None = None) -> str:
+    """Build Stremio ID from IMDB ID or title."""
+    if imdb_id:
+        if season and episode:
+            return f"{imdb_id}:{season}:{episode}"
+        elif season:
+            return f"{imdb_id}:{season}"
+        return imdb_id
+
+    base_id = title.lower().replace(" ", ".").replace("-", ".")
+    if season and episode:
+        return f"{base_id}:s{season:02d}e{episode:02d}"
+    elif season:
+        return f"{base_id}:season-{season}"
+    return base_id
+
+
+def search_and_download(
+    title: str,
+    imdb_id: str | None = None,
+    season: int | None = None,
+    episode: int | None = None,
+    folder_path: str | None = None,
+    preferred_quality: str = "1080p"
+) -> dict:
+    """Search addon for stream and download."""
+    addon_url = settings.effective_addon_url
+
+    print(f"    Looking up: {title}" + (f" S{season}E{episode}" if season else ""))
+
+    if not imdb_id:
+        if season:
+            imdb_id = get_series_imdb_id(title, season)
+        else:
+            imdb_id = get_imdb_id(title)
+
+    if imdb_id:
+        print(f"    Found IMDB ID: {imdb_id}")
+    else:
+        print(f"    Using title-based search")
+
+    id_type = "series" if season else "movie"
+    stremio_id = build_stremio_id(imdb_id, title, season, episode)
+
+    streams = query_addon_for_streams(addon_url, id_type, stremio_id)
+
+    if not streams:
+        print(f"    No streams found for ID: {stremio_id}")
+        return {"success": False, "error": "No streams found"}
+
+    print(f"    Found {len(streams)} streams")
+
+    quality_streams = [s for s in streams if preferred_quality in s.name.lower() or "1080p" in s.name.lower()]
+    stream = quality_streams[0] if quality_streams else streams[0]
+
+    print(f"    Selected: {stream.name}")
+
+    download_url = stream.url
+
+    if download_url and download_url.startswith("https://torrentio.strem.fun/resolve/"):
+        print(f"    Resolving RD proxy URL...")
+        try:
+            response = httpx.get(download_url, timeout=30, follow_redirects=False, headers={"User-Agent": "Stremio/4.4.168"})
+            if response.status_code in (301, 302, 303, 307, 308):
+                download_url = response.headers.get("location", "")
+                print(f"    Resolved to: {download_url[:60]}...")
+            else:
+                return {"success": False, "error": f"Resolve failed: {response.status_code}"}
+        except Exception as e:
+            return {"success": False, "error": f"Resolve error: {e}"}
+
+    if stream.info_hash and not download_url:
+        if settings.REAL_DEBRID_API_KEY:
+            print(f"    Resolving torrent via RealDebrid...")
+            download_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
+        else:
+            return {"success": False, "error": "Torrent requires RealDebrid to resolve"}
+
+    if not download_url:
+        return {"success": False, "error": "Could not get download URL"}
+
+    if settings.DRY_RUN:
+        return {
+            "success": True,
+            "filename": f"{title}_s{season:02d}e{episode:02d}.mkv" if season else f"{title}.mkv",
+            "quality": stream.name,
+            "provider": "stremio-dry-run"
+        }
+
+    filename = f"{title}_s{season:02d}e{episode:02d}.mkv" if season else f"{title}.mkv"
+    if folder_path:
+        filename = f"{folder_path}/{filename}"
+
+    try:
+        with httpx.stream("GET", download_url, timeout=300) as r:
+            r.raise_for_status()
+            with open(filename, "wb") as f:
+                for chunk in r.iter_bytes(chunk_size=8192):
+                    f.write(chunk)
+        return {"success": True, "filename": filename, "quality": stream.name}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

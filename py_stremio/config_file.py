@@ -28,6 +28,7 @@ class DownloadConfig:
     enabled: bool = True
 
     title: str | None = None
+    imdb_id: str | None = None
     season: int | None = None
     episode_count: int | None = None
     search_group: str | None = None
@@ -41,6 +42,7 @@ def create_series_config(folder_path: Path) -> DownloadConfig:
         type="series",
         title=folder_path.parent.name.replace("-", " ").replace("_", " ").title(),
         season=season,
+        imdb_id=None,
     )
 
 
