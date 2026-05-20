@@ -95,6 +95,7 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
     base_url = "https://api.real-debrid.com/api/1.0"
 
     try:
+        print(f"    Adding magnet to RealDebrid...")
         torrent_response = httpx.post(
             f"{base_url}/torrents/addMagnet",
             headers={"Authorization": f"Bearer {settings.REAL_DEBRID_API_KEY}"},
@@ -102,11 +103,14 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
             timeout=60
         )
         if torrent_response.status_code != 201:
+            print(f"    Failed to add magnet: {torrent_response.status_code}")
             return None
 
         torrent_data = torrent_response.json()
         torrent_id = torrent_data["id"]
+        print(f"    Torrent ID: {torrent_id}")
 
+        print(f"    Selecting files...")
         select_response = httpx.post(
             f"{base_url}/torrents/selectFiles/{torrent_id}",
             headers={"Authorization": f"Bearer {settings.REAL_DEBRID_API_KEY}"},
@@ -114,7 +118,8 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
             timeout=30
         )
 
-        for _ in range(60):
+        print(f"    Waiting for download (checking every 5s)...")
+        for i in range(60):
             info_response = httpx.get(
                 f"{base_url}/torrents/info/{torrent_id}",
                 headers={"Authorization": f"Bearer {settings.REAL_DEBRID_API_KEY}"},
@@ -122,15 +127,19 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
             )
             if info_response.status_code == 200:
                 info = info_response.json()
-                if info["status"] == "downloaded":
+                status = info["status"]
+                print(f"    Status: {status}")
+                if status == "downloaded":
                     for file in info["files"]:
                         if file_idx is None or file["id"] == file_idx:
                             return file["links"][0] if file.get("links") else None
-                elif info["status"] in ["error", "virus", "duplicate"]:
+                elif status in ["error", "virus", "duplicate"]:
+                    print(f"    Failed: {status}")
                     return None
             import time
-            time.sleep(2)
+            time.sleep(5)
 
+        print(f"    Timeout waiting for download")
     except Exception as e:
         print(f"RealDebrid error: {e}")
 
@@ -220,59 +229,71 @@ def search_and_download(
     print(f"    Found {len(streams)} streams")
 
     quality_streams = [s for s in streams if preferred_quality in s.name.lower() or "1080p" in s.name.lower()]
-    stream = quality_streams[0] if quality_streams else streams[0]
+    streams_to_try = quality_streams if quality_streams else streams[:10]
 
-    print(f"    Selected: {stream.name}")
+    last_error = None
+    for i, stream in enumerate(streams_to_try):
+        print(f"    Trying stream {i+1}/{len(streams_to_try)}: {stream.name[:50]}")
 
-    download_url = stream.url
+        download_url = stream.url
 
-    if download_url and download_url.startswith("https://torrentio.strem.fun/resolve/"):
-        print(f"    Resolving RD proxy URL...")
-        try:
-            response = httpx.get(download_url, timeout=30, follow_redirects=False, headers={"User-Agent": "Stremio/4.4.168"})
-            if response.status_code in (301, 302, 303, 307, 308):
-                download_url = response.headers.get("location", "")
-                print(f"    Resolved to: {download_url[:60]}...")
+        if download_url and download_url.startswith("https://torrentio.strem.fun/resolve/"):
+            print(f"    Resolving RD proxy URL...")
+            try:
+                response = httpx.get(download_url, timeout=30, follow_redirects=False, headers={"User-Agent": "Stremio/4.4.168"})
+                if response.status_code in (301, 302, 303, 307, 308):
+                    download_url = response.headers.get("location", "")
+                    print(f"    Resolved to: {download_url[:60]}...")
+                else:
+                    print(f"    Resolve failed: {response.status_code}, trying next...")
+                    continue
+            except Exception as e:
+                print(f"    Resolve error: {e}, trying next...")
+                continue
+
+        if stream.info_hash and not download_url:
+            if settings.REAL_DEBRID_API_KEY:
+                print(f"    Resolving torrent via RealDebrid...")
+                download_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
+                if not download_url:
+                    print(f"    RealDebrid failed, trying next...")
+                    continue
             else:
-                return {"success": False, "error": f"Resolve failed: {response.status_code}", "working_urls": working_urls}
+                print(f"    Torrent requires RealDebrid, trying next...")
+                continue
+
+        if not download_url:
+            print(f"    No download URL, trying next...")
+            continue
+
+        if settings.DRY_RUN:
+            return {
+                "success": True,
+                "filename": f"{title}_s{season:02d}e{episode:02d}.mkv" if season else f"{title}.mkv",
+                "quality": stream.name,
+                "provider": "stremio-dry-run",
+                "working_urls": working_urls
+            }
+
+        filename = f"{title}_s{season:02d}e{episode:02d}.mkv" if season else f"{title}.mkv"
+        if folder_path:
+            filename = f"{folder_path}/{filename}"
+
+        print(f"    Downloading to: {filename}", flush=True)
+        print(f"    URL: {download_url[:50]}...", flush=True)
+
+        try:
+            with httpx.stream("GET", download_url, timeout=300) as r:
+                print(f"    Status: {r.status_code}", flush=True)
+                r.raise_for_status()
+                with open(filename, "wb") as f:
+                    for chunk in r.iter_bytes(chunk_size=8192):
+                        f.write(chunk)
+            print(f"    Download complete!", flush=True)
+            return {"success": True, "filename": filename, "quality": stream.name, "addon_name": stream.addon_name, "working_urls": working_urls}
         except Exception as e:
-            return {"success": False, "error": f"Resolve error: {e}", "working_urls": working_urls}
+            print(f"    Download error: {e}, trying next stream...")
+            last_error = str(e)
+            continue
 
-    if stream.info_hash and not download_url:
-        if settings.REAL_DEBRID_API_KEY:
-            print(f"    Resolving torrent via RealDebrid...")
-            download_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
-        else:
-            return {"success": False, "error": "Torrent requires RealDebrid to resolve", "working_urls": working_urls}
-
-    if not download_url:
-        return {"success": False, "error": "Could not get download URL", "working_urls": working_urls}
-
-    if settings.DRY_RUN:
-        return {
-            "success": True,
-            "filename": f"{title}_s{season:02d}e{episode:02d}.mkv" if season else f"{title}.mkv",
-            "quality": stream.name,
-            "provider": "stremio-dry-run",
-            "working_urls": working_urls
-        }
-
-    filename = f"{title}_s{season:02d}e{episode:02d}.mkv" if season else f"{title}.mkv"
-    if folder_path:
-        filename = f"{folder_path}/{filename}"
-
-    print(f"    Downloading to: {filename}", flush=True)
-    print(f"    URL: {download_url[:50]}...", flush=True)
-
-    try:
-        with httpx.stream("GET", download_url, timeout=300) as r:
-            print(f"    Status: {r.status_code}", flush=True)
-            r.raise_for_status()
-            with open(filename, "wb") as f:
-                for chunk in r.iter_bytes(chunk_size=8192):
-                    f.write(chunk)
-        print(f"    Download complete!", flush=True)
-        return {"success": True, "filename": filename, "quality": stream.name, "addon_name": stream.addon_name, "working_urls": working_urls}
-    except Exception as e:
-        print(f"    Download error: {e}", flush=True)
-        return {"success": False, "error": str(e), "working_urls": working_urls}
+    return {"success": False, "error": f"All streams failed. Last error: {last_error}", "working_urls": working_urls}

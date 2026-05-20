@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 py-downloadepisodes = "py_stremio.downloadEpisodes:main"
+py-stremio-load = "py_stremio.stremio_export:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
