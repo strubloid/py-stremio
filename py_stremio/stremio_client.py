@@ -90,9 +90,11 @@ def query_addon_for_streams(
 def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> str | None:
     """Resolve torrent via RealDebrid to get direct download URL."""
     if not settings.REAL_DEBRID_API_KEY:
+        print(f"    ERROR: No RealDebrid API key configured!")
         return None
 
-    base_url = "https://api.real-debrid.com/api/1.0"
+    print(f"    Using RD key: {settings.REAL_DEBRID_API_KEY[:10]}...")
+    base_url = "https://api.real-debrid.com/rest/1.0"
 
     try:
         print(f"    Adding magnet to RealDebrid...")
@@ -103,7 +105,7 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
             timeout=60
         )
         if torrent_response.status_code != 201:
-            print(f"    Failed to add magnet: {torrent_response.status_code}")
+            print(f"    Failed to add magnet: {torrent_response.status_code} - {torrent_response.text[:100]}")
             return None
 
         torrent_data = torrent_response.json()
@@ -130,9 +132,18 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
                 status = info["status"]
                 print(f"    Status: {status}")
                 if status == "downloaded":
-                    for file in info["files"]:
+                    files = info.get("files", [])
+                    if not files:
+                        print(f"    No files in torrent")
+                        return None
+                    for file in files:
                         if file_idx is None or file["id"] == file_idx:
-                            return file["links"][0] if file.get("links") else None
+                            links = file.get("links", [])
+                            if links:
+                                print(f"    Got download link!")
+                                return links[0]
+                    print(f"    Files found but no links (not cached)")
+                    return None
                 elif status in ["error", "virus", "duplicate"]:
                     print(f"    Failed: {status}")
                     return None
