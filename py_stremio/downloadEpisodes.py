@@ -3,7 +3,7 @@ from pathlib import Path
 import sys
 import re
 
-from .config_file import load_config
+from .config_file import load_config, save_config
 from .state import load_state, save_state
 from .utils import parse_episode_number
 from .settings import settings
@@ -64,7 +64,7 @@ def scan_folder_for_episodes(folder_path: Path) -> list[dict]:
 
 def process_season_folder(folder_path: Path) -> dict:
     """Process a season folder - download missing episodes from Stremio."""
-    config, _ = load_config(folder_path)
+    config, config_path = load_config(folder_path)
     state = load_state(folder_path)
 
     if not config.enabled:
@@ -83,9 +83,14 @@ def process_season_folder(folder_path: Path) -> dict:
     all_episodes = list(range(1, (config.episode_count or 20) + 1))
     missing = [e for e in all_episodes if e not in existing_episodes and not state.is_downloaded(f"episode_{e}.mkv")]
 
+    # Limit episodes per run
+    missing = missing[:settings.LIMIT_EPISODES]
+
     downloaded = 0
     skipped = 0
     failed = 0
+
+    servers = config.servers.copy() if config.servers else []
 
     for episode_num in missing:
         print(f"  Downloading {config.title} S{season:02d}E{episode_num:02d}")
@@ -96,7 +101,8 @@ def process_season_folder(folder_path: Path) -> dict:
             season=season,
             episode=episode_num,
             folder_path=str(folder_path),
-            preferred_quality=quality
+            preferred_quality=quality,
+            working_addons=servers
         )
 
         if result.get("success"):
@@ -106,6 +112,17 @@ def process_season_folder(folder_path: Path) -> dict:
         else:
             state.mark_failed(f"episode_{episode_num}", result.get("error", "failed"), 1)
             failed += 1
+
+        if result.get("working_urls"):
+            for url in result["working_urls"]:
+                if url not in servers:
+                    servers.append(url)
+                    print(f"    ✓ Found working server: {url}")
+
+    if servers and servers != config.servers:
+        config.servers = servers
+        save_config(config_path, config)
+        print(f"  Saved {len(servers)} working servers to config")
 
     for ep in episodes:
         if not state.is_downloaded(ep["filename"]):

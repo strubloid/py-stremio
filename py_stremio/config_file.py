@@ -1,5 +1,5 @@
 """Configuration file management."""
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 import json
 
@@ -33,6 +33,8 @@ class DownloadConfig:
     episode_count: int | None = None
     search_group: str | None = None
     download_all_related: bool = True
+    working_addons: list[str] = field(default_factory=list)
+    servers: list[str] = field(default_factory=list)
 
 
 def create_series_config(folder_path: Path) -> DownloadConfig:

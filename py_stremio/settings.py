@@ -16,6 +16,7 @@ class Settings:
 
     REAL_DEBRID_API_KEY: str | None = field(default_factory=lambda: os.getenv("REAL_DEBRID_API_KEY"))
     MAX_DOWNLOAD_ATTEMPTS: int = field(default_factory=lambda: int(os.getenv("MAX_DOWNLOAD_ATTEMPTS", "5")))
+    LIMIT_EPISODES: int = field(default_factory=lambda: int(os.getenv("LIMIT_EPISODES", "1")))
     DRY_RUN: bool = field(default_factory=lambda: os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes"))
 
     STREMIO_ADDON_URL: str | None = field(default_factory=lambda: os.getenv("STREMIO_ADDON_URL"))

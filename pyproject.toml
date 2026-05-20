@@ -19,6 +19,9 @@ dev = [
     "pytest-cov>=4.1.0",
 ]
 
+[project.scripts]
+py-downloadepisodes = "py_stremio.downloadEpisodes:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

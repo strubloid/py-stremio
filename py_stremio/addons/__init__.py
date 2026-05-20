@@ -79,7 +79,7 @@ class AddonManager:
 
     def register_url(self, url: str):
         """Register an addon from URL."""
-        self.addons(UrlAddon(url))
+        self.addons.append(UrlAddon(url))
 
     def search_all(self, type_: str, id_: str, max_addons: int = 3) -> list[StreamInfo]:
         """Search all registered addons for streams."""
@@ -90,6 +90,25 @@ class AddonManager:
                 print(f"    ✓ Found {len(streams)} streams from {addon.name}")
                 return streams
         return []
+
+    def search_all_addons_and_collect_working(
+        self, type_: str, id_: str
+    ) -> tuple[list[StreamInfo], list[str]]:
+        """Search ALL addons and return streams + list of working addon URLs."""
+        working_addon_urls = []
+        all_streams = []
+
+        for addon in self.addons:
+            print(f"    Trying {addon.name}...")
+            streams = addon.get_streams(type_, id_)
+            if streams:
+                print(f"    ✓ Found {len(streams)} streams from {addon.name}")
+                all_streams.extend(streams)
+                addon_url = addon.get_url()
+                if addon_url and addon_url not in working_addon_urls:
+                    working_addon_urls.append(addon_url)
+
+        return all_streams, working_addon_urls
 
     def search_until_found(self, type_: str, id_: str) -> list[StreamInfo]:
         """Search addons until streams are found."""
@@ -256,9 +275,10 @@ class UrlAddon(BaseAddon):
 
 def load_addons_from_file(filepath: str = "addons.txt") -> list[str]:
     """Load addon URLs from file."""
+    from urllib.parse import unquote
     try:
         with open(filepath, "r") as f:
-            return [line.strip() for line in f if line.strip() and not line.startswith("#")]
+            return [unquote(line.strip()) for line in f if line.strip() and not line.startswith("#")]
     except FileNotFoundError:
         return []
 
@@ -303,3 +323,19 @@ def search_addons(type_: str, id_: str, max_addons: int = 3) -> list[StreamInfo]
     """Search all addons for streams."""
     manager = create_addon_manager()
     return manager.search_all(type_, id_, max_addons)
+
+
+def create_addon_manager_from_urls(urls: list[str]) -> AddonManager:
+    """Create addon manager from specific URLs (for working addons)."""
+    manager = AddonManager()
+    api_key = settings.REAL_DEBRID_API_KEY
+
+    for url in urls:
+        try:
+            addon = UrlAddon(url)
+            addon.api_key = api_key
+            manager.register(addon)
+        except Exception:
+            pass
+
+    return manager

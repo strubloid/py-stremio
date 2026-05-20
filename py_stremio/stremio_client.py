@@ -157,16 +157,32 @@ def build_stremio_id(imdb_id: str | None, title: str, season: int | None = None,
 def search_all_addons_for_streams(
     type_: str,
     stremio_id: str,
+    working_addons: list[str] | None = None,
     max_addons: int = 3
-) -> list:
-    """Search all configured addons for streams."""
-    from .addons import create_addon_manager
+) -> tuple[list, list[str]]:
+    """Search addons for streams, using working_addons first. Returns (streams, working_addon_urls)."""
+    from .addons import create_addon_manager, create_addon_manager_from_urls
 
     manager = create_addon_manager()
-    print(f"    Searching {len(manager.addons)} addons...")
+    working_urls = []
 
-    streams = manager.search_all(type_, stremio_id, max_addons)
-    return streams
+    if working_addons:
+        print(f"    First trying {len(working_addons)} known working addons...")
+        working_manager = create_addon_manager_from_urls(working_addons)
+        streams, working_urls = working_manager.search_all_addons_and_collect_working(type_, stremio_id)
+        if streams:
+            return streams, working_urls
+        print(f"    Working addons failed, trying all addons...")
+
+    print(f"    Searching {len(manager.addons)} addons...")
+    streams, all_working = manager.search_all_addons_and_collect_working(type_, stremio_id)
+
+    if working_urls:
+        working_urls = list(set(working_urls + all_working))
+    else:
+        working_urls = all_working
+
+    return streams, working_urls
 
 
 def search_and_download(
@@ -175,7 +191,8 @@ def search_and_download(
     season: int | None = None,
     episode: int | None = None,
     folder_path: str | None = None,
-    preferred_quality: str = "1080p"
+    preferred_quality: str = "1080p",
+    working_addons: list[str] | None = None
 ) -> dict:
     """Search addon for stream and download."""
     print(f"    Looking up: {title}" + (f" S{season}E{episode}" if season else ""))
@@ -194,11 +211,11 @@ def search_and_download(
     id_type = "series" if season else "movie"
     stremio_id = build_stremio_id(imdb_id, title, season, episode)
 
-    streams = search_all_addons_for_streams(id_type, stremio_id)
+    streams, working_urls = search_all_addons_for_streams(id_type, stremio_id, working_addons)
 
     if not streams:
         print(f"    No streams found for ID: {stremio_id}")
-        return {"success": False, "error": "No streams found"}
+        return {"success": False, "error": "No streams found", "working_urls": working_urls}
 
     print(f"    Found {len(streams)} streams")
 
@@ -217,26 +234,27 @@ def search_and_download(
                 download_url = response.headers.get("location", "")
                 print(f"    Resolved to: {download_url[:60]}...")
             else:
-                return {"success": False, "error": f"Resolve failed: {response.status_code}"}
+                return {"success": False, "error": f"Resolve failed: {response.status_code}", "working_urls": working_urls}
         except Exception as e:
-            return {"success": False, "error": f"Resolve error: {e}"}
+            return {"success": False, "error": f"Resolve error: {e}", "working_urls": working_urls}
 
     if stream.info_hash and not download_url:
         if settings.REAL_DEBRID_API_KEY:
             print(f"    Resolving torrent via RealDebrid...")
             download_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
         else:
-            return {"success": False, "error": "Torrent requires RealDebrid to resolve"}
+            return {"success": False, "error": "Torrent requires RealDebrid to resolve", "working_urls": working_urls}
 
     if not download_url:
-        return {"success": False, "error": "Could not get download URL"}
+        return {"success": False, "error": "Could not get download URL", "working_urls": working_urls}
 
     if settings.DRY_RUN:
         return {
             "success": True,
             "filename": f"{title}_s{season:02d}e{episode:02d}.mkv" if season else f"{title}.mkv",
             "quality": stream.name,
-            "provider": "stremio-dry-run"
+            "provider": "stremio-dry-run",
+            "working_urls": working_urls
         }
 
     filename = f"{title}_s{season:02d}e{episode:02d}.mkv" if season else f"{title}.mkv"
@@ -254,7 +272,7 @@ def search_and_download(
                 for chunk in r.iter_bytes(chunk_size=8192):
                     f.write(chunk)
         print(f"    Download complete!", flush=True)
-        return {"success": True, "filename": filename, "quality": stream.name}
+        return {"success": True, "filename": filename, "quality": stream.name, "addon_name": stream.addon_name, "working_urls": working_urls}
     except Exception as e:
         print(f"    Download error: {e}", flush=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "working_urls": working_urls}
