@@ -154,6 +154,21 @@ def build_stremio_id(imdb_id: str | None, title: str, season: int | None = None,
     return base_id
 
 
+def search_all_addons_for_streams(
+    type_: str,
+    stremio_id: str,
+    max_addons: int = 3
+) -> list:
+    """Search all configured addons for streams."""
+    from .addons import create_addon_manager
+
+    manager = create_addon_manager()
+    print(f"    Searching {len(manager.addons)} addons...")
+
+    streams = manager.search_all(type_, stremio_id, max_addons)
+    return streams
+
+
 def search_and_download(
     title: str,
     imdb_id: str | None = None,
@@ -163,8 +178,6 @@ def search_and_download(
     preferred_quality: str = "1080p"
 ) -> dict:
     """Search addon for stream and download."""
-    addon_url = settings.effective_addon_url
-
     print(f"    Looking up: {title}" + (f" S{season}E{episode}" if season else ""))
 
     if not imdb_id:
@@ -181,7 +194,7 @@ def search_and_download(
     id_type = "series" if season else "movie"
     stremio_id = build_stremio_id(imdb_id, title, season, episode)
 
-    streams = query_addon_for_streams(addon_url, id_type, stremio_id)
+    streams = search_all_addons_for_streams(id_type, stremio_id)
 
     if not streams:
         print(f"    No streams found for ID: {stremio_id}")
@@ -230,12 +243,18 @@ def search_and_download(
     if folder_path:
         filename = f"{folder_path}/{filename}"
 
+    print(f"    Downloading to: {filename}", flush=True)
+    print(f"    URL: {download_url[:50]}...", flush=True)
+
     try:
         with httpx.stream("GET", download_url, timeout=300) as r:
+            print(f"    Status: {r.status_code}", flush=True)
             r.raise_for_status()
             with open(filename, "wb") as f:
                 for chunk in r.iter_bytes(chunk_size=8192):
                     f.write(chunk)
+        print(f"    Download complete!", flush=True)
         return {"success": True, "filename": filename, "quality": stream.name}
     except Exception as e:
+        print(f"    Download error: {e}", flush=True)
         return {"success": False, "error": str(e)}

@@ -1,0 +1,13 @@
+# Stremio Addon URLs
+# Copy this to addons.txt and replace API_KEY with your RealDebrid API key
+#
+# Format: Each line is an addon URL
+# Lines starting with # are ignored
+
+# Example with your API key:
+# https://torrentio.strem.fun/realdebrid=YOUR_API_KEY/
+
+# Get your API key from https://real-debrid.com/apitoken
+
+# Add more addons from https://stremio-addons.com/
+# Right-click "Copy Link" on any addon to get the URL
