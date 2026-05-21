@@ -186,28 +186,12 @@ def search_all_addons_for_streams(
     working_addons: list[str] | None = None,
     max_addons: int = 3
 ) -> tuple[list, list[str]]:
-    """Search addons for streams, using working_addons first. Returns (streams, working_addon_urls)."""
-    from .addons import create_addon_manager, create_addon_manager_from_urls
+    """Search ALL addons for streams. Returns (streams, working_addon_urls)."""
+    from .addons import create_addon_manager
 
     manager = create_addon_manager()
-    working_urls = []
-
-    if working_addons:
-        print(f"    First trying {len(working_addons)} known working addons...")
-        working_manager = create_addon_manager_from_urls(working_addons)
-        streams, working_urls = working_manager.search_all_addons_and_collect_working(type_, stremio_id)
-        if streams:
-            return streams, working_urls
-        print(f"    Working addons failed, trying all addons...")
-
-    print(f"    Searching {len(manager.addons)} addons...")
-    streams, all_working = manager.search_all_addons_and_collect_working(type_, stremio_id)
-
-    if working_urls:
-        working_urls = list(set(working_urls + all_working))
-    else:
-        working_urls = all_working
-
+    print(f"    Searching all {len(manager.addons)} addons...")
+    streams, working_urls = manager.search_all_addons_and_collect_working(type_, stremio_id)
     return streams, working_urls
 
 
@@ -262,11 +246,11 @@ def search_and_download(
                     download_url = response.headers.get("location", "")
                     print(f"    Resolved to: {download_url[:60]}...")
                 else:
-                    print(f"    Resolve failed: {response.status_code}, trying next...")
-                    continue
+                    print(f"    RD proxy failed ({response.status_code}), trying info_hash fallback...")
+                    download_url = None
             except Exception as e:
-                print(f"    Resolve error: {e}, trying next...")
-                continue
+                print(f"    Resolve error: {e}, trying info_hash fallback...")
+                download_url = None
 
         if stream.info_hash and not download_url:
             if settings.REAL_DEBRID_API_KEY:
@@ -309,7 +293,22 @@ def search_and_download(
             print(f"    Download complete!", flush=True)
             return {"success": True, "filename": filename, "quality": stream.name, "addon_name": stream.addon_name, "working_urls": working_urls}
         except Exception as e:
-            print(f"    Download error: {e}, trying next stream...")
+            print(f"    Download error: {e}", flush=True)
+            if stream.info_hash and settings.REAL_DEBRID_API_KEY and not download_url.startswith("magnet:"):
+                print(f"    Retrying with info_hash via RealDebrid...")
+                rd_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
+                if rd_url:
+                    download_url = rd_url
+                    try:
+                        with httpx.stream("GET", download_url, timeout=300) as r:
+                            r.raise_for_status()
+                            with open(filename, "wb") as f:
+                                for chunk in r.iter_bytes(chunk_size=8192):
+                                    f.write(chunk)
+                        print(f"    Download complete via RealDebrid!", flush=True)
+                        return {"success": True, "filename": filename, "quality": stream.name, "addon_name": stream.addon_name, "working_urls": working_urls}
+                    except Exception as e2:
+                        print(f"    RealDebrid download error: {e2}")
             last_error = str(e)
             continue
 
