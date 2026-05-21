@@ -32,14 +32,20 @@ def get_imdb_id(title: str) -> str | None:
 
 
 def get_series_imdb_id(title: str, season: int) -> str | None:
-    """Get IMDB ID for a specific season of a series."""
-    search_url = f"https://cinemeta.strem.io/meta/series/{urllib.parse.quote(title.lower().replace(' ', '-'))}.json"
+    """Get IMDB ID for a series by searching Cinemeta catalog."""
+    query = urllib.parse.quote(title.lower())
+    search_url = f"https://v3-cinemeta.strem.io/catalog/series/top/search={query}.json"
 
     try:
         response = httpx.get(search_url, timeout=15)
         if response.status_code == 200:
             data = response.json()
-            return data.get("imdb_id")
+            metas = data.get("metas", [])
+            for meta in metas:
+                if meta.get("name", "").lower() == title.lower():
+                    return meta.get("imdb_id") or meta.get("id")
+            if metas:
+                return metas[0].get("imdb_id") or metas[0].get("id")
     except Exception as e:
         print(f"  Series IMDB lookup error: {e}")
 
