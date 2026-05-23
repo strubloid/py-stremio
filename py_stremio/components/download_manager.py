@@ -1,13 +1,29 @@
 """Download episodes based on state and config files."""
 from pathlib import Path
 import sys
-import re
 
 from .config_file import load_config, save_config
 from .state import load_state, save_state
 from .utils import parse_episode_number
 from .settings import settings
 from .stremio_client import search_and_download
+
+
+def normalize_server_url(url: str | None) -> str:
+    if not url:
+        return ""
+    return url.strip().rstrip("/").removesuffix("/manifest.json")
+
+
+def unique_server_urls(urls: list[str] | None) -> list[str]:
+    servers = []
+    seen = set()
+    for url in urls or []:
+        normalized = normalize_server_url(url)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            servers.append(normalized)
+    return servers
 
 
 def find_season_folders(root_folder: Path) -> list[Path]:
@@ -90,7 +106,7 @@ def process_season_folder(folder_path: Path) -> dict:
     skipped = 0
     failed = 0
 
-    servers = config.servers.copy() if config.servers else []
+    servers = unique_server_urls(config.servers)
 
     for episode_num in missing:
         print(f"  Downloading {config.title} S{season:02d}E{episode_num:02d}")
@@ -115,9 +131,10 @@ def process_season_folder(folder_path: Path) -> dict:
 
         if result.get("working_urls"):
             for url in result["working_urls"]:
-                if url not in servers:
-                    servers.append(url)
-                    print(f"    ✓ Found working server: {url}")
+                normalized = normalize_server_url(url)
+                if normalized and normalized not in servers:
+                    servers.append(normalized)
+                    print(f"    ✓ Found working server: {normalized}")
 
     if servers and servers != config.servers:
         config.servers = servers
@@ -140,7 +157,7 @@ def process_season_folder(folder_path: Path) -> dict:
 
 def process_movie_folder(folder_path: Path) -> dict:
     """Process a movie folder - download missing content from Stremio."""
-    config, _ = load_config(folder_path)
+    config, config_path = load_config(folder_path)
     state = load_state(folder_path)
 
     if not config.enabled:
@@ -161,14 +178,28 @@ def process_movie_folder(folder_path: Path) -> dict:
     quality = config.quality.preferred if config.quality else "1080p"
 
     print(f"  Searching for movie: {title}")
+    servers = unique_server_urls(config.servers)
 
     result = search_and_download(
         title=title,
         season=None,
         episode=None,
         folder_path=str(folder_path),
-        preferred_quality=quality
+        preferred_quality=quality,
+        working_addons=servers
     )
+
+    if result.get("working_urls"):
+        for url in result["working_urls"]:
+            normalized = normalize_server_url(url)
+            if normalized and normalized not in servers:
+                servers.append(normalized)
+                print(f"    ✓ Found working server: {normalized}")
+
+    if servers and servers != config.servers:
+        config.servers = servers
+        save_config(config_path, config)
+        print(f"  Saved {len(servers)} working servers to config")
 
     if result.get("success"):
         filename = result.get("filename", f"{title}.mkv")

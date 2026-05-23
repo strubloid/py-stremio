@@ -1,0 +1,41 @@
+"""Public addon component exports."""
+
+from .manager import (
+    AddonManager,
+    AnimeKitsuAddon,
+    BaseAddon,
+    BrazucaTorrentsAddon,
+    CustomCometAddon,
+    HDHubAddon,
+    MediaFusionAddon,
+    StreamInfo,
+    ThePirateBayPlusAddon,
+    TorrentioAddon,
+    TorrentioPortugueseAddon,
+    TorrentioSortSeedersAddon,
+    UrlAddon,
+    create_addon_manager,
+    create_addon_manager_from_urls,
+    load_addons_from_file,
+    search_addons,
+)
+
+__all__ = [
+    "AddonManager",
+    "AnimeKitsuAddon",
+    "BaseAddon",
+    "BrazucaTorrentsAddon",
+    "CustomCometAddon",
+    "HDHubAddon",
+    "MediaFusionAddon",
+    "StreamInfo",
+    "ThePirateBayPlusAddon",
+    "TorrentioAddon",
+    "TorrentioPortugueseAddon",
+    "TorrentioSortSeedersAddon",
+    "UrlAddon",
+    "create_addon_manager",
+    "create_addon_manager_from_urls",
+    "load_addons_from_file",
+    "search_addons",
+]

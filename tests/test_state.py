@@ -5,7 +5,7 @@ import tempfile
 import json
 import shutil
 
-from py_stremio.state import DownloadState, DownloadRecord, load_state, save_state
+from py_stremio.components.state import DownloadState, DownloadRecord, load_state, save_state
 
 
 class TestDownloadRecord:

@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from py_stremio.movies import detect_existing_movies
+from py_stremio.components.movies import detect_existing_movies
 
 
 class TestDetectExistingMovies:

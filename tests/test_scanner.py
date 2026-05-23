@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from py_stremio.scanner import Scanner, FolderType, ScannedFolder
+from py_stremio.components.scanner import Scanner, FolderType, ScannedFolder
 
 
 class TestScanner:
@@ -15,13 +15,7 @@ class TestScanner:
         shutil.rmtree(tmpdir)
 
     @pytest.fixture
-    def scanner(self, temp_root, monkeypatch):
-        from py_stremio import settings
-        monkeypatch.setattr(settings, "settings", type("obj", (object,), {
-            "ROOT_FOLDER": temp_root,
-            "SERIES_FOLDER": temp_root / "series",
-            "MOVIES_FOLDER": temp_root / "movies",
-        }))
+    def scanner(self, temp_root):
         scanner = Scanner()
         scanner.root = temp_root
         scanner.series_root = temp_root / "series"

@@ -1,7 +1,6 @@
 """Addons package - Multi-addon support for finding streams."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 import httpx
 
 from ..settings import settings
@@ -35,9 +34,8 @@ class BaseAddon(ABC):
         pass
 
     def query_stream_url(self, type_: str, id_: str) -> str:
-        return f"{self.get_url(self.api_key).rstrip('/')}/stream/{type_}/{id_}.json"
         """Build the stream query URL."""
-        return f"{self.get_url().rstrip('/')}/stream/{type_}/{id_}.json"
+        return f"{self.get_url(self.api_key).rstrip('/')}/stream/{type_}/{id_}.json"
 
     def fetch_streams(self, url: str) -> list[dict]:
         """Fetch streams from URL."""

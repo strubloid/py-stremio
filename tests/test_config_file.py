@@ -5,7 +5,7 @@ import tempfile
 import json
 import shutil
 
-from py_stremio.config_file import (
+from py_stremio.components.config_file import (
     DownloadConfig,
     QualitySettings,
     create_series_config,

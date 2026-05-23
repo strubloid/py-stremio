@@ -1,8 +1,8 @@
 """Tests for quality fallback logic."""
 import pytest
 
-from py_stremio.config_file import QualitySettings
-from py_stremio.downloader import plan_quality_fallback
+from py_stremio.components.config_file import QualitySettings
+from py_stremio.components.downloader import plan_quality_fallback
 
 
 class TestQualityFallback:

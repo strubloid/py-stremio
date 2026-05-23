@@ -180,19 +180,74 @@ def build_stremio_id(imdb_id: str | None, title: str, season: int | None = None,
     return base_id
 
 
+def _normalize_addon_url(url: str | None) -> str:
+    """Normalize addon URLs so saved working URLs can be de-duplicated."""
+    if not url:
+        return ""
+    return url.strip().rstrip("/").removesuffix("/manifest.json")
+
+
+def _unique_addon_urls(urls: list[str] | None) -> list[str]:
+    unique_urls = []
+    seen = set()
+    for url in urls or []:
+        normalized = _normalize_addon_url(url)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique_urls.append(normalized)
+    return unique_urls
+
+
+def _configured_addon_url(addon: Any) -> str:
+    try:
+        url = addon.get_url(getattr(addon, "api_key", None))
+    except TypeError:
+        url = addon.get_url()
+    return _normalize_addon_url(url)
+
+
 def search_all_addons_for_streams(
     type_: str,
     stremio_id: str,
     working_addons: list[str] | None = None,
     max_addons: int = 3
 ) -> tuple[list, list[str]]:
-    """Search ALL addons for streams. Returns (streams, working_addon_urls)."""
-    from .addons import create_addon_manager
+    """Search addons for streams. Try known working addons before the remaining addons."""
+    from .addons import create_addon_manager, create_addon_manager_from_urls
+
+    all_streams = []
+    all_working_urls = []
+    searched_urls = set()
+    working_urls = _unique_addon_urls(working_addons)
+
+    if working_urls:
+        print(f"    First trying {len(working_urls)} known working addons...")
+        working_manager = create_addon_manager_from_urls(working_urls)
+        w_streams, w_urls = working_manager.search_all_addons_and_collect_working(type_, stremio_id)
+        all_streams.extend(w_streams)
+        all_working_urls.extend(w_urls)
+        searched_urls.update(working_urls)
 
     manager = create_addon_manager()
-    print(f"    Searching all {len(manager.addons)} addons...")
-    streams, working_urls = manager.search_all_addons_and_collect_working(type_, stremio_id)
-    return streams, working_urls
+    if working_urls:
+        remaining_addons = []
+        for addon in manager.addons:
+            addon_url = _configured_addon_url(addon)
+            if not addon_url or addon_url in searched_urls:
+                continue
+            searched_urls.add(addon_url)
+            remaining_addons.append(addon)
+        manager.addons = remaining_addons
+        print(f"    Searching {len(manager.addons)} remaining addons...")
+    else:
+        print(f"    Searching all {len(manager.addons)} addons...")
+
+    if manager.addons:
+        streams, new_working = manager.search_all_addons_and_collect_working(type_, stremio_id)
+        all_streams.extend(streams)
+        all_working_urls.extend(new_working)
+
+    return all_streams, _unique_addon_urls(all_working_urls)
 
 
 def search_and_download(
