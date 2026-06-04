@@ -9,6 +9,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from .addon_validator import validate_and_update
 from .bandwidth import build_limiter
 from .output import install_thread_stdout_filter, restore_thread_stdout_filter, suppress_current_thread_output
 from .settings import settings
@@ -213,7 +214,8 @@ def _menu() -> None:
     print("  2  🧠 Refresh configs + metadata")
     print("  3  ⬇  Download missing episodes/movies")
     print("  4  ✨ Run all: scan → metadata → download")
-    print("  5  🚪 Exit")
+    print("  5  🛠 Validate addon URLs")
+    print("  6  🚪 Exit")
 
 
 def _current_year() -> int:
@@ -655,7 +657,7 @@ def run_menu() -> None:
     """Interactive terminal menu for py-stremio."""
     _banner()
     _menu()
-    choice = input(_c("Select 1-5 › ", ACCENT)).strip()
+    choice = input(_c("Select 1-6 › ", ACCENT)).strip()
 
     if choice == "1":
         scan_library()
@@ -670,9 +672,11 @@ def run_menu() -> None:
         update_config_imdb_ids(quiet=False)
         download_folders(folders, quiet=True, max_workers=_ask_download_threads())
     elif choice == "5":
+        validate_and_update()
+    elif choice == "6":
         print("Bye.")
     else:
-        print(_c("Unknown option. Choose 1-5.", RED))
+        print(_c("Unknown option. Choose 1-6.", RED))
 
 
 def run(interactive: bool | None = None) -> None:
@@ -685,8 +689,12 @@ def run(interactive: bool | None = None) -> None:
     args = set(raw_args)
     positional = [arg for arg in raw_args if not arg.startswith("--")]
     action = positional[0] if positional else None
-    speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else None
-    max_workers = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
+    if "--run" in args or "--all" in args:
+        max_workers = int(positional[0]) if positional and positional[0].isdigit() else max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
+        speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else None
+    else:
+        speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else None
+        max_workers = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
 
     if "--scan" in args or action == "1":
         _banner()
@@ -700,6 +708,9 @@ def run(interactive: bool | None = None) -> None:
     if "--download" in args or action == "3":
         _banner()
         download_folders(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+        return
+    if "--validate" in args or "--validate-addons" in args or action == "5":
+        validate_and_update()
         return
     if "--run" in args or "--all" in args or action == "4":
         run_pipeline(download=True, quiet=True, max_workers=max_workers, speed_percent=speed_percent)

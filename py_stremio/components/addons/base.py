@@ -32,7 +32,7 @@ class BaseAddon(ABC):
         try:
             response = httpx.get(
                 url,
-                timeout=15,
+                timeout=8,
                 headers={"User-Agent": "Stremio/4.4.168", "Accept": "application/json"},
             )
             response.raise_for_status()

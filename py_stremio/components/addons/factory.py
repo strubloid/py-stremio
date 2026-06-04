@@ -4,15 +4,56 @@ from urllib.parse import unquote
 from ..settings import settings
 from .base import UrlAddon
 from .builtin import (
+    AIOStreamingAddon,
+    AIOStreamsAddon,
+    AkumaAddon,
     AnimeKitsuAddon,
+    AnimeoAddon,
+    AnimepaheAddon,
+    AnimesSeasonAddon,
+    ArgentinaTVAddon,
     BrazucaTorrentsAddon,
-    CustomCometAddon,
+    CineTorrentAddon,
+    CometAddon,
+    CometElfHostedAddon,
+    ConsumetAddon,
+    DebridSearchAddon,
+    DubbindoAddon,
+    EinthusanAddon,
+    FShareAddon,
+    FTVStremioAddon,
+    FigaroCorsoAddon,
+    GreekTVAddon,
+    GuindexAddon,
     HDHubAddon,
+    HanimeAddon,
+    JackettioAddon,
+    KinopubAddon,
+    KnightCrawlerAddon,
+    LatinMoviesAddon,
+    MainelocalnewsAddon,
     MediaFusionAddon,
+    NoTorrentAddon,
+    NucleusAddon,
+    OnePaceAddon,
+    OrionAddon,
+    PeerflixAddon,
+    RicosStremioAddon,
+    SkyflixAddon,
+    StremifyAddon,
+    StremThruAddon,
     ThePirateBayPlusAddon,
     TorrentioAddon,
+    TorrentioHindiAddon,
+    TorrentioLiteAddon,
     TorrentioPortugueseAddon,
     TorrentioSortSeedersAddon,
+    TorrentioSpanishAddon,
+    TorrinAddon,
+    VStremioAddon,
+    WatchHubAddon,
+    XtreamProAddon,
+    YouTubeProAddon,
 )
 from .manager import AddonManager
 from .models import StreamInfo
@@ -36,15 +77,73 @@ def _register_file_addons(manager: AddonManager, addon_urls: list[str]) -> None:
 
 
 def _register_builtin_addons(manager: AddonManager, api_key: str | None) -> None:
+    """Register all built-in stream-providing addons."""
+
+    # ── Torrentio family ──────────────────────────────────────────────────
     manager.register(TorrentioAddon())
     manager.register(TorrentioSortSeedersAddon())
-    manager.register(MediaFusionAddon())
-    manager.register(AnimeKitsuAddon())
-    manager.register(BrazucaTorrentsAddon())
-    manager.register(ThePirateBayPlusAddon())
-    manager.register(HDHubAddon())
-    manager.register(CustomCometAddon())
+    manager.register(TorrentioPortugueseAddon())
+    manager.register(TorrentioSpanishAddon())
+    manager.register(TorrentioHindiAddon())
+    manager.register(TorrentioLiteAddon())
 
+    # ── Core torrent scrapers ─────────────────────────────────────────────
+    manager.register(MediaFusionAddon())
+    manager.register(KnightCrawlerAddon())
+    manager.register(CometAddon())
+    manager.register(CometElfHostedAddon())
+    manager.register(PeerflixAddon())
+    manager.register(NucleusAddon())
+    manager.register(OrionAddon())
+    manager.register(DebridSearchAddon())
+    manager.register(StremifyAddon())
+    manager.register(JackettioAddon())
+    manager.register(AIOStreamsAddon())
+    manager.register(CineTorrentAddon())
+    manager.register(TorrinAddon())
+    manager.register(ThePirateBayPlusAddon())
+
+    # ── Brazilian / Portuguese ────────────────────────────────────────────
+    manager.register(BrazucaTorrentsAddon())
+    manager.register(HDHubAddon())
+
+    # ── Anime ─────────────────────────────────────────────────────────────
+    manager.register(AnimeKitsuAddon())
+    manager.register(AkumaAddon())
+    manager.register(AnimepaheAddon())
+    manager.register(AnimeoAddon())
+    manager.register(OnePaceAddon())
+    manager.register(HanimeAddon())
+    manager.register(AnimesSeasonAddon())
+
+    # ── Free hosters / no-debrid ──────────────────────────────────────────
+    manager.register(WatchHubAddon())
+    manager.register(SkyflixAddon())
+    manager.register(ArgentinaTVAddon())
+    manager.register(GreekTVAddon())
+    manager.register(XtreamProAddon())
+    manager.register(AIOStreamingAddon())
+
+    # ── Regional ──────────────────────────────────────────────────────────
+    manager.register(LatinMoviesAddon())
+    manager.register(RicosStremioAddon())
+    manager.register(KinopubAddon())
+    manager.register(FTVStremioAddon())
+    manager.register(FigaroCorsoAddon())
+    manager.register(EinthusanAddon())
+    manager.register(VStremioAddon())
+    manager.register(DubbindoAddon())
+    manager.register(MainelocalnewsAddon())
+
+    # ── Other backends ────────────────────────────────────────────────────
+    manager.register(NoTorrentAddon())
+    manager.register(StremThruAddon())
+    manager.register(GuindexAddon())
+    manager.register(YouTubeProAddon())
+    manager.register(FShareAddon())
+    manager.register(ConsumetAddon())
+
+    # ── RD-keyed variant (only when key present) ──────────────────────────
     if api_key:
         manager.register(TorrentioPortugueseAddon())
 

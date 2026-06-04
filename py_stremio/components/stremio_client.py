@@ -40,13 +40,16 @@ def search_and_download(
 
     print(f"    Found {len(streams)} streams")
     streams_to_try = select_quality_streams(streams, preferred_quality)
+    print(f"    {len(streams_to_try)} usable streams after quality filter")
 
     last_error = None
     for index, stream in enumerate(streams_to_try):
-        print(f"    Trying stream {index + 1}/{len(streams_to_try)}: {stream.name[:50]}")
+        print(f"    Stream {index + 1}/{len(streams_to_try)}: {stream.name[:50]} "
+              f"{'(direct URL)' if stream.url else '(info_hash, needs RD)'}", flush=True)
 
         download_url = resolve_stream_download_url(stream)
         if not download_url:
+            print(f"    -> No download URL, trying next", flush=True)
             continue
 
         if settings.DRY_RUN:

@@ -1,9 +1,12 @@
 """Manager for searching registered Stremio addons."""
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+
 from .base import BaseAddon, UrlAddon
 from .builtin import (
     AnimeKitsuAddon,
     BrazucaTorrentsAddon,
-    CustomCometAddon,
+    CometAddon,
     HDHubAddon,
     MediaFusionAddon,
     ThePirateBayPlusAddon,
@@ -12,6 +15,8 @@ from .builtin import (
     TorrentioSortSeedersAddon,
 )
 from .models import StreamInfo
+
+SEARCH_CONCURRENCY = 10  # max parallel addon queries
 
 
 def _addon_url(addon: BaseAddon) -> str:
@@ -36,33 +41,66 @@ class AddonManager:
         self.addons.append(UrlAddon(url))
 
     def search_all(self, type_: str, id_: str, max_addons: int = 3) -> list[StreamInfo]:
-        """Search all registered addons for streams."""
+        """Search registered addons for streams (stops at first success)."""
         for addon in self.addons[:max_addons]:
-            print(f"    Trying {addon.name}...")
-            streams = addon.get_streams(type_, id_)
-            if streams:
-                print(f"    ✓ Found {len(streams)} streams from {addon.name}")
-                return streams
+            chunks = self._try_addon(addon, type_, id_)
+            if chunks:
+                return chunks
         return []
 
     def search_all_addons_and_collect_working(
         self, type_: str, id_: str
     ) -> tuple[list[StreamInfo], list[str]]:
-        """Search ALL addons and return streams + list of working addon URLs."""
-        working_addon_urls = []
-        all_streams = []
+        """Search ALL addons concurrently and return streams + working addon URLs."""
+        import itertools
+        import sys
 
-        for addon in self.addons:
-            print(f"    Trying {addon.name}...")
-            streams = addon.get_streams(type_, id_)
-            if streams:
-                print(f"    ✓ Found {len(streams)} streams from {addon.name}")
-                all_streams.extend(streams)
-                addon_url = _addon_url(addon)
-                if addon_url and addon_url not in working_addon_urls:
-                    working_addon_urls.append(addon_url)
+        if not self.addons:
+            return [], []
+
+        total = len(self.addons)
+        spinner = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+        done_count = 0
+
+        print(f"    Searching {total} addons...", end="", flush=True)
+        working_addon_urls: list[str] = []
+        all_streams: list[StreamInfo] = []
+        result_lock = threading.Lock()
+
+        with ThreadPoolExecutor(max_workers=SEARCH_CONCURRENCY) as executor:
+            futures = {
+                executor.submit(self._try_addon, addon, type_, id_): addon
+                for addon in self.addons
+            }
+            for future in as_completed(futures):
+                done_count += 1
+                char = next(spinner)
+                sys.stdout.write(f"\r    {char} Searching addons ({done_count}/{total})")
+                sys.stdout.flush()
+
+                addon = futures[future]
+                try:
+                    streams = future.result(timeout=20)
+                except Exception:
+                    streams = []
+                if streams:
+                    with result_lock:
+                        all_streams.extend(streams)
+                        addon_url = _addon_url(addon)
+                        if addon_url and addon_url not in working_addon_urls:
+                            working_addon_urls.append(addon_url)
+
+        # Clear spinner line
+        print()
 
         return all_streams, working_addon_urls
+
+    def _try_addon(self, addon: BaseAddon, type_: str, id_: str) -> list[StreamInfo]:
+        """Query one addon — returns streams or empty list."""
+        try:
+            return addon.get_streams(type_, id_)
+        except Exception:
+            return []
 
     def search_until_found(self, type_: str, id_: str) -> list[StreamInfo]:
         """Search addons until streams are found."""

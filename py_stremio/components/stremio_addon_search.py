@@ -17,7 +17,7 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
     try:
         response = httpx.get(
             url,
-            timeout=30,
+            timeout=10,
             headers={"User-Agent": "Stremio/4.4.168", "Accept": "application/json"},
         )
         response.raise_for_status()

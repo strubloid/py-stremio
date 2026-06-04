@@ -22,6 +22,8 @@ class FakeResponse:
 
 
 def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, monkeypatch):
+    # Disable the minimum file size check for this test (uses small test data)
+    monkeypatch.setattr(stream_downloads.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
     target = tmp_path / "episode.mkv"
     partial = tmp_path / "episode.mkv.part"
     partial.write_bytes(b"abcd")

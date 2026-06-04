@@ -9,14 +9,45 @@ from .settings import settings
 RD_PROXY_PREFIX = "https://torrentio.strem.fun/resolve/"
 
 
+def _quality_sort_key(stream) -> tuple[int, int]:
+    """Sort streams by quality: 4K > 1080p > 720p > 480p > 360p > others.
+    Prefers streams with a direct URL over info_hash-only at the same quality."""
+    name = (stream.name or "").lower()
+    title = (stream.title or "").lower()
+
+    # Prefer streams from non-Torrentio addons (less likely blocked)
+    addon = (getattr(stream, "addon_name", "") or "").lower()
+
+    qscore = 1
+    if "2160" in name or "2160" in title or "4k" in name or "4k" in title:
+        qscore = 100
+    elif "1080" in name or "1080" in title or "fhd" in name or "fhd" in title:
+        qscore = 80
+    elif "720" in name or "720" in title or "hd" in name or "hd" in title:
+        qscore = 60
+    elif "480" in name or "480" in title or "sd" in name or "sd" in title:
+        qscore = 40
+    elif "360" in name or "360" in title:
+        qscore = 20
+
+    url_bonus = 1 if stream.url else 0
+    # Sort descending: high quality first, direct URL bonus
+    return (-qscore, -url_bonus)
+
+
 def select_quality_streams(streams: list, preferred_quality: str) -> list:
-    """Prefer matching-quality streams, falling back to the first results."""
-    quality_streams = [
-        stream
-        for stream in streams
-        if preferred_quality in stream.name.lower() or "1080p" in stream.name.lower()
+    """Filter out unusable streams, then return all usable ones sorted by quality
+    descending (1080p > 720p > 480p > ...) so the caller can try best first
+    and fall back to lower qualities."""
+    usable = [
+        s for s in streams
+        if s.url or s.info_hash
     ]
-    return quality_streams if quality_streams else streams[:10]
+    if not usable:
+        return []
+    # Sort by quality descending
+    usable.sort(key=_quality_sort_key)
+    return usable[:20]  # cap at 20 to avoid too many attempts
 
 
 def resolve_stream_download_url(stream: StreamInfo) -> str | None:
@@ -43,16 +74,24 @@ def resolve_stream_download_url(stream: StreamInfo) -> str | None:
 
 
 def resolve_real_debrid_proxy_url(download_url: str) -> str | None:
-    """Resolve Torrentio RealDebrid proxy redirects."""
+    """Resolve Torrentio RealDebrid proxy redirects.
+    Returns None if the redirect leads to a Torrentio error page."""
     try:
         response = httpx.get(
             download_url,
-            timeout=30,
+            timeout=10,
             follow_redirects=False,
             headers={"User-Agent": "Stremio/4.4.168"},
         )
         if response.status_code in (301, 302, 303, 307, 308):
             resolved_url = response.headers.get("location", "")
+            # Torrentio returns redirects to its own error pages when content
+            # is unavailable — these start with the torrentio domain and
+            # contain '/videos/failed' or '/videos/error'
+            if "torrentio" in resolved_url.lower() and "/videos/" in resolved_url:
+                print(f"    RD proxy returned error page: {resolved_url[:80]}...")
+                print("    Falling through to info_hash RD API path...")
+                return None
             print(f"    Resolved to: {resolved_url[:60]}...")
             return resolved_url
         print(f"    RD proxy failed ({response.status_code}), trying info_hash fallback...")
@@ -132,6 +171,17 @@ def download_stream_to_file(
                     progress_callback(downloaded, total_size)
 
     partial_path.replace(file_path)
+
+    # Verify the downloaded file is large enough to be a real video
+    actual_size = file_path.stat().st_size
+    min_bytes = getattr(settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100) * 1024 * 1024
+    if min_bytes > 0 and actual_size < min_bytes:
+        file_path.unlink(missing_ok=True)
+        raise ValueError(
+            f"Downloaded file is only {actual_size} bytes "
+            f"(min {min_bytes} bytes for a complete video)"
+        )
+
     print(complete_message, flush=True)
 
 
