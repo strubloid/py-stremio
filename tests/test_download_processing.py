@@ -364,3 +364,99 @@ def test_process_season_folder_treats_tiny_untracked_generated_file_as_interrupt
     process_season_folder(tmp_path)
 
     assert calls == [1]
+
+
+def test_process_season_folder_treats_absolute_numbered_complete_season_as_existing(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Bleach: Thousand-Year Blood War",
+        season=3,
+        episode_count=14,
+        current_episode_download=1,
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    bleach_files = [
+        "[Lazier] Bleach Thousand-Year Blood War - 27 (WEB 1080p EAC3) [8749C4A9].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 28 (WEB 1080p EAC3) [AC0C8A2A].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 29 (WEB 1080p EAC3) [7EF57884].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 30 (WEB 1080p EAC3) [2171F7D5].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 31 (WEB 1080p EAC3) [6F85B95C].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 32 (WEB 1080p EAC3) [E0BF7156].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 33 (WEB 1080p EAC3) [5016AD08].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 34 (WEB 1080p AAC) [EBDB3283].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 35 (WEB 1080p AAC) [C72E26CE].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 36 (WEB 1080p AAC) [E73FCD9F].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 37 (WEB 1080p AAC) [72E510BF].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 38 (WEB 1080p AAC) [CD3833B0].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 39 (WEB 1080p AAC) [A7BABE27].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 40 (WEB 1080p AAC) [E323D12D].mkv",
+    ]
+    for filename in bleach_files:
+        (tmp_path / filename).write_bytes(b"already downloaded")
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs["episode"])
+        return {"success": True, "filename": f"episode_{kwargs['episode']}.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path)
+
+    with open(tmp_path / "download-config.json") as f:
+        saved = json.load(f)
+    assert calls == []
+    assert result == {"downloaded": 0, "skipped": 14, "failed": 0}
+    assert saved["current_episode_download"] == 15
+
+
+def test_process_season_folder_downloads_only_new_episode_after_absolute_numbered_season_grows(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Bleach: Thousand-Year Blood War",
+        season=3,
+        episode_count=15,
+        current_episode_download=1,
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    bleach_files = [
+        "[Lazier] Bleach Thousand-Year Blood War - 27 (WEB 1080p EAC3) [8749C4A9].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 28 (WEB 1080p EAC3) [AC0C8A2A].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 29 (WEB 1080p EAC3) [7EF57884].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 30 (WEB 1080p EAC3) [2171F7D5].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 31 (WEB 1080p EAC3) [6F85B95C].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 32 (WEB 1080p EAC3) [E0BF7156].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 33 (WEB 1080p EAC3) [5016AD08].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 34 (WEB 1080p AAC) [EBDB3283].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 35 (WEB 1080p AAC) [C72E26CE].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 36 (WEB 1080p AAC) [E73FCD9F].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 37 (WEB 1080p AAC) [72E510BF].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 38 (WEB 1080p AAC) [CD3833B0].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 39 (WEB 1080p AAC) [A7BABE27].mkv",
+        "[Lazier] Bleach Thousand-Year Blood War - 40 (WEB 1080p AAC) [E323D12D].mkv",
+    ]
+    for filename in bleach_files:
+        (tmp_path / filename).write_bytes(b"already downloaded")
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs["episode"])
+        return {"success": True, "filename": f"episode_{kwargs['episode']}.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path)
+
+    assert calls == [15]
+    assert result["downloaded"] == 1
+    assert result["skipped"] == 14

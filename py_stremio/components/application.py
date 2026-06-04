@@ -201,6 +201,7 @@ def scan_library() -> list[ScannedFolder]:
 def update_config_imdb_ids(quiet: bool = False) -> None:
     """Create/update series download-config.json files with metadata."""
     from .config_file import load_config, save_config
+    from .media_files import infer_next_episode_download
     from .stremio_client import get_series_imdb_id
     from .stremio_metadata import get_series_metadata
     from .utils import parse_season_from_folder
@@ -238,13 +239,24 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
                 "servers": config_model.servers,
             }
 
+            changed = False
+            next_existing_episode = infer_next_episode_download(folder.path, config.get("episode_count"))
+            if next_existing_episode and next_existing_episode > int(config.get("current_episode_download") or 1):
+                config["current_episode_download"] = next_existing_episode
+                config_model.current_episode_download = next_existing_episode
+                changed = True
+
             if config.get("imdb_id") and config.get("episode_count") and config.get("type") == "series":
-                save_config(config_path, config_model)
+                if changed:
+                    with open(config_path, "w") as f:
+                        json.dump(config, f, indent=2)
+                    updated += 1
+                else:
+                    save_config(config_path, config_model)
                 continue
 
             title = config.get("title")
             season = config.get("season")
-            changed = False
 
             if not title:
                 title = folder.path.parent.name.replace("-", " ").replace("_", " ").title()
@@ -283,6 +295,11 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
                     changed = True
                 elif not quiet:
                     print(f"     ! metadata not found for {title} S{season}")
+
+            next_existing_episode = infer_next_episode_download(folder.path, config.get("episode_count"))
+            if next_existing_episode and next_existing_episode > int(config.get("current_episode_download") or 1):
+                config["current_episode_download"] = next_existing_episode
+                changed = True
 
             if changed:
                 with open(config_path, "w") as f:

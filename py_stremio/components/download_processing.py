@@ -5,7 +5,7 @@ import threading
 import time
 
 from .config_file import load_config, save_config
-from .media_files import iter_video_files, scan_episode_files
+from .media_files import detect_existing_season_episodes, iter_video_files, scan_episode_files
 from .output import suppress_current_thread_output
 from .settings import settings
 from .state import load_state, save_state
@@ -133,9 +133,9 @@ def process_season_folder(
 
     season = config.season or 1
     quality = _preferred_quality(config)
-    episodes = scan_folder_for_episodes(folder_path)
-    existing_episodes = {ep["episode"] for ep in episodes if ep["episode"]}
     final_episode = config.episode_count or 20
+    episodes = scan_folder_for_episodes(folder_path)
+    existing_episodes = detect_existing_season_episodes(folder_path, config.episode_count)
     start_episode = max(1, config.current_episode_download or 1)
     missing = _missing_episodes(folder_path, config, state, season, existing_episodes)
 

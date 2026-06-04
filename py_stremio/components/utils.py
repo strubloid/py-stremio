@@ -10,10 +10,17 @@ def sanitize_filename(name: str) -> str:
 
 
 def parse_episode_number(filename: str) -> int | None:
-    """Extract episode number from filename like 'episode 12.mp4' or 'E05.mkv'."""
-    match = re.search(r"(?:episode[_\s-]*|E)(\d+)", filename, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
+    """Extract episode number from common episode filename patterns."""
+    patterns = [
+        r"S\d+E(\d+)",
+        r"episode[_\s-]*(\d+)",
+        r"(?:^|\s)[-–—]\s*(\d{1,4})(?=\D|$)",
+        r"(?<![A-Za-z0-9])E(\d{1,3})(?![A-Za-z0-9])",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, filename, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
     return None
 
 
