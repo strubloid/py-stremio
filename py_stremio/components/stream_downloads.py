@@ -96,6 +96,7 @@ def download_stream_to_file(
     filename: str,
     complete_message: str = "    Download complete!",
     progress_callback=None,
+    bandwidth_limiter=None,
 ) -> None:
     """Download a direct stream URL to disk, resuming partial files when possible."""
     from pathlib import Path
@@ -123,6 +124,8 @@ def download_stream_to_file(
             for chunk in response.iter_bytes(chunk_size=8192):
                 if not chunk:
                     continue
+                if bandwidth_limiter:
+                    bandwidth_limiter.wait_for(len(chunk))
                 file.write(chunk)
                 downloaded += len(chunk)
                 if progress_callback:

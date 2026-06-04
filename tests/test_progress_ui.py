@@ -1,6 +1,13 @@
 """Tests for terminal progress UI helpers."""
 
-from py_stremio.components.application import _progress_line, render_progress_bar
+import io
+
+from py_stremio.components.application import _make_progress_printer, _progress_line, render_progress_bar
+
+
+class TtyBuffer(io.StringIO):
+    def isatty(self):
+        return True
 
 
 def test_render_progress_bar_shows_percentage_and_fill():
@@ -40,3 +47,34 @@ def test_episode_progress_line_uses_episode_percentage_not_season_percentage():
     assert "[------------------------] 0%" in start_line
     assert "[████████████████████████] 100% 1.0 GB / 1.0 GB" in done_line
     assert "episode 2/10" in done_line
+
+
+def test_threaded_progress_printer_renders_each_active_episode_line():
+    stream = TtyBuffer()
+    printer = _make_progress_printer(stream)
+
+    printer({
+        "type": "bytes",
+        "title": "House of the Dragon",
+        "season": 1,
+        "episode": 9,
+        "current": 1,
+        "total": 2,
+        "downloaded": 512,
+        "bytes_total": 1024,
+    })
+    printer({
+        "type": "bytes",
+        "title": "House of the Dragon",
+        "season": 1,
+        "total": 2,
+        "episode": 10,
+        "current": 2,
+        "downloaded": 256,
+        "bytes_total": 1024,
+    })
+
+    output = stream.getvalue()
+    assert "House of the Dragon S01E09" in output
+    assert "House of the Dragon S01E10" in output
+    assert "\033[F" in output

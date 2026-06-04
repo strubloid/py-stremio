@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from typing import Any
 
+from .bandwidth import build_limiter
 from .settings import settings
 from .scanner import Scanner, FolderType, ScannedFolder
 from .download_processing import process_movie_folder as process_movies
@@ -33,6 +34,8 @@ def _c(text: str, color: str) -> str:
 def _format_bytes(byte_count: int) -> str:
     if byte_count < 1024:
         return f"{byte_count} B"
+    if byte_count < 1024 * 1024:
+        return f"{byte_count / 1024:.1f} KB"
     mb = byte_count / (1024 * 1024)
     if mb < 1024:
         return f"{mb:.1f} MB"
@@ -72,18 +75,49 @@ def _progress_line(event: dict[str, Any]) -> str:
     return f"  • {title} {episode_label} {bar}  (episode {current}/{total})"
 
 
+def _progress_key(event: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return (event.get("title"), event.get("season"), event.get("episode"))
+
+
 def _make_progress_printer(stream) -> Any:
-    last_len = 0
+    """Return a progress renderer that keeps concurrent episodes on separate lines."""
+    active_lines: dict[tuple[Any, Any, Any], str] = {}
+    order: list[tuple[Any, Any, Any]] = []
+    rendered_count = 0
+    use_ansi_block = bool(getattr(stream, "isatty", lambda: False)())
+
+    def redraw() -> None:
+        nonlocal rendered_count
+        previous_count = rendered_count
+        if use_ansi_block and previous_count:
+            stream.write("\033[F" * previous_count)
+        for key in order:
+            line = active_lines[key]
+            if use_ansi_block:
+                stream.write(f"\r\033[K{line}\n")
+            else:
+                stream.write(f"{line}\n")
+        if use_ansi_block and previous_count > len(order):
+            extra_lines = previous_count - len(order)
+            for _ in range(extra_lines):
+                stream.write("\r\033[K\n")
+            stream.write("\033[F" * extra_lines)
+        stream.flush()
+        rendered_count = len(order) if use_ansi_block else 0
 
     def printer(event: dict[str, Any]) -> None:
-        nonlocal last_len
-        line = _progress_line(event)
-        padding = " " * max(0, last_len - len(line))
-        print(f"\r{line}{padding}", end="", file=stream, flush=True)
-        last_len = len(line)
+        nonlocal rendered_count
+        key = _progress_key(event)
+        if key not in active_lines:
+            order.append(key)
+        active_lines[key] = _progress_line(event)
+        redraw()
         if event.get("type") == "episode_done":
-            print(file=stream, flush=True)
-            last_len = 0
+            active_lines.pop(key, None)
+            if key in order:
+                order.remove(key)
+            if not order and use_ansi_block:
+                rendered_count = 0
 
     return printer
 
@@ -240,21 +274,36 @@ def _result_items(value: Any, label: str, count: int) -> list[str]:
     return []
 
 
-def _run_processor(folder: ScannedFolder, quiet: bool, progress_callback=None) -> dict[str, Any]:
+def _run_processor(folder: ScannedFolder, quiet: bool, progress_callback=None, max_workers: int = 1, bandwidth_limiter=None) -> dict[str, Any]:
     processor = process_series if folder.folder_type == FolderType.SERIES else process_movies
-    kwargs = {"progress_callback": progress_callback} if "progress_callback" in inspect.signature(processor).parameters else {}
+    signature = inspect.signature(processor).parameters
+    kwargs = {}
+    if "progress_callback" in signature:
+        kwargs["progress_callback"] = progress_callback
+    if "max_workers" in signature:
+        kwargs["max_workers"] = max_workers
+    if "bandwidth_limiter" in signature:
+        kwargs["bandwidth_limiter"] = bandwidth_limiter
     if quiet:
         with contextlib.redirect_stdout(io.StringIO()):
             return processor(folder.path, **kwargs)
     return processor(folder.path, **kwargs)
 
 
-def download_folders(folders: list[ScannedFolder] | None = None, quiet: bool = True) -> ReportData:
+def download_folders(
+    folders: list[ScannedFolder] | None = None,
+    quiet: bool = True,
+    max_workers: int = 1,
+    speed_percent: int | None = None,
+) -> ReportData:
     """Download missing items for folders and print a compact modern report."""
     if folders is None:
         folders = Scanner().scan()
 
     print(_c("\n⬇ Downloads", ACCENT))
+    speed_percent = getattr(settings, "INTERNET_SPEED_LIMIT", 100) if speed_percent is None else speed_percent
+    bandwidth_limiter = build_limiter(speed_percent, getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100))
+    print(f"  Threads: {max_workers} · speed: {speed_percent}%")
     report_folders: list[dict[str, Any]] = []
     total_downloaded = 0
     total_failed = 0
@@ -272,7 +321,7 @@ def download_folders(folders: list[ScannedFolder] | None = None, quiet: bool = T
             continue
 
         progress = _make_progress_printer(sys.stdout)
-        result = _run_processor(folder, quiet=quiet, progress_callback=progress)
+        result = _run_processor(folder, quiet=quiet, progress_callback=progress, max_workers=max_workers, bandwidth_limiter=bandwidth_limiter)
         if result.get("skipped") is True:
             skipped += 1
             print(_c(f"skipped ({result.get('reason', 'disabled')})", YELLOW))
@@ -322,14 +371,25 @@ def download_folders(folders: list[ScannedFolder] | None = None, quiet: bool = T
     return report
 
 
-def run_pipeline(download: bool = True, quiet: bool = True) -> None:
+def run_pipeline(download: bool = True, quiet: bool = True, max_workers: int = 1, speed_percent: int | None = None) -> None:
     """Run the standard scan → metadata → optional download pipeline."""
     _banner()
     folders = scan_library()
     print(_c("\n🧠 Metadata", ACCENT))
     update_config_imdb_ids(quiet=False)
     if download:
-        download_folders(folders, quiet=quiet)
+        download_folders(folders, quiet=quiet, max_workers=max_workers, speed_percent=speed_percent)
+
+
+def _ask_download_threads() -> int:
+    default = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
+    answer = input(_c(f"Download threads [{default}] › ", ACCENT)).strip()
+    if not answer:
+        return default
+    try:
+        return max(1, int(answer))
+    except ValueError:
+        return default
 
 
 def run_menu() -> None:
@@ -344,12 +404,12 @@ def run_menu() -> None:
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
     elif choice == "3":
-        download_folders(quiet=True)
+        download_folders(quiet=True, max_workers=_ask_download_threads())
     elif choice == "4" or choice == "":
         folders = scan_library()
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
-        download_folders(folders, quiet=True)
+        download_folders(folders, quiet=True, max_workers=_ask_download_threads())
     elif choice == "5":
         print("Bye.")
     else:
@@ -362,18 +422,28 @@ def run(interactive: bool | None = None) -> None:
     Interactive terminals show a menu. Non-interactive runs keep the historical
     scan → metadata → download behavior so tests/scripts do not block on input.
     """
-    args = set(sys.argv[1:])
-    if "--scan" in args:
+    raw_args = sys.argv[1:]
+    args = set(raw_args)
+    positional = [arg for arg in raw_args if not arg.startswith("--")]
+    action = positional[0] if positional else None
+    speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else None
+    max_workers = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
+
+    if "--scan" in args or action == "1":
         _banner()
         scan_library()
         return
-    if "--metadata" in args or "--config" in args:
+    if "--metadata" in args or "--config" in args or action == "2":
         _banner()
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
         return
-    if "--download" in args or "--run" in args or "--all" in args:
-        run_pipeline(download=True, quiet=True)
+    if "--download" in args or action == "3":
+        _banner()
+        download_folders(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+        return
+    if "--run" in args or "--all" in args or action == "4":
+        run_pipeline(download=True, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
         return
 
     if interactive is None:
@@ -381,4 +451,4 @@ def run(interactive: bool | None = None) -> None:
     if interactive:
         run_menu()
     else:
-        run_pipeline(download=True, quiet=True)
+        run_pipeline(download=True, quiet=True, max_workers=max_workers, speed_percent=speed_percent)

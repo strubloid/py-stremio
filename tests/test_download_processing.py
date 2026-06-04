@@ -110,6 +110,39 @@ def test_process_season_folder_persists_next_episode_after_each_success(tmp_path
     assert saved["current_episode_download"] == 4
 
 
+def test_process_season_folder_accepts_download_threads(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="House Of The Dragon",
+        season=1,
+        episode_count=4,
+        current_episode_download=1,
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs["episode"])
+        return {
+            "success": True,
+            "filename": f"episode_{kwargs['episode']}.mkv",
+            "quality": "1080p",
+            "working_urls": [],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path, max_workers=2)
+
+    assert sorted(calls) == [1, 2, 3, 4]
+    assert result["downloaded"] == 4
+
+
 def test_process_season_folder_does_not_redownload_existing_generated_episode_file(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",

@@ -23,6 +23,7 @@ def search_and_download(
     preferred_quality: str = "1080p",
     working_addons: list[str] | None = None,
     progress_callback=None,
+    bandwidth_limiter=None,
 ) -> dict:
     """Search addons for a stream and download the first usable result."""
     print(f"    Looking up: {title}" + (f" S{season}E{episode}" if season else ""))
@@ -59,12 +60,12 @@ def search_and_download(
 
         filename = build_media_filename(title, season, episode, folder_path)
         try:
-            download_stream_to_file(download_url, filename, progress_callback=progress_callback)
+            download_stream_to_file(download_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
             return _success_result(filename, stream, working_urls)
         except Exception as e:
             print(f"    Download error: {e}", flush=True)
             if can_retry_with_debrid(stream, download_url):
-                retry_result = _retry_with_real_debrid(stream, filename, working_urls, progress_callback=progress_callback)
+                retry_result = _retry_with_real_debrid(stream, filename, working_urls, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
                 if retry_result:
                     return retry_result
             last_error = str(e)
@@ -88,14 +89,14 @@ def _resolve_imdb_id(title: str, imdb_id: str | None, season: int | None) -> str
     return imdb_id
 
 
-def _retry_with_real_debrid(stream: StreamInfo, filename: str, working_urls: list[str], progress_callback=None) -> dict | None:
+def _retry_with_real_debrid(stream: StreamInfo, filename: str, working_urls: list[str], progress_callback=None, bandwidth_limiter=None) -> dict | None:
     print("    Retrying with info_hash via RealDebrid...")
     rd_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
     if not rd_url:
         return None
 
     try:
-        download_stream_to_file(rd_url, filename, "    Download complete via RealDebrid!", progress_callback=progress_callback)
+        download_stream_to_file(rd_url, filename, "    Download complete via RealDebrid!", progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
         return _success_result(filename, stream, working_urls)
     except Exception as e:
         print(f"    RealDebrid download error: {e}")
