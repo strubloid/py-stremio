@@ -71,6 +71,55 @@ def test_process_season_folder_skips_unverified_season_without_episode_count(tmp
     assert result == {"skipped": True, "reason": "season metadata has no episodes"}
 
 
+
+def test_process_season_folder_uses_metadata_available_episodes_instead_of_brutal_range(tmp_path, monkeypatch):
+    config_path = tmp_path / "download-config.json"
+    config_path.write_text(json.dumps({
+        "type": "series",
+        "quality": {
+            "preferred": "1080p",
+            "fallbacks": ["720p", "480p"],
+            "allow_higher": False,
+            "allow_lower": True,
+        },
+        "language": "any",
+        "subtitles": "any",
+        "provider": "auto",
+        "enabled": True,
+        "title": "Rick and Morty",
+        "imdb_id": "tt2861424",
+        "season": 0,
+        "episode_count": 8,
+        "available_episodes": [1, 2],
+        "current_episode_download": 1,
+        "search_group": "S00",
+        "download_all_related": True,
+        "working_addons": [],
+        "servers": [],
+    }, indent=2))
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs["episode"])
+        return {
+            "success": True,
+            "filename": f"episode_{kwargs['episode']}.mkv",
+            "quality": "1080p",
+            "working_urls": [],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path)
+
+    assert calls == [1, 2]
+    assert result["downloaded"] == 2
+
+
 def test_process_season_folder_uses_current_episode_download_as_start_episode(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",

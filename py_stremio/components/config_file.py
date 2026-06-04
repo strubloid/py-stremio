@@ -31,6 +31,7 @@ class DownloadConfig:
     imdb_id: str | None = None
     season: int | None = None
     episode_count: int | None = None
+    available_episodes: list[int] | None = None
     current_episode_download: int = 1
     search_group: str | None = None
     download_all_related: bool = True
@@ -40,7 +41,8 @@ class DownloadConfig:
 
 def create_series_config(folder_path: Path) -> DownloadConfig:
     """Create a default series config from folder path."""
-    season = parse_season_from_folder(folder_path.name) or 1
+    parsed_season = parse_season_from_folder(folder_path.name)
+    season = parsed_season if parsed_season is not None else 1
     return DownloadConfig(
         type="series",
         title=folder_path.parent.name.replace("-", " ").replace("_", " ").title(),

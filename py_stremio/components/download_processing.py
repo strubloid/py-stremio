@@ -95,7 +95,15 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
     final_episode = config.episode_count or 20
     start_episode = max(1, config.current_episode_download or 1)
     missing = []
-    for episode in range(start_episode, final_episode + 1):
+    if config.available_episodes is not None:
+        candidates = [
+            int(episode)
+            for episode in config.available_episodes
+            if int(episode) >= start_episode and int(episode) <= final_episode
+        ]
+    else:
+        candidates = list(range(start_episode, final_episode + 1))
+    for episode in candidates:
         generated_filename = _generated_episode_filename(folder_path, config, season, episode)
         if state.is_downloaded(f"episode_{episode}.mkv") or state.is_downloaded(generated_filename):
             continue
@@ -131,7 +139,7 @@ def process_season_folder(
     if not config.title:
         return {"skipped": True, "reason": "no title in config"}
 
-    season = config.season or 1
+    season = config.season if config.season is not None else 1
     if config.episode_count is None:
         return {"skipped": True, "reason": "season metadata has no episodes"}
 
@@ -144,7 +152,7 @@ def process_season_folder(
 
     if missing:
         _set_current_episode(config, config_path, missing[0])
-    elif start_episode <= final_episode:
+    elif start_episode <= final_episode and config.available_episodes is None:
         _set_current_episode(config, config_path, final_episode + 1)
 
     downloaded = 0

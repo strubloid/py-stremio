@@ -216,13 +216,60 @@ def _menu() -> None:
     print("  5  🚪 Exit")
 
 
+def _current_year() -> int:
+    return datetime.now().year
+
+
+def _existing_series_seasons(series_path) -> set[int]:
+    from .utils import parse_season_from_folder
+
+    return {
+        season
+        for season in (parse_season_from_folder(path.name) for path in series_path.iterdir() if path.is_dir())
+        if season is not None
+    }
+
+
+def _create_current_year_season_folders(scanner: Scanner, quiet: bool = False) -> list[ScannedFolder]:
+    """Create missing current-year season folders for already tracked series."""
+    from .stremio_metadata import get_current_year_series_seasons
+
+    created: list[ScannedFolder] = []
+    year = _current_year()
+    if not scanner.series_root.exists():
+        return created
+
+    for series_path in scanner.series_root.iterdir():
+        if not series_path.is_dir():
+            continue
+        existing = _existing_series_seasons(series_path)
+        if not existing:
+            continue
+        latest_existing = max(existing)
+        for season_info in get_current_year_series_seasons(series_path.name, year):
+            season = int(season_info.get("season") or 0)
+            if season <= latest_existing or season in existing:
+                continue
+            season_path = series_path / f"s{season:02d}"
+            season_path.mkdir(parents=True, exist_ok=True)
+            folder = scanner._create_series_folder(season_path)
+            if folder:
+                created.append(folder)
+            if not quiet:
+                title = season_info.get("title") or series_path.name
+                print(f"  + created {title} S{season:02d}")
+    return created
+
+
 def scan_library() -> list[ScannedFolder]:
     """Scan configured folders and print a compact folder overview."""
     scanner = Scanner()
     scanner.ensure_folders()
-    folders = scanner.scan()
 
     print(_c("\n🔎 Scan", ACCENT))
+    _create_current_year_season_folders(scanner)
+    folders = scanner.scan()
+
     if not folders:
         print("  No folders found yet.")
         return folders
@@ -230,7 +277,7 @@ def scan_library() -> list[ScannedFolder]:
     print(f"  Found {len(folders)} folder(s)")
     for index, folder in enumerate(folders, start=1):
         label = "series" if folder.folder_type == FolderType.SERIES else "movies"
-        season = f" · S{folder.season_number:02d}" if folder.season_number else ""
+        season = f" · S{folder.season_number:02d}" if folder.season_number is not None else ""
         print(f"  {index:>2}. {label:<6} {folder.path.parent.name if label == 'series' else folder.path.name}{season}")
     return folders
 
@@ -269,6 +316,7 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
                 "imdb_id": config_model.imdb_id,
                 "season": config_model.season,
                 "episode_count": config_model.episode_count,
+                "available_episodes": config_model.available_episodes,
                 "current_episode_download": config_model.current_episode_download,
                 "search_group": config_model.search_group,
                 "download_all_related": config_model.download_all_related,
@@ -283,15 +331,6 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
                 config_model.current_episode_download = next_existing_episode
                 changed = True
 
-            if config.get("imdb_id") and config.get("episode_count") and config.get("type") == "series":
-                if changed:
-                    with open(config_path, "w") as f:
-                        json.dump(config, f, indent=2)
-                    updated += 1
-                else:
-                    save_config(config_path, config_model)
-                continue
-
             title = config.get("title")
             season = config.get("season")
 
@@ -300,8 +339,9 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
                 config["title"] = title
                 changed = True
 
-            if not season:
-                season = parse_season_from_folder(folder.path.name) or folder.season_number or 1
+            if season is None:
+                parsed_season = parse_season_from_folder(folder.path.name)
+                season = parsed_season if parsed_season is not None else (folder.season_number if folder.season_number is not None else 1)
                 config["season"] = season
                 changed = True
 
@@ -327,11 +367,17 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
                     if config.get("episode_count") is not None:
                         config["episode_count"] = None
                         changed = True
+                    if config.get("available_episodes") != []:
+                        config["available_episodes"] = []
+                        changed = True
                     if not quiet:
                         print(f"     ! {config.get('title')} S{season:02d} has no episodes in metadata; disabled")
                 else:
                     if episode_count and config.get("episode_count") != episode_count:
                         config["episode_count"] = episode_count
+                        changed = True
+                    if "available_episodes" in metadata and config.get("available_episodes") != metadata.get("available_episodes"):
+                        config["available_episodes"] = metadata.get("available_episodes")
                         changed = True
                     if season_exists is True and config.get("enabled") is False:
                         config["enabled"] = True
@@ -489,7 +535,7 @@ def download_folders(
 
     def folder_display(folder: ScannedFolder) -> str:
         display_name = folder.path.parent.name if folder.folder_type == FolderType.SERIES else folder.path.name
-        suffix = f" S{folder.season_number:02d}" if folder.season_number else ""
+        suffix = f" S{folder.season_number:02d}" if folder.season_number is not None else ""
         return f"{display_name}{suffix}"
 
     for line in _series_completion_overviews(folders):

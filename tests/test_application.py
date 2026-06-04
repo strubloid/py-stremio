@@ -52,6 +52,7 @@ def test_run_creates_metadata_rich_series_config_when_config_was_deleted(tmp_pat
         "imdb_id": "tt11198330",
         "season": 1,
         "episode_count": 10,
+        "available_episodes": None,
         "current_episode_download": 1,
         "search_group": "S01",
         "download_all_related": True,
@@ -124,6 +125,104 @@ def test_metadata_refresh_disables_series_season_when_metadata_has_no_episodes(t
     assert config["imdb_id"] == "tt26678932"
     assert config["season"] == 2
     assert config["episode_count"] is None
+
+
+
+def test_metadata_refresh_updates_existing_episode_list_when_config_already_has_episode_count(tmp_path, monkeypatch):
+    from py_stremio.components.config_file import DownloadConfig, save_config
+
+    season_folder = tmp_path / "series" / "Rick and Morty" / "s00"
+    season_folder.mkdir(parents=True)
+    (tmp_path / "movies").mkdir()
+    save_config(
+        season_folder / "download-config.json",
+        DownloadConfig(
+            type="series",
+            title="Rick and Morty",
+            imdb_id="tt2861424",
+            season=0,
+            episode_count=8,
+            current_episode_download=1,
+        ),
+    )
+    test_settings = SimpleNamespace(
+        ROOT_FOLDER=tmp_path,
+        SERIES_FOLDER=tmp_path / "series",
+        MOVIES_FOLDER=tmp_path / "movies",
+        DRY_RUN=True,
+    )
+    monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio_metadata.get_series_metadata",
+        lambda title, season: {
+            "imdb_id": "tt2861424",
+            "title": "Rick and Morty",
+            "episode_count": 2,
+            "available_episodes": [1, 2],
+            "season_exists": True,
+        },
+    )
+
+    application.update_config_imdb_ids(quiet=True)
+
+    with open(season_folder / "download-config.json") as f:
+        config = json.load(f)
+    assert config["episode_count"] == 2
+    assert config["available_episodes"] == [1, 2]
+
+
+def test_scan_library_creates_current_year_next_season_folder(tmp_path, monkeypatch, capsys):
+    series_root = tmp_path / "series"
+    movies_root = tmp_path / "movies"
+    (series_root / "Rick and Morty" / "s08").mkdir(parents=True)
+    movies_root.mkdir(parents=True)
+    test_settings = SimpleNamespace(
+        ROOT_FOLDER=tmp_path,
+        SERIES_FOLDER=series_root,
+        MOVIES_FOLDER=movies_root,
+        DRY_RUN=True,
+    )
+    monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr(application, "_current_year", lambda: 2026)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio_metadata.get_current_year_series_seasons",
+        lambda title, year: [
+            {"imdb_id": "tt2861424", "title": "Rick and Morty", "season": 9, "episode_count": 10}
+        ] if title == "Rick and Morty" and year == 2026 else [],
+    )
+
+    folders = application.scan_library()
+
+    assert (series_root / "Rick and Morty" / "s09").is_dir()
+    assert any(folder.path == series_root / "Rick and Morty" / "s09" for folder in folders)
+    output = capsys.readouterr().out
+    assert "created Rick and Morty S09" in output
+
+
+def test_scan_library_does_not_create_missing_old_season_from_previous_year(tmp_path, monkeypatch):
+    series_root = tmp_path / "series"
+    movies_root = tmp_path / "movies"
+    (series_root / "Rick and Morty" / "s08").mkdir(parents=True)
+    movies_root.mkdir(parents=True)
+    test_settings = SimpleNamespace(
+        ROOT_FOLDER=tmp_path,
+        SERIES_FOLDER=series_root,
+        MOVIES_FOLDER=movies_root,
+        DRY_RUN=True,
+    )
+    monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr(application, "_current_year", lambda: 2026)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio_metadata.get_current_year_series_seasons",
+        lambda title, year: [],
+    )
+
+    application.scan_library()
+
+    assert not (series_root / "Rick and Morty" / "s09").exists()
 
 
 def test_download_folders_lists_series_overview_instead_of_each_season(tmp_path, monkeypatch, capsys):
