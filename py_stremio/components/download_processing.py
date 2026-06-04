@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import threading
+import time
 
 from .config_file import load_config, save_config
 from .media_files import iter_video_files, scan_episode_files
@@ -151,6 +152,9 @@ def process_season_folder(folder_path: Path, progress_callback=None, max_workers
     def download_episode(index: int, episode_num: int) -> dict:
         last_downloaded_bytes = 0
         last_total_bytes = 0
+        last_rate_bps = 0.0
+        last_progress_bytes = 0
+        last_progress_at = time.monotonic()
         emit({
             "type": "episode_start",
             "title": config.title,
@@ -161,7 +165,14 @@ def process_season_folder(folder_path: Path, progress_callback=None, max_workers
         })
 
         def on_bytes(downloaded_bytes: int, total_bytes: int) -> None:
-            nonlocal last_downloaded_bytes, last_total_bytes
+            nonlocal last_downloaded_bytes, last_total_bytes, last_rate_bps, last_progress_bytes, last_progress_at
+            now = time.monotonic()
+            elapsed = max(0.001, now - last_progress_at)
+            delta = max(0, downloaded_bytes - last_progress_bytes)
+            if delta:
+                last_rate_bps = delta / elapsed
+                last_progress_bytes = downloaded_bytes
+                last_progress_at = now
             last_downloaded_bytes = downloaded_bytes
             last_total_bytes = total_bytes
             emit({
@@ -173,6 +184,7 @@ def process_season_folder(folder_path: Path, progress_callback=None, max_workers
                 "total": total_missing,
                 "downloaded": downloaded_bytes,
                 "bytes_total": total_bytes,
+                "rate_bps": last_rate_bps,
             })
 
         print(f"  Downloading {config.title} S{season:02d}E{episode_num:02d}")
@@ -199,6 +211,7 @@ def process_season_folder(folder_path: Path, progress_callback=None, max_workers
             "success": bool(result.get("success")),
             "downloaded": last_downloaded_bytes,
             "bytes_total": last_total_bytes,
+            "rate_bps": last_rate_bps,
         })
         return {"episode": episode_num, "result": result}
 

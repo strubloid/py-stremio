@@ -1,9 +1,12 @@
 """Application workflow for py-stremio download manager."""
 import contextlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import inspect
 import io
 import json
 import sys
+import threading
+import time
 from datetime import datetime
 from typing import Any
 
@@ -52,7 +55,29 @@ def render_progress_bar(current: int, total: int, width: int = 24) -> str:
     return f"[{'█' * filled}{'-' * (width - filled)}] {percent}% {_format_bytes(current)} / {_format_bytes(total)}"
 
 
-def _progress_line(event: dict[str, Any]) -> str:
+def _color(text: str, color: str, enabled: bool) -> str:
+    return f"{color}{text}{RESET}" if enabled else text
+
+
+def _speed_label(rate_bps: int | float | None) -> str:
+    if not rate_bps or rate_bps <= 0:
+        return ""
+    return f" · {_format_bytes(int(rate_bps))}/s"
+
+
+def _color_bar(bar: str, enabled: bool) -> str:
+    if not enabled or not bar.startswith("[") or "]" not in bar:
+        return bar
+    close = bar.index("]")
+    segment = bar[1:close]
+    rest = bar[close + 1:]
+    filled_count = segment.count("█")
+    filled = _color("█" * filled_count, GREEN, True)
+    empty = _color(segment[filled_count:], DIM, True)
+    return f"[{filled}{empty}]{_color(rest, YELLOW, True)}"
+
+
+def _progress_line(event: dict[str, Any], color: bool = False) -> str:
     title = event.get("title") or "Download"
     season = event.get("season")
     episode = event.get("episode")
@@ -72,7 +97,12 @@ def _progress_line(event: dict[str, Any]) -> str:
             bar = render_progress_bar(100, 100)
     else:
         bar = render_progress_bar(current, total)
-    return f"  • {title} {episode_label} {bar}  (episode {current}/{total})"
+    title_label = _color(str(title), ACCENT, color)
+    episode_label = _color(episode_label, GREEN, color)
+    bar = _color_bar(bar, color)
+    speed = _color(_speed_label(event.get("rate_bps")), GREEN, color)
+    episode_position = _color(f"episode {current}/{total}", DIM, color)
+    return f"  {_color('•', GREEN, color)} {title_label} {episode_label} {bar}{speed}  ({episode_position})"
 
 
 def _progress_key(event: dict[str, Any]) -> tuple[Any, Any, Any]:
@@ -84,10 +114,16 @@ def _make_progress_printer(stream) -> Any:
     active_lines: dict[tuple[Any, Any, Any], str] = {}
     order: list[tuple[Any, Any, Any]] = []
     rendered_count = 0
+    last_redraw_at = 0.0
+    min_redraw_interval = 0.10
+    lock = threading.Lock()
     use_ansi_block = bool(getattr(stream, "isatty", lambda: False)())
 
-    def redraw() -> None:
-        nonlocal rendered_count
+    def redraw(force: bool = False) -> None:
+        nonlocal rendered_count, last_redraw_at
+        now = time.monotonic()
+        if not force and use_ansi_block and now - last_redraw_at < min_redraw_interval:
+            return
         previous_count = rendered_count
         if use_ansi_block and previous_count:
             stream.write("\033[F" * previous_count)
@@ -104,20 +140,22 @@ def _make_progress_printer(stream) -> Any:
             stream.write("\033[F" * extra_lines)
         stream.flush()
         rendered_count = len(order) if use_ansi_block else 0
+        last_redraw_at = now
 
     def printer(event: dict[str, Any]) -> None:
-        nonlocal rendered_count
-        key = _progress_key(event)
-        if key not in active_lines:
-            order.append(key)
-        active_lines[key] = _progress_line(event)
-        redraw()
-        if event.get("type") == "episode_done":
-            active_lines.pop(key, None)
-            if key in order:
-                order.remove(key)
-            if not order and use_ansi_block:
-                rendered_count = 0
+        with lock:
+            key = _progress_key(event)
+            if event.get("type") == "episode_done":
+                active_lines.pop(key, None)
+                if key in order:
+                    order.remove(key)
+                redraw(force=True)
+                return
+            is_new_line = key not in active_lines
+            if is_new_line:
+                order.append(key)
+            active_lines[key] = _progress_line(event, color=use_ansi_block)
+            redraw(force=is_new_line or event.get("type") == "episode_start")
 
     return printer
 
@@ -310,21 +348,40 @@ def download_folders(
     processed = 0
     skipped = 0
 
-    for folder in folders:
-        label = "series" if folder.folder_type == FolderType.SERIES else "movies"
+    runnable: list[ScannedFolder] = []
+    progress = _make_progress_printer(sys.stdout)
+
+    def folder_display(folder: ScannedFolder) -> str:
         display_name = folder.path.parent.name if folder.folder_type == FolderType.SERIES else folder.path.name
         suffix = f" S{folder.season_number:02d}" if folder.season_number else ""
-        print(f"  • {display_name}{suffix}")
+        return f"{display_name}{suffix}"
 
+    for folder in folders:
+        print(f"  • {_c(folder_display(folder), ACCENT)}")
         if folder.folder_type not in (FolderType.SERIES, FolderType.MOVIES):
+            skipped += 1
             print(_c("    skipped", DIM))
             continue
+        runnable.append(folder)
 
-        progress = _make_progress_printer(sys.stdout)
-        result = _run_processor(folder, quiet=quiet, progress_callback=progress, max_workers=max_workers, bandwidth_limiter=bandwidth_limiter)
+    def process_folder(folder: ScannedFolder) -> tuple[ScannedFolder, dict[str, Any]]:
+        # Thread count is global across folders. When folders are parallel, each
+        # folder processor runs one item so a busy season cannot monopolize all
+        # workers and block the next season from starting.
+        per_folder_workers = 1 if max_workers > 1 and len(runnable) > 1 else max_workers
+        return folder, _run_processor(
+            folder,
+            quiet=quiet,
+            progress_callback=progress,
+            max_workers=per_folder_workers,
+            bandwidth_limiter=bandwidth_limiter,
+        )
+
+    def record_result(folder: ScannedFolder, result: dict[str, Any]) -> None:
+        nonlocal processed, skipped, total_downloaded, total_failed
         if result.get("skipped") is True:
             skipped += 1
-            print(_c(f"skipped ({result.get('reason', 'disabled')})", YELLOW))
+            print(_c(f"  {folder_display(folder)} skipped ({result.get('reason', 'disabled')})", YELLOW))
             report_folders.append({
                 "name": folder.path.name,
                 "type": folder.folder_type.value,
@@ -334,7 +391,7 @@ def download_folders(
                 "downloaded": [],
                 "failed": [],
             })
-            continue
+            return
 
         processed += 1
         downloaded_count = _result_count(result.get("downloaded", 0))
@@ -345,7 +402,7 @@ def download_folders(
         status = _c(f"✓ {downloaded_count} downloaded", GREEN) if failed_count == 0 else _c(f"! {failed_count} failed", RED)
         if downloaded_count and failed_count:
             status = f"{_c(f'✓ {downloaded_count}', GREEN)} / {_c(f'! {failed_count}', RED)}"
-        print(status)
+        print(f"  {folder_display(folder)} {status}")
 
         report_folders.append({
             "name": folder.path.name,
@@ -356,6 +413,17 @@ def download_folders(
             "downloaded_count": downloaded_count,
             "failed_count": failed_count,
         })
+
+    if max_workers > 1 and len(runnable) > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(process_folder, folder) for folder in runnable]
+            for future in as_completed(futures):
+                folder, result = future.result()
+                record_result(folder, result)
+    else:
+        for folder in runnable:
+            folder, result = process_folder(folder)
+            record_result(folder, result)
 
     report = ReportData(
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

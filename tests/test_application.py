@@ -1,8 +1,10 @@
 """Tests for the top-level application workflow."""
 from types import SimpleNamespace
 import json
+import threading
 
 from py_stremio.components import application
+from py_stremio.components.scanner import FolderType, ScannedFolder
 
 
 def test_run_creates_metadata_rich_series_config_when_config_was_deleted(tmp_path, monkeypatch):
@@ -56,3 +58,29 @@ def test_run_creates_metadata_rich_series_config_when_config_was_deleted(tmp_pat
         "working_addons": [],
         "servers": [],
     }
+
+
+def test_download_folders_starts_next_season_when_thread_capacity_exists(tmp_path, monkeypatch):
+    folders = [
+        ScannedFolder(tmp_path / "series" / "Show" / "s01", FolderType.SERIES, tmp_path / "series", 1),
+        ScannedFolder(tmp_path / "series" / "Show" / "s02", FolderType.SERIES, tmp_path / "series", 2),
+    ]
+    started: list[str] = []
+    first_saw_second_before_finishing = []
+    lock = threading.Lock()
+
+    def fake_run_processor(folder, **kwargs):
+        with lock:
+            started.append(folder.path.name)
+        if folder.season_number == 1:
+            threading.Event().wait(0.05)
+            with lock:
+                first_saw_second_before_finishing.append("s02" in started)
+        return {"downloaded": [], "failed": [], "skipped": 0}
+
+    monkeypatch.setattr(application, "_run_processor", fake_run_processor)
+    monkeypatch.setattr(application, "print_and_send_report", lambda report: None)
+
+    application.download_folders(folders=folders, max_workers=2)
+
+    assert first_saw_second_before_finishing == [True]

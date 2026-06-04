@@ -110,6 +110,45 @@ def test_process_season_folder_persists_next_episode_after_each_success(tmp_path
     assert saved["current_episode_download"] == 4
 
 
+def test_process_season_folder_repairs_stale_season_config_from_folder_path(tmp_path, monkeypatch):
+    season_folder = tmp_path / "series" / "House Of The Dragon" / "s02"
+    season_folder.mkdir(parents=True)
+    config = DownloadConfig(
+        type="series",
+        title="House Of The Dragon",
+        season=1,
+        episode_count=1,
+        current_episode_download=1,
+        search_group="S01",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(season_folder / "download-config.json", config)
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append((kwargs["season"], kwargs["episode"]))
+        return {
+            "success": True,
+            "filename": f"episode_{kwargs['episode']}.mkv",
+            "quality": "1080p",
+            "working_urls": [],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    process_season_folder(season_folder)
+
+    with open(season_folder / "download-config.json") as f:
+        saved = json.load(f)
+    assert calls == [(2, 1)]
+    assert saved["season"] == 2
+    assert saved["search_group"] == "S02"
+
+
 def test_process_season_folder_accepts_download_threads(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",

@@ -71,22 +71,29 @@ def get_default_config(folder_path: Path) -> DownloadConfig:
 
 
 def repair_series_season_config(folder_path: Path, config: DownloadConfig) -> bool:
-    """Fix configs that were created as movies inside series season folders."""
+    """Fix stale or malformed configs inside series season folders."""
     if not is_series_season_folder(folder_path):
         return False
 
     changed = False
     series_defaults = create_series_config(folder_path)
+    configured_season = config.season
     if config.type != "series":
         config.type = "series"
         changed = True
     if not config.title:
         config.title = series_defaults.title
         changed = True
-    if not config.season:
+    if config.season != series_defaults.season:
         config.season = series_defaults.season
         changed = True
-    if not config.search_group:
+    search_group_season = parse_season_from_folder(config.search_group or "")
+    if not config.search_group or (
+        search_group_season is not None
+        and configured_season is not None
+        and search_group_season == configured_season
+        and search_group_season != series_defaults.season
+    ):
         config.search_group = f"S{config.season:02d}"
         changed = True
     return changed
