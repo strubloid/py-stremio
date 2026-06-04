@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**py-stremio** is a terminal-based video download manager for legal content from a local folder structure. It monitors series/movie folders, detects missing content, and downloads with quality fallback.
+**py-stremio** is a terminal-based video download manager that monitors local series/movie folders, detects missing content, and downloads via Stremio addons (Torrentio, MediaFusion, etc.) with RealDebrid support and quality fallback.
 
 ## Key Technologies
 
@@ -15,60 +15,150 @@
 
 ```
 py-stremio/
-├── pyproject.toml              # Package config with hatch
-├── .env.example                # Environment template
-├── README.md                   # User documentation
-├── project.md                  # Technical documentation
-├── AGENTS.md                   # This file - agent context
-├── py_stremio/                 # Package (root level)
-│   ├── __init__.py
-│   ├── main.py                 # Entry point
-│   ├── settings.py             # Environment configuration
-│   ├── utils.py                # Helper functions
-│   ├── scanner.py              # Folder discovery
-│   ├── config_file.py          # Config management
-│   ├── state.py                # State tracking
-│   ├── provider.py             # Download providers
-│   ├── downloader.py          # Download orchestration
-│   ├── series.py               # Series processing
-│   ├── movies.py               # Movie processing
-│   └── report.py              # Report generation
+├── pyproject.toml                     # Package config with hatch
+├── .env.example                       # Environment template
+├── README.md                          # User documentation
+├── project.md                         # Technical documentation
+├── AGENTS.md                          # This file - agent context
+├── addons.txt                         # Custom addon URLs (optional)
+├── py_stremio/                        # Package
+│   ├── __init__.py                    # Public exports (Settings, settings)
+│   ├── main.py                        # Entry: delegates to components.application
+│   ├── download.py                    # Entry: legacy config/state-driven downloads
+│   ├── export.py                      # Entry: export addons from Stremio Desktop
+│   └── components/                    # All logic lives here
+│       ├── __init__.py
+│       ├── application.py             # CLI orchestration, menu, pipeline, progress UI
+│       ├── settings.py                # Dataclass-based Settings from .env
+│       ├── scanner.py                 # Folder discovery (FolderType.SERIES / MOVIES)
+│       ├── config_file.py             # DownloadConfig + QualitySettings dataclasses
+│       ├── state.py                   # DownloadState (.download-state.json) management
+│       ├── media_files.py             # Video file detection, episode parsing helpers
+│       ├── utils.py                   # sanitize_filename, parse_episode_number, parse_season_from_folder
+│       ├── output.py                  # Thread-aware stdout filtering for parallel downloads
+│       ├── bandwidth.py               # BandwidthLimiter with per-second accounting window
+│       ├── download_processing.py     # Core logic: process_season_folder / process_movie_folder
+│       ├── download_manager.py        # CLI for legacy config/state-driven download path
+│       ├── download_discovery.py      # find_season_folders / find_movie_folders
+│       ├── downloader.py              # Legacy Downloader class with quality fallback
+│       ├── provider.py                # BaseProvider, RealDebrid, Mock, Fallback providers
+│       ├── series.py                  # Legacy series processing (uses old downloader)
+│       ├── movies.py                  # Legacy movie processing (uses old downloader)
+│       ├── stremio_client.py          # Facade: search_and_download (main download path)
+│       ├── stremio_addon_search.py    # Query addons for streams, search_all_addons
+│       ├── stremio_metadata.py        # Cinemeta metadata lookups, IMDb season dataset
+│       ├── stremio_ids.py             # Build Stremio identifiers from IMDB/title
+│       ├── stremio_urls.py            # Normalize / deduplicate manifest URLs
+│       ├── stremio_exporter.py        # Export addons from Stremio Desktop storage
+│       ├── stream_downloads.py        # Stream URL resolution, HTTP download with resume
+│       ├── real_debrid.py             # RealDebrid API: magnet → torrent → direct URL
+│       ├── report.py                  # Terminal + email report generation
+│       └── addons/                    # Stremio addon abstractions
+│           ├── __init__.py
+│           ├── base.py                # BaseAddon, HttpAddon, UrlAddon ABCs
+│           ├── builtin.py             # 9 built-in addons (Torrentio, MediaFusion, etc.)
+│           ├── factory.py             # AddonManager construction (builtins + addons.txt)
+│           ├── manager.py             # AddonManager: search addons for streams
+│           └── models.py              # StreamInfo dataclass
 └── tests/
-    ├── test_scanner.py
+    ├── test_application.py
+    ├── test_bandwidth.py
     ├── test_config_file.py
-    ├── test_series.py
+    ├── test_download_processing.py
+    ├── test_media_files.py
+    ├── test_menu.py
     ├── test_movies.py
+    ├── test_progress_ui.py
+    ├── test_quality_fallback.py
+    ├── test_report.py
+    ├── test_scanner.py
+    ├── test_series.py
     ├── test_state.py
-    └── test_quality_fallback.py
+    ├── test_stremio_client.py
+    ├── test_stremio_metadata.py
+    └── test_stream_downloads.py
 ```
+
+## Architecture — Two Processing Paths
+
+The codebase has **two parallel processing paths**:
+
+### 1. Modern Path (primary) — used by `py-stremio` CLI
+`main.py` → `application.py` → `download_processing.py`
+
+```
+Scanner.scan()
+  → update_config_imdb_ids()   # Fetch Cinemeta/IMDb metadata
+  → download_folders()         # Process each folder
+    → process_season_folder()  # or process_movie_folder()
+      → load_config() / load_state()
+      → _missing_episodes()    # Determine what needs downloading
+      → search_and_download()  # Stremio addon stream search + HTTP download
+        → resolve IMDB ID via Cinemeta
+        → search_all_addons_for_streams()
+        → select_quality_streams()
+        → resolve_stream_download_url()
+        → download_stream_to_file()
+        → RealDebrid fallback if direct download fails
+      → save_state()
+```
+
+- Queries Stremio addons directly (Torrentio, MediaFusion, ThePirateBay+, etc.)
+- Per-episode progress bars with bandwidth limiting and speed display
+- Multi-threaded download support (DOWNLOAD_THREADS)
+- Partial download resume via .part files and Range headers
+- Working addon URL tracking in config (servers list)
+
+### 2. Legacy Path — used by `py-stremio-download` CLI
+`download.py` → `download_manager.py` → `series.py` / `movies.py` → `provider.py`
+
+- Uses BaseProvider abstraction (RealDebridProvider, MockProvider, FallbackProvider)
+- Quality fallback via Downloader.plan_quality_fallback()
+- Largely superseded by the modern path but still maintained
 
 ## Important Patterns
 
 ### Config vs State Files
 
-- **download-config.json**: User preferences (what they want)
-- **.download-state.json**: App tracking (what was done)
+- **download-config.json**: User preferences + metadata (quality, title, imdb_id, episode_count, servers, enabled, current_episode_download, available_episodes)
+- **.download-state.json**: App tracking (filenames downloaded, failed attempts)
 
 ### Folder Detection
 
-- Series folders: `series/{show_name}/s{number}/`
+- Series folders: `series/{show_name}/s{number}/` (e.g. `series/Breaking Bad/s01/`)
 - Movies folders: `movies/{group_name}/`
-- Season number extracted from folder name (`s01`, `S02`, etc.)
+- Season number extracted from folder name via `utils.parse_season_from_folder()` — matches `s03` or `Season_2`
 
 ### Episode Number Detection
 
 Uses regex patterns in `utils.parse_episode_number()`:
+- `S01E12` → 12
 - `episode 01.mkv` → 1
 - `E05.mkv` → 5
-- `Show_S01E12.mp4` → 12
+- `- 12` (standalone number) → 12
+
+### Auto-Season Creation
+
+`_create_current_year_season_folders()` in `application.py`:
+- Scans series with existing seasons
+- Checks Cinemeta + IMDb TSV dataset for current-year episodes
+- Creates season folders for new years automatically
 
 ### Quality Fallback Order
 
-1. Preferred quality
-2. Fallback qualities in list order
+1. Preferred quality from config (default: 1080p)
+2. Fallback qualities in list order (default: 720p, 480p)
 3. Skip if MAX_DOWNLOAD_ATTEMPTS reached
 
-### Provider Selection
+### Addon Discovery Order
+
+```
+1. Known working addon URLs from config.servers
+2. Built-in addons (Torrentio, Torrentio-SortSeeders, MediaFusion, Anime-Kitsu, Brazuca-Torrents, ThePirateBay+, HDHub, Comet + Torrentio-PT if RD key present)
+3. Custom addons from addons.txt (if file exists)
+```
+
+### Provider Selection (Legacy Path Only)
 
 ```
 IF REAL_DEBRID_API_KEY exists AND valid
@@ -79,67 +169,120 @@ ELSE
   → Use FallbackProvider (no-op)
 ```
 
+### RealDebrid Integration
+
+- Stream URL proxy resolution via Torrentio RD proxy redirects
+- Direct info_hash → magnet → torrent → download URL via RealDebrid API
+- Retry fallback: if direct addon download fails and stream has info_hash, retry via RD
+
 ## Settings Reference
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| ROOT_FOLDER | `/home/strubloid/stremio-downloads` | Base folder |
+| ROOT_FOLDER | `~/stremio-downloads` | Base folder |
 | SERIES_FOLDER | `{ROOT}/series` | Series root |
 | MOVIES_FOLDER | `{ROOT}/movies` | Movies root |
-| REAL_DEBRID_API_KEY | None | Debrid service |
-| MAX_DOWNLOAD_ATTEMPTS | 2 | Retry limit |
-| DRY_RUN | true | Test mode |
-| SMTP_* | None | Email config |
+| REAL_DEBRID_API_KEY | None | Debrid service key |
+| MAX_DOWNLOAD_ATTEMPTS | 5 | Retry limit per quality |
+| LIMIT_EPISODES | 0 | Max episodes per run (0=unlimited) |
+| MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min size for valid completed file |
+| DOWNLOAD_THREADS | 1 | Parallel download workers |
+| INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
+| INTERNET_MAX_SPEED_MBPS | 100 | Max Mbps for bandwidth calculation |
+| DRY_RUN | false | Test mode — no actual downloads |
+| STREMIO_ADDON_URL | None | Override addon base URL |
+| STREMIO_ADDON_URL_BASE | `https://torrentio.strem.fun` | Addon base URL when no RD key |
+| SMTP_HOST | None | Email report SMTP server |
+| SMTP_PORT | 587 | SMTP port |
+| SMTP_USER | None | SMTP login |
+| SMTP_PASSWORD | None | SMTP password |
+| SMTP_FROM | None | Email from address |
+| SMTP_TO | None | Email to address |
+| SMTP_USE_TLS | true | Enable STARTTLS |
 
-## Run Commands
+## CLI Usage
 
 ```bash
 # Install
 pip install -e .
 
-# Run
-python -m py_stremio.main
+# Interactive menu
+py-stremio
+
+# Full pipeline (non-interactive)
+py-stremio --run
+py-stremio 4
+
+# Individual steps
+py-stremio --scan        # or: py-stremio 1
+py-stremio --metadata    # or: py-stremio 2
+py-stremio --download    # or: py-stremio 3
+
+# With thread count and speed limit
+py-stremio --run 4 50   # 4 threads, 50% speed
+
+# Legacy paths
+py-stremio-download [root_folder]
+py-stremio-export [output_path]
 
 # Test
 pytest tests/ -v
 
-# Type check (if mypy installed)
-mypy src/py-stremio/
+# Coverage
+pytest tests/ --cov=py_stremio --cov-report=term-missing
 ```
 
-## Current Status
+## Addon System
 
-- MVP implementation complete
-- Core features working
-- Basic tests in place
-- Mock provider for testing
-- RealDebrid integration placeholder
-
-## Potential Improvements
-
-1. Actual RealDebrid API integration for torrent downloads
-2. Support for more naming conventions
-3. Better error handling and recovery
-4. Progress tracking for active downloads
-5. Webhook/notification support
-6. Configuration CLI tool
-7. More granular quality matching
-8. Support for multi-season series
-9. Batch operations for large libraries
+- **Built-in addons**: 9 predefined in `components/addons/builtin.py`
+- **Custom addons**: create `addons.txt` in project root with one URL per line (URLs replace built-ins entirely)
+- **Working URL tracking**: successful addon URLs saved to `config.servers` per folder
+- **Export from Stremio Desktop**: `py-stremio-export` reads `~/.config/Stremio/UserData/storage.json`
 
 ## Important Files for Changes
 
-- Add new quality levels → `utils.py` and `config_file.py`
-- Change folder structure → `scanner.py`
-- Add new provider → `provider.py`
-- Change state format → `state.py`
-- Modify report format → `report.py`
-- Change episode detection → `utils.py`
-- Add new settings → `settings.py`
+| Change | Files |
+|--------|-------|
+| Add new quality levels | `config_file.py` (QualitySettings), `stream_downloads.py` (select_quality_streams) |
+| Change folder structure | `scanner.py`, `download_discovery.py` |
+| Add new addons | `addons/builtin.py` (class) + `addons/factory.py` (registration) |
+| Modify addon search | `stremio_addon_search.py`, `addons/manager.py` |
+| Change download logic | `download_processing.py`, `stream_downloads.py` |
+| Change metadata lookup | `stremio_metadata.py` |
+| Modify state format | `state.py` |
+| Modify config format | `config_file.py` |
+| Modify report format | `report.py` |
+| Add new settings | `settings.py` |
+| Change episode detection | `utils.py` |
+| Add new provider | `provider.py` (legacy path) |
+| Modify progress UI | `application.py` (_progress_line, _make_progress_printer) |
+| Add bandwidth limits | `bandwidth.py` |
 
 ## Testing Notes
 
 - Tests use pytest fixtures for temporary directories
-- Mock all external services in tests
+- Mock all external HTTP services in tests (httpx mocking)
 - State tests handle file I/O with cleanup
 - Config tests verify default creation and loading
+- Download processing tests mock the Stremio client
+
+## Current Status
+
+- Modern Stremio addon-based download path is primary workflow
+- RealDebrid integration functional (magnet → torrent → direct URL with polling)
+- Per-episode progress bars with speed display and bandwidth limiting
+- Multi-threaded concurrent downloads
+- Partial download resume (.part files + Range headers)
+- Working addon URL tracking and caching
+- Metadata auto-fetch via Cinemeta + IMDb TSV dataset
+- Auto-creation of new season folders for current year
+- Legacy abstract provider path maintained but secondary
+- Email reports via SMTP (optional)
+
+## Known Limitations
+
+- No anime-style episode naming support
+- No subtitle download support
+- No torrent client integration (uses direct HTTP or RealDebrid)
+- No web UI or API
+- Single-user, single-machine design
