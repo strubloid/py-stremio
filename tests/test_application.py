@@ -93,6 +93,39 @@ def test_metadata_refresh_creates_config_at_next_episode_when_absolute_numbered_
     assert config["current_episode_download"] == 15
 
 
+def test_metadata_refresh_disables_series_season_when_metadata_has_no_episodes(tmp_path, monkeypatch):
+    season_folder = tmp_path / "series" / "Poppa's House" / "s02"
+    season_folder.mkdir(parents=True)
+    (tmp_path / "movies").mkdir()
+
+    test_settings = SimpleNamespace(
+        ROOT_FOLDER=tmp_path,
+        SERIES_FOLDER=tmp_path / "series",
+        MOVIES_FOLDER=tmp_path / "movies",
+        DRY_RUN=True,
+    )
+    monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio_metadata.get_series_metadata",
+        lambda title, season: {
+            "imdb_id": "tt26678932",
+            "title": "Poppa's House",
+            "episode_count": None,
+            "season_exists": False,
+        },
+    )
+
+    application.update_config_imdb_ids(quiet=True)
+
+    with open(season_folder / "download-config.json") as f:
+        config = json.load(f)
+    assert config["enabled"] is False
+    assert config["imdb_id"] == "tt26678932"
+    assert config["season"] == 2
+    assert config["episode_count"] is None
+
+
 def test_download_folders_starts_next_season_when_thread_capacity_exists(tmp_path, monkeypatch):
     folders = [
         ScannedFolder(tmp_path / "series" / "Show" / "s01", FolderType.SERIES, tmp_path / "series", 1),

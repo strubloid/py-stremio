@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import inspect
 import json
+import shutil
 import sys
 import threading
 import time
@@ -76,31 +77,66 @@ def _color_bar(bar: str, enabled: bool) -> str:
     return f"[{filled}{empty}]{_color(rest, YELLOW, True)}"
 
 
-def _progress_line(event: dict[str, Any], color: bool = False) -> str:
-    title = event.get("title") or "Download"
+def _truncate_label(text: str, max_width: int) -> str:
+    if max_width <= 0:
+        return ""
+    if len(text) <= max_width:
+        return text
+    if max_width <= 1:
+        return "…"
+    return f"{text[:max_width - 1]}…"
+
+
+def _terminal_width(stream) -> int:
+    columns = getattr(stream, "columns", None)
+    if isinstance(columns, int) and columns > 0:
+        return columns
+    return shutil.get_terminal_size(fallback=(100, 24)).columns
+
+
+def _event_progress_bar(event: dict[str, Any], width: int) -> str:
+    if event.get("type") == "bytes":
+        return render_progress_bar(event.get("downloaded", 0), event.get("bytes_total", 0), width=width)
+    if event.get("type") == "episode_start":
+        return render_progress_bar(0, 100, width=width)
+    if event.get("type") == "episode_done":
+        downloaded = event.get("downloaded")
+        bytes_total = event.get("bytes_total")
+        if downloaded is not None and bytes_total:
+            return render_progress_bar(downloaded, bytes_total, width=width)
+        return render_progress_bar(100, 100, width=width)
+    return render_progress_bar(event.get("current", 0), event.get("total", 0), width=width)
+
+
+def _progress_line(event: dict[str, Any], color: bool = False, max_width: int | None = None) -> str:
+    title = str(event.get("title") or "Download")
     season = event.get("season")
     episode = event.get("episode")
     current = event.get("current", 0)
     total = event.get("total", 0)
-    episode_label = f"S{season:02d}E{episode:02d}" if season and episode else "movie"
-    if event.get("type") == "bytes":
-        bar = render_progress_bar(event.get("downloaded", 0), event.get("bytes_total", 0))
-    elif event.get("type") == "episode_start":
-        bar = render_progress_bar(0, 100)
-    elif event.get("type") == "episode_done":
-        downloaded = event.get("downloaded")
-        bytes_total = event.get("bytes_total")
-        if downloaded is not None and bytes_total:
-            bar = render_progress_bar(downloaded, bytes_total)
-        else:
-            bar = render_progress_bar(100, 100)
-    else:
-        bar = render_progress_bar(current, total)
-    title_label = _color(str(title), ACCENT, color)
-    episode_label = _color(episode_label, GREEN, color)
-    bar = _color_bar(bar, color)
-    speed = _color(_speed_label(event.get("rate_bps")), GREEN, color)
-    episode_position = _color(f"episode {current}/{total}", DIM, color)
+    episode_label_text = f"S{season:02d}E{episode:02d}" if season and episode else "movie"
+    bar_width = 24 if not max_width or max_width >= 120 else 14
+    bar_text = _event_progress_bar(event, bar_width)
+    speed_text = _speed_label(event.get("rate_bps"))
+    episode_position_text = f"episode {current}/{total}"
+
+    if max_width:
+        episode_position_text = f"{current}/{total}"
+        for candidate_bar_width in (bar_width, 8):
+            bar_text = _event_progress_bar(event, candidate_bar_width)
+            fixed_text = f"  •  {episode_label_text} {bar_text}{speed_text}  ({episode_position_text})"
+            title_width = max(8, max_width - len(fixed_text))
+            title_text = _truncate_label(title, title_width)
+            plain_line = f"  • {title_text} {episode_label_text} {bar_text}{speed_text}  ({episode_position_text})"
+            if len(plain_line) <= max_width or candidate_bar_width == 8:
+                title = title_text
+                break
+
+    title_label = _color(title, ACCENT, color)
+    episode_label = _color(episode_label_text, GREEN, color)
+    bar = _color_bar(bar_text, color)
+    speed = _color(speed_text, GREEN, color)
+    episode_position = _color(episode_position_text, DIM, color)
     return f"  {_color('•', GREEN, color)} {title_label} {episode_label} {bar}{speed}  ({episode_position})"
 
 
@@ -117,6 +153,7 @@ def _make_progress_printer(stream) -> Any:
     min_redraw_interval = 0.10
     lock = threading.Lock()
     use_ansi_block = bool(getattr(stream, "isatty", lambda: False)())
+    max_line_width = max(40, _terminal_width(stream) - 1) if use_ansi_block else None
 
     def redraw(force: bool = False) -> None:
         nonlocal rendered_count, last_redraw_at
@@ -153,7 +190,7 @@ def _make_progress_printer(stream) -> Any:
             is_new_line = key not in active_lines
             if is_new_line:
                 order.append(key)
-            active_lines[key] = _progress_line(event, color=use_ansi_block)
+            active_lines[key] = _progress_line(event, color=use_ansi_block, max_width=max_line_width)
             redraw(force=is_new_line or event.get("type") == "episode_start")
 
     return printer
@@ -281,12 +318,26 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
                 if canonical_title and config.get("title") != canonical_title:
                     config["title"] = canonical_title
                     changed = True
+                season_exists = metadata.get("season_exists")
                 episode_count = metadata.get("episode_count")
-                if episode_count and config.get("episode_count") != episode_count:
-                    config["episode_count"] = episode_count
-                    changed = True
-                if not quiet:
-                    print(f"     ✓ {config.get('title')} · {config.get('imdb_id')} · {config.get('episode_count') or '?'} eps")
+                if season_exists is False:
+                    if config.get("enabled") is not False:
+                        config["enabled"] = False
+                        changed = True
+                    if config.get("episode_count") is not None:
+                        config["episode_count"] = None
+                        changed = True
+                    if not quiet:
+                        print(f"     ! {config.get('title')} S{season:02d} has no episodes in metadata; disabled")
+                else:
+                    if episode_count and config.get("episode_count") != episode_count:
+                        config["episode_count"] = episode_count
+                        changed = True
+                    if season_exists is True and config.get("enabled") is False:
+                        config["enabled"] = True
+                        changed = True
+                    if not quiet:
+                        print(f"     ✓ {config.get('title')} · {config.get('imdb_id')} · {config.get('episode_count') or '?'} eps")
             else:
                 imdb_id = get_series_imdb_id(title, season)
                 if imdb_id:

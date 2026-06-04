@@ -11,6 +11,8 @@ def strip_ansi(text: str) -> str:
 
 
 class TtyBuffer(io.StringIO):
+    columns: int
+
     def isatty(self):
         return True
 
@@ -147,6 +149,50 @@ def test_threaded_progress_printer_removes_completed_episode_line():
     output = stream.getvalue()
     assert "\033[K" in output
     assert output.endswith("\033[F")
+
+
+def test_progress_line_stays_within_terminal_width_when_many_parallel_downloads_are_active():
+    line = _progress_line(
+        {
+            "type": "bytes",
+            "title": "How I Met Your Mother",
+            "season": 1,
+            "episode": 6,
+            "current": 5,
+            "total": 21,
+            "downloaded": 48 * 1024 * 1024,
+            "bytes_total": 163 * 1024 * 1024,
+            "rate_bps": 866 * 1024,
+        },
+        max_width=96,
+    )
+
+    assert len(strip_ansi(line)) <= 96
+    assert "How I Met" in line
+    assert "S01E06" in line
+    assert "5/21" in line
+
+
+def test_threaded_progress_printer_uses_stream_terminal_width_to_prevent_wrapped_rows():
+    stream = TtyBuffer()
+    stream.columns = 96
+    printer = _make_progress_printer(stream)
+
+    printer({
+        "type": "bytes",
+        "title": "How I Met Your Mother",
+        "season": 1,
+        "episode": 6,
+        "current": 5,
+        "total": 21,
+        "downloaded": 48 * 1024 * 1024,
+        "bytes_total": 163 * 1024 * 1024,
+        "rate_bps": 866 * 1024,
+    })
+
+    plain_lines = [line for line in strip_ansi(stream.getvalue()).splitlines() if line.strip()]
+    assert plain_lines
+    assert all(len(line) <= 96 for line in plain_lines)
 
 
 def test_threaded_progress_printer_is_safe_for_parallel_callbacks():

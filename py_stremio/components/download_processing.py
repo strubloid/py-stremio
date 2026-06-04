@@ -132,8 +132,11 @@ def process_season_folder(
         return {"skipped": True, "reason": "no title in config"}
 
     season = config.season or 1
+    if config.episode_count is None:
+        return {"skipped": True, "reason": "season metadata has no episodes"}
+
     quality = _preferred_quality(config)
-    final_episode = config.episode_count or 20
+    final_episode = config.episode_count
     episodes = scan_folder_for_episodes(folder_path)
     existing_episodes = detect_existing_season_episodes(folder_path, config.episode_count)
     start_episode = max(1, config.current_episode_download or 1)

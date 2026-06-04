@@ -62,7 +62,12 @@ def get_series_metadata(title: str, season: int) -> dict | None:
         meta_url = f"https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
         response = httpx.get(meta_url, timeout=15)
         if response.status_code != 200:
-            return {"imdb_id": imdb_id, "title": search_meta.get("name") or title, "episode_count": None}
+            return {
+                "imdb_id": imdb_id,
+                "title": search_meta.get("name") or title,
+                "episode_count": None,
+                "season_exists": None,
+            }
 
         meta = response.json().get("meta", {})
         videos = meta.get("videos", [])
@@ -76,6 +81,7 @@ def get_series_metadata(title: str, season: int) -> dict | None:
             "imdb_id": meta.get("imdb_id") or imdb_id,
             "title": meta.get("name") or search_meta.get("name") or title,
             "episode_count": episode_count,
+            "season_exists": bool(season_episodes),
         }
     except Exception as e:
         print(f"  Series metadata lookup error: {e}")

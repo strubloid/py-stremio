@@ -43,6 +43,34 @@ def test_process_season_folder_downloads_all_missing_episodes_by_default(tmp_pat
     assert result["downloaded"] == 3
 
 
+def test_process_season_folder_skips_unverified_season_without_episode_count(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Poppa's House",
+        imdb_id="tt26678932",
+        season=2,
+        episode_count=None,
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs)
+        return {"success": True, "filename": "should_not_download.mkv"}
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path)
+
+    assert calls == []
+    assert result == {"skipped": True, "reason": "season metadata has no episodes"}
+
+
 def test_process_season_folder_uses_current_episode_download_as_start_episode(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",
