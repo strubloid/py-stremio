@@ -43,7 +43,7 @@ def _classify_addon(url: str) -> str:
           "animeo", "sonzuanime", "animes-season"],
          "ANIME"),
 
-        (["latinmovie", "latino-movie", "zoreu", "kinopub", "ftv-stremio",
+        (["latinmovie", "latino-movie", "zoreu", "ftv-stremio",
           "figarocorso", "einthusan", "dubbindo", "ricostremio"],
          "REGIONAL"),
 

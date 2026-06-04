@@ -104,6 +104,33 @@ class TestFilterStreamsByLanguage:
         result = stream_downloads.filter_streams_by_language(streams)
         assert len(result) == 0
 
+    def test_filters_russian_rus_marker(self, monkeypatch):
+        """'rus.' marker should be caught."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("1080p WEBRip x264 Rus. AC3 5.1")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 0
+
+    def test_filters_russian_ru_bracket(self, monkeypatch):
+        """'[RU]' marker should be caught."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("Show S01E01 1080p WEBRip [RU] AC3")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 0
+
+    def test_filters_russian_rudub_marker(self, monkeypatch):
+        """'RuDub' marker should be caught."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("Show S01E01 1080p WEBRip RuDub x264")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 0
+
     def test_keeps_multi_language_stream(self, monkeypatch):
         monkeypatch.setattr(
             stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]

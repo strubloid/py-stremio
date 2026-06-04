@@ -36,7 +36,7 @@ from .builtin import (
     HDHubAddon,
     HanimeAddon,
     JackettioAddon,
-    KinopubAddon,
+    # KinopubAddon  # removed 2026-06 — Russian-only content source
     KnightCrawlerAddon,
     LatinMoviesAddon,
     MainelocalnewsAddon,
@@ -99,7 +99,7 @@ __all__ = [
     "HDHubAddon",
     "HanimeAddon",
     "JackettioAddon",
-    "KinopubAddon",
+    # "KinopubAddon",  # removed 2026-06 — Russian-only
     "KnightCrawlerAddon",
     "LatinMoviesAddon",
     "MainelocalnewsAddon",

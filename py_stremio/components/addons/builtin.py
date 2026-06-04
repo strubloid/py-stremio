@@ -452,7 +452,11 @@ class RicosStremioAddon(HttpAddon):
 
 
 class KinopubAddon(HttpAddon):
-    """Kinopub – Russian/Eastern European content (requires KinoPub account)."""
+    """DEPRECATED – Kinopub (Russian/Eastern European content).
+
+    Removed from active registration in 2026 — Russian-only content source.
+    Class kept for import backward compatibility only; not registered.
+    """
 
     name = "Kinopub"
     base_url = "https://0a5433015240-stremio-kinopub.baby-beamup.club"

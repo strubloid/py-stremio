@@ -37,11 +37,6 @@ def _fetch(url: str, timeout: int = 10) -> tuple[int | None, bytes | None]:
 
 RD_KEY = "ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ"
 
-LANGUAGES = [
-    "english", "spanish", "portuguese", "french", "german", "italian",
-    "turkish", "russian", "hindi", "arabic", "japanese", "korean", "chinese",
-]
-
 SORTS = ["seeders", "size", "quality"]
 
 
@@ -222,7 +217,7 @@ def gen_beamup_addons() -> set[str]:
         "tmdb-collections", "stremio-addon-age-ratings",
         "stremio-addon-ratings", "stremio-netflix-catalog-addon",
         "tmdb-addon", "stremio-brazilian-addon", "thepiratebay-ctl",
-        "debrid-search", "cinetorrent-addon", "stremio-kinopub",
+        "debrid-search", "cinetorrent-addon", 
         "animeo", "hanime-stremio", "argentinatv",
         "stremio-mainelocalnews", "superflix", "aio-streaming",
         "brazuca-torrents", "stremio-broadcastify-usa-broadcasts",
@@ -291,7 +286,6 @@ def gen_cloud_addons() -> set[str]:
         "https://www.figarocorso.info/stremio",
         "https://einthusan.asaddon.com",
         "https://stremio.itcon.au/aisearch",
-        "https://0a5433015240-stremio-kinopub.baby-beamup.club",
         "https://stremiohebsubs.onrender.com",
     }
 

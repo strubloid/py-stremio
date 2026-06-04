@@ -30,7 +30,6 @@ from .builtin import (
     HDHubAddon,
     HanimeAddon,
     JackettioAddon,
-    KinopubAddon,
     KnightCrawlerAddon,
     LatinMoviesAddon,
     MainelocalnewsAddon,
@@ -131,7 +130,7 @@ def _register_builtin_addons(manager: AddonManager, api_key: str | None) -> None
     # ── Regional ──────────────────────────────────────────────────────────
     manager.register(LatinMoviesAddon())
     manager.register(RicosStremioAddon())
-    manager.register(KinopubAddon())
+    # manager.register(KinopubAddon())  # removed 2026-06 — Russian-only
     manager.register(FTVStremioAddon())
     manager.register(FigaroCorsoAddon())
     manager.register(EinthusanAddon())
