@@ -1,8 +1,6 @@
 """Application workflow for py-stremio download manager."""
-import contextlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import inspect
-import io
 import json
 import sys
 import threading
@@ -11,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from .bandwidth import build_limiter
+from .output import install_thread_stdout_filter, restore_thread_stdout_filter, suppress_current_thread_output
 from .settings import settings
 from .scanner import Scanner, FolderType, ScannedFolder
 from .download_processing import process_movie_folder as process_movies
@@ -312,7 +311,14 @@ def _result_items(value: Any, label: str, count: int) -> list[str]:
     return []
 
 
-def _run_processor(folder: ScannedFolder, quiet: bool, progress_callback=None, max_workers: int = 1, bandwidth_limiter=None) -> dict[str, Any]:
+def _run_processor(
+    folder: ScannedFolder,
+    quiet: bool,
+    progress_callback=None,
+    max_workers: int = 1,
+    bandwidth_limiter=None,
+    worker_semaphore: threading.Semaphore | None = None,
+) -> dict[str, Any]:
     processor = process_series if folder.folder_type == FolderType.SERIES else process_movies
     signature = inspect.signature(processor).parameters
     kwargs = {}
@@ -322,8 +328,12 @@ def _run_processor(folder: ScannedFolder, quiet: bool, progress_callback=None, m
         kwargs["max_workers"] = max_workers
     if "bandwidth_limiter" in signature:
         kwargs["bandwidth_limiter"] = bandwidth_limiter
+    if "worker_semaphore" in signature:
+        kwargs["worker_semaphore"] = worker_semaphore
+    if "quiet_output" in signature:
+        kwargs["quiet_output"] = quiet
     if quiet:
-        with contextlib.redirect_stdout(io.StringIO()):
+        with suppress_current_thread_output():
             return processor(folder.path, **kwargs)
     return processor(folder.path, **kwargs)
 
@@ -349,7 +359,13 @@ def download_folders(
     skipped = 0
 
     runnable: list[ScannedFolder] = []
-    progress = _make_progress_printer(sys.stdout)
+    restore_stdout = None
+    if quiet:
+        progress_stream, restore_stdout = install_thread_stdout_filter()
+    else:
+        progress_stream = sys.stdout
+    progress = _make_progress_printer(progress_stream)
+    worker_semaphore = threading.Semaphore(max_workers) if max_workers > 1 else None
 
     def folder_display(folder: ScannedFolder) -> str:
         display_name = folder.path.parent.name if folder.folder_type == FolderType.SERIES else folder.path.name
@@ -365,16 +381,18 @@ def download_folders(
         runnable.append(folder)
 
     def process_folder(folder: ScannedFolder) -> tuple[ScannedFolder, dict[str, Any]]:
-        # Thread count is global across folders. When folders are parallel, each
-        # folder processor runs one item so a busy season cannot monopolize all
-        # workers and block the next season from starting.
-        per_folder_workers = 1 if max_workers > 1 and len(runnable) > 1 else max_workers
+        # The semaphore enforces the global thread limit across every season.
+        # Each season may queue more episodes, so when one download finishes the
+        # next episode can start immediately instead of waiting for the whole
+        # season/folder processor to finish.
+        per_folder_workers = max_workers
         return folder, _run_processor(
             folder,
             quiet=quiet,
             progress_callback=progress,
             max_workers=per_folder_workers,
             bandwidth_limiter=bandwidth_limiter,
+            worker_semaphore=worker_semaphore,
         )
 
     def record_result(folder: ScannedFolder, result: dict[str, Any]) -> None:
@@ -436,6 +454,7 @@ def download_folders(
         dry_run=settings.DRY_RUN,
     )
     print_and_send_report(report)
+    restore_thread_stdout_filter(restore_stdout)
     return report
 
 

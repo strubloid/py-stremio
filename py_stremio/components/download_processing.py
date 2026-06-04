@@ -6,6 +6,7 @@ import time
 
 from .config_file import load_config, save_config
 from .media_files import iter_video_files, scan_episode_files
+from .output import suppress_current_thread_output
 from .settings import settings
 from .state import load_state, save_state
 from .stremio_client import search_and_download
@@ -112,7 +113,14 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
     return missing
 
 
-def process_season_folder(folder_path: Path, progress_callback=None, max_workers: int = 1, bandwidth_limiter=None) -> dict:
+def process_season_folder(
+    folder_path: Path,
+    progress_callback=None,
+    max_workers: int = 1,
+    bandwidth_limiter=None,
+    worker_semaphore: threading.Semaphore | None = None,
+    quiet_output: bool = False,
+) -> dict:
     """Process a season folder and download missing episodes from Stremio."""
     config, config_path = load_config(folder_path)
     state = load_state(folder_path)
@@ -215,6 +223,18 @@ def process_season_folder(folder_path: Path, progress_callback=None, max_workers
         })
         return {"episode": episode_num, "result": result}
 
+    def _download_episode_with_slot(index: int, episode_num: int) -> dict:
+        if worker_semaphore:
+            worker_semaphore.acquire()
+        try:
+            if quiet_output:
+                with suppress_current_thread_output():
+                    return download_episode(index, episode_num)
+            return download_episode(index, episode_num)
+        finally:
+            if worker_semaphore:
+                worker_semaphore.release()
+
     def apply_result(episode_num: int, result: dict, completed_successes: set[int] | None = None) -> None:
         nonlocal downloaded, failed, servers
         if result.get("success"):
@@ -236,7 +256,7 @@ def process_season_folder(folder_path: Path, progress_callback=None, max_workers
     if max_workers > 1 and total_missing > 1:
         completed_successes: set[int] = set()
         with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
-            futures = [executor.submit(download_episode, index, episode_num) for index, episode_num in enumerate(missing, start=1)]
+            futures = [executor.submit(_download_episode_with_slot, index, episode_num) for index, episode_num in enumerate(missing, start=1)]
             for future in as_completed(futures):
                 item = future.result()
                 apply_result(item["episode"], item["result"], completed_successes)

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from py_stremio.components.config_file import DownloadConfig, QualitySettings, save_config
 from py_stremio.components.download_processing import process_season_folder
+from py_stremio.components.output import install_thread_stdout_filter, restore_thread_stdout_filter
 
 
 def _download_settings():
@@ -147,6 +148,85 @@ def test_process_season_folder_repairs_stale_season_config_from_folder_path(tmp_
     assert calls == [(2, 1)]
     assert saved["season"] == 2
     assert saved["search_group"] == "S02"
+
+
+def test_process_season_folder_quiet_output_suppresses_worker_prints(tmp_path, monkeypatch, capsys):
+    config = DownloadConfig(
+        type="series",
+        title="House Of The Dragon",
+        season=2,
+        episode_count=2,
+        current_episode_download=1,
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+
+    def fake_search_and_download(**kwargs):
+        print(f"NOISY LOOKUP S02E{kwargs['episode']:02d}")
+        return {
+            "success": True,
+            "filename": f"episode_{kwargs['episode']}.mkv",
+            "quality": "1080p",
+            "working_urls": [],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    _, restore_stdout = install_thread_stdout_filter()
+    try:
+        process_season_folder(tmp_path, max_workers=2, quiet_output=True)
+    finally:
+        restore_thread_stdout_filter(restore_stdout)
+
+    assert "NOISY LOOKUP" not in capsys.readouterr().out
+
+
+def test_process_season_folder_uses_shared_worker_semaphore_to_cap_active_downloads(tmp_path, monkeypatch):
+    import threading
+
+    config = DownloadConfig(
+        type="series",
+        title="House Of The Dragon",
+        season=2,
+        episode_count=4,
+        current_episode_download=1,
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    active = 0
+    max_active = 0
+    calls = []
+    lock = threading.Lock()
+
+    def fake_search_and_download(**kwargs):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+            calls.append(kwargs["episode"])
+        threading.Event().wait(0.01)
+        with lock:
+            active -= 1
+        return {
+            "success": True,
+            "filename": f"episode_{kwargs['episode']}.mkv",
+            "quality": "1080p",
+            "working_urls": [],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    process_season_folder(tmp_path, max_workers=4, worker_semaphore=threading.Semaphore(2))
+
+    assert sorted(calls) == [1, 2, 3, 4]
+    assert max_active == 2
 
 
 def test_process_season_folder_accepts_download_threads(tmp_path, monkeypatch):

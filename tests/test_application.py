@@ -66,12 +66,14 @@ def test_download_folders_starts_next_season_when_thread_capacity_exists(tmp_pat
         ScannedFolder(tmp_path / "series" / "Show" / "s02", FolderType.SERIES, tmp_path / "series", 2),
     ]
     started: list[str] = []
+    seen_kwargs: list[dict] = []
     first_saw_second_before_finishing = []
     lock = threading.Lock()
 
     def fake_run_processor(folder, **kwargs):
         with lock:
             started.append(folder.path.name)
+            seen_kwargs.append(kwargs)
         if folder.season_number == 1:
             threading.Event().wait(0.05)
             with lock:
@@ -84,3 +86,6 @@ def test_download_folders_starts_next_season_when_thread_capacity_exists(tmp_pat
     application.download_folders(folders=folders, max_workers=2)
 
     assert first_saw_second_before_finishing == [True]
+    assert [kwargs["max_workers"] for kwargs in seen_kwargs] == [2, 2]
+    assert seen_kwargs[0]["worker_semaphore"] is seen_kwargs[1]["worker_semaphore"]
+    assert seen_kwargs[0]["worker_semaphore"] is not None
