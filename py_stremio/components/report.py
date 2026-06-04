@@ -1,6 +1,5 @@
 """Report generation for terminal and email."""
 from dataclasses import dataclass
-from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -21,41 +20,66 @@ class ReportData:
     dry_run: bool
 
 
+def _folder_count(folder: dict[str, Any], key: str) -> int:
+    count_key = f"{key}_count"
+    if count_key in folder:
+        return int(folder[count_key] or 0)
+    value = folder.get(key, [])
+    if isinstance(value, int):
+        return value
+    return len(value or [])
+
+
+def _preview_items(items: list[Any], limit: int = 3) -> list[str]:
+    preview = [str(item) for item in items[:limit]]
+    remaining = len(items) - limit
+    if remaining > 0:
+        preview.append(f"+ {remaining} more")
+    return preview
+
+
 def format_terminal_report(data: ReportData) -> str:
-    """Format report for terminal display."""
-    lines = []
-    lines.append("=" * 60)
-    lines.append("  PY-STREMIO DOWNLOAD MANAGER REPORT")
-    lines.append("=" * 60)
-    lines.append(f"  Timestamp: {data.timestamp}")
-    lines.append(f"  Mode: {'DRY RUN' if data.dry_run else 'LIVE'}")
-    lines.append("-" * 60)
-    lines.append(f"  Total folders scanned: {data.total_folders}")
-    lines.append(f"  Folders processed: {data.processed_folders}")
-    lines.append(f"  Folders skipped: {data.skipped_folders}")
-    lines.append(f"  Total downloads: {data.total_downloaded}")
-    lines.append(f"  Total failures: {data.total_failed}")
-    lines.append("-" * 60)
+    """Format a compact modern terminal report."""
+    mode = "DRY RUN" if data.dry_run else "LIVE"
+    status = "OK" if data.total_failed == 0 else "ATTENTION"
+    lines = [
+        "",
+        "╭─ Py-Stremio summary ─────────────────────────╮",
+        f"│ {mode:<8} · {data.total_folders} folders · {data.total_downloaded} downloaded · {data.total_failed} failed",
+        f"│ {data.timestamp} · {status}",
+        "╰──────────────────────────────────────────────╯",
+    ]
 
     for folder in data.folders:
-        lines.append(f"\n  [{folder['type'].upper()}] {folder['name']}")
+        folder_type = folder.get("type", "folder")
+        name = folder.get("name", "unknown")
         if folder.get("skipped"):
-            lines.append(f"    Status: SKIPPED ({folder.get('reason', 'unknown')})")
-        else:
-            downloaded = folder.get("downloaded", [])
-            failed = folder.get("failed", [])
-            if downloaded:
-                lines.append(f"    Downloaded: {len(downloaded)} item(s)")
-                for item in downloaded:
-                    lines.append(f"      - {item}")
-            if failed:
-                lines.append(f"    Failed: {len(failed)} item(s)")
-                for item in failed:
-                    lines.append(f"      - {item}")
-            if not downloaded and not failed:
-                lines.append("    No items to download")
+            lines.append(f"  ◌ {folder_type:<6} {name:<18} skipped · {folder.get('reason', 'unknown')}")
+            continue
 
-    lines.append("=" * 60)
+        downloaded_count = _folder_count(folder, "downloaded")
+        failed_count = _folder_count(folder, "failed")
+        if failed_count:
+            marker = "!"
+            summary = f"{downloaded_count} downloaded · {failed_count} failed"
+        elif downloaded_count:
+            marker = "✓"
+            summary = f"{downloaded_count} downloaded"
+        else:
+            marker = "·"
+            summary = "nothing to do"
+        lines.append(f"  {marker} {folder_type:<6} {name:<18} {summary}")
+
+        failed_items = folder.get("failed", [])
+        if isinstance(failed_items, list) and failed_items and failed_count != len(failed_items):
+            failed_items = []
+        if isinstance(failed_items, list) and failed_items and failed_count <= 3:
+            for item in _preview_items(failed_items, 3):
+                lines.append(f"      {item}")
+        elif isinstance(failed_items, list) and failed_items and failed_count > 3:
+            for item in _preview_items(failed_items, 3):
+                lines.append(f"      {item}")
+
     return "\n".join(lines)
 
 
@@ -73,36 +97,13 @@ def send_email_report(data: ReportData) -> bool:
     html_content = f"""
     <html>
     <body>
-        <h2>Py-Stremio Download Report</h2>
+        <h2>Py-Stremio Report</h2>
         <p><strong>Timestamp:</strong> {data.timestamp}</p>
         <p><strong>Mode:</strong> {'DRY RUN' if data.dry_run else 'LIVE'}</p>
-        <hr>
-        <p><strong>Total Folders:</strong> {data.total_folders}</p>
-        <p><strong>Processed:</strong> {data.processed_folders} | <strong>Skipped:</strong> {data.skipped_folders}</p>
+        <p><strong>Folders:</strong> {data.total_folders}</p>
         <p><strong>Downloads:</strong> {data.total_downloaded} | <strong>Failures:</strong> {data.total_failed}</p>
-        <hr>
-        <h3>Folder Details</h3>
+    </body></html>
     """
-
-    for folder in data.folders:
-        html_content += f"<h4>[{folder['type'].upper()}] {folder['name']}</h4>"
-        if folder.get("skipped"):
-            html_content += f"<p>Skipped: {folder.get('reason', 'unknown')}</p>"
-        else:
-            downloaded = folder.get("downloaded", [])
-            failed = folder.get("failed", [])
-            if downloaded:
-                html_content += f"<p>Downloaded: {len(downloaded)}</p><ul>"
-                for item in downloaded:
-                    html_content += f"<li>{item}</li>"
-                html_content += "</ul>"
-            if failed:
-                html_content += f"<p>Failed: {len(failed)}</p><ul>"
-                for item in failed:
-                    html_content += f"<li>{item}</li>"
-                html_content += "</ul>"
-
-    html_content += "</body></html>"
 
     msg.attach(MIMEText(text_content, "plain"))
     msg.attach(MIMEText(html_content, "html"))
@@ -121,15 +122,5 @@ def send_email_report(data: ReportData) -> bool:
 
 def print_and_send_report(data: ReportData) -> None:
     """Print terminal report and send email if configured."""
-    print()
     print(format_terminal_report(data))
-    
-    ## disabling this for now
     return None
-    if settings.smtp_configured:
-        if send_email_report(data):
-            print("\nEmail report sent successfully.")
-        else:
-            print("\nFailed to send email report.")
-    else:
-        print("\n(Note: SMTP not configured, skipping email report)")

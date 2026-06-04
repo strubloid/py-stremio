@@ -3,18 +3,14 @@ from pathlib import Path
 
 from .config_file import DownloadConfig, load_config
 from .downloader import Downloader, plan_quality_fallback
+from .media_files import detect_movie_titles
 from .state import load_state, save_state
 from .settings import settings
 
 
 def detect_existing_movies(folder_path: Path) -> set[str]:
     """Detect existing movies in folder by scanning for video files."""
-    movies = set()
-    extensions = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".m4v"}
-    for file_path in folder_path.iterdir():
-        if file_path.is_file() and file_path.suffix.lower() in extensions:
-            movies.add(file_path.stem)
-    return movies
+    return detect_movie_titles(folder_path)
 
 
 def process_movies(folder_path: Path) -> dict:

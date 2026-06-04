@@ -21,7 +21,7 @@ class QualitySettings:
 @dataclass
 class DownloadConfig:
     type: str
-    quality: QualitySettings | None = None
+    quality: QualitySettings | None = field(default_factory=QualitySettings)
     language: str = "any"
     subtitles: str = "any"
     provider: str = "auto"
@@ -31,6 +31,7 @@ class DownloadConfig:
     imdb_id: str | None = None
     season: int | None = None
     episode_count: int | None = None
+    current_episode_download: int = 1
     search_group: str | None = None
     download_all_related: bool = True
     working_addons: list[str] = field(default_factory=list)
@@ -45,6 +46,7 @@ def create_series_config(folder_path: Path) -> DownloadConfig:
         title=folder_path.parent.name.replace("-", " ").replace("_", " ").title(),
         season=season,
         imdb_id=None,
+        search_group=f"S{season:02d}",
     )
 
 
@@ -56,12 +58,38 @@ def create_movies_config(folder_path: Path) -> DownloadConfig:
     )
 
 
+def is_series_season_folder(folder_path: Path) -> bool:
+    """Return True for folders shaped like series/{show}/S01."""
+    return folder_path.parent.parent.name == "series" and parse_season_from_folder(folder_path.name) is not None
+
+
 def get_default_config(folder_path: Path) -> DownloadConfig:
-    """Get appropriate default config based on parent folder."""
-    parent = folder_path.parent.name
-    if parent == "series":
+    """Get appropriate default config based on folder shape."""
+    if is_series_season_folder(folder_path):
         return create_series_config(folder_path)
     return create_movies_config(folder_path)
+
+
+def repair_series_season_config(folder_path: Path, config: DownloadConfig) -> bool:
+    """Fix configs that were created as movies inside series season folders."""
+    if not is_series_season_folder(folder_path):
+        return False
+
+    changed = False
+    series_defaults = create_series_config(folder_path)
+    if config.type != "series":
+        config.type = "series"
+        changed = True
+    if not config.title:
+        config.title = series_defaults.title
+        changed = True
+    if not config.season:
+        config.season = series_defaults.season
+        changed = True
+    if not config.search_group:
+        config.search_group = f"S{config.season:02d}"
+        changed = True
+    return changed
 
 
 def load_config(folder_path: Path) -> tuple[DownloadConfig, Path]:
@@ -75,7 +103,10 @@ def load_config(folder_path: Path) -> tuple[DownloadConfig, Path]:
         data = json.load(f)
     quality_data = data.pop("quality", None)
     quality = QualitySettings(**quality_data) if quality_data else QualitySettings()
+    data["current_episode_download"] = max(1, int(data.get("current_episode_download") or 1))
     config = DownloadConfig(quality=quality, **data)
+    if repair_series_season_config(folder_path, config):
+        save_config(config_path, config)
     return config, config_path
 
 

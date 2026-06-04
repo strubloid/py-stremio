@@ -3,21 +3,15 @@ from pathlib import Path
 
 from .config_file import DownloadConfig, load_config
 from .downloader import Downloader, plan_quality_fallback
+from .media_files import detect_episode_numbers
 from .state import load_state, save_state
-from .utils import parse_episode_number, sanitize_filename
+from .utils import sanitize_filename
 from .settings import settings
 
 
 def detect_existing_episodes(folder_path: Path) -> set[int]:
     """Detect existing episodes in folder by scanning for video files."""
-    episodes = set()
-    extensions = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".m4v"}
-    for file_path in folder_path.iterdir():
-        if file_path.is_file() and file_path.suffix.lower() in extensions:
-            episode_num = parse_episode_number(file_path.name)
-            if episode_num is not None:
-                episodes.add(episode_num)
-    return episodes
+    return detect_episode_numbers(folder_path)
 
 
 def plan_missing_episodes(config: DownloadConfig, existing_episodes: set[int]) -> list[int]:
