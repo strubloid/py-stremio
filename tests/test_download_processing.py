@@ -43,6 +43,42 @@ def test_process_season_folder_downloads_all_missing_episodes_by_default(tmp_pat
     assert result["downloaded"] == 3
 
 
+def test_process_season_folder_passes_config_languages_to_search(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Bob's Burgers",
+        imdb_id="tt1561755",
+        season=13,
+        episode_count=1,
+        available_episodes=[1],
+        languages=["english"],
+        language="english",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    captured = {}
+
+    def fake_search_and_download(**kwargs):
+        captured.update(kwargs)
+        return {
+            "success": True,
+            "filename": f"episode_{kwargs['episode']}.mkv",
+            "quality": "1080p",
+            "working_urls": [],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path)
+
+    assert result["downloaded"] == 1
+    assert captured["preferred_languages"] == ["english"]
+
+
 def test_process_season_folder_skips_unverified_season_without_episode_count(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",

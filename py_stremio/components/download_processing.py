@@ -50,6 +50,14 @@ def _preferred_quality(config) -> str:
     return config.quality.preferred if config.quality else "1080p"
 
 
+def _preferred_languages(config) -> list[str] | None:
+    if config.languages:
+        return list(config.languages)
+    if config.language and config.language.lower() != "any":
+        return [config.language]
+    return None
+
+
 def _set_current_episode(config, config_path: Path, episode: int) -> None:
     config.current_episode_download = max(1, episode)
     save_config(config_path, config)
@@ -145,6 +153,7 @@ def process_season_folder(
         return {"skipped": True, "reason": "season metadata has no episodes"}
 
     quality = _preferred_quality(config)
+    preferred_languages = _preferred_languages(config)
     final_episode = config.episode_count
     episodes = scan_folder_for_episodes(folder_path)
     existing_episodes = detect_existing_season_episodes(folder_path, config.episode_count)
@@ -217,6 +226,7 @@ def process_season_folder(
             episode=episode_num,
             folder_path=str(folder_path),
             preferred_quality=quality,
+            preferred_languages=preferred_languages,
             working_addons=active_servers,
             progress_callback=on_bytes,
             bandwidth_limiter=bandwidth_limiter,
@@ -343,6 +353,7 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
 
     title = config.search_group or config.title or folder_path.name
     servers = unique_manifest_urls(config.servers)
+    preferred_languages = _preferred_languages(config)
 
     print(f"  Searching for movie: {title}")
     result = search_and_download(
@@ -351,6 +362,7 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
         episode=None,
         folder_path=str(folder_path),
         preferred_quality=quality,
+        preferred_languages=preferred_languages,
         working_addons=servers,
         progress_callback=lambda downloaded, total: progress_callback({
             "type": "bytes",

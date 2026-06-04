@@ -1,0 +1,70 @@
+# ── KNOWN WORKING (user-verified, some with debrid keys) ──────────────────
+https://intell-debridsearch.nepiraw.com/realdebrid=ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ
+https://torrentio.strem.fun/realdebrid=ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ
+https://torrentio.strem.fun/language=portuguese|realdebrid=ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ
+https://torrentio.strem.fun/sort=seeders|realdebrid=ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ
+https://anime-kitsu.strem.fun/
+https://mediafusion.elfhosted.com/
+https://thepiratebay-plus.strem.fun/
+https://archivio.elfhosted.com/
+https://27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club/
+https://addon.notorrent2.workers.dev/
+https://stremthru.13377001.xyz/stremio/torz/eyJpbmRleGVycyI6bnVsbCwic3RvcmVzIjpbeyJjIjoicmQiLCJ0IjoiRUNPT1NONVBQQVpOSFVZUEVZM1hZN0NUWlFWRVFXWVpFQjRYSjM0RjZBVVBDRkJQV1RBUSJ9XX0=/
+https://nyaa-scraper-stremio-addon.nmtl.app/source=nyaa&rd=RKbBcjCvb0MBw8KrK9Dkoxx2nci_8CQO6Dceg-B6WiNVtW6PheVwsywPlD5onn_Wc7QV3eckjhm9LLD3YYESvT7j9DpG_cXYlUykOmjkv3s&v=1.9.1/
+https://guindex-stremio.vercel.app|realdebrid=ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ
+https://guindex-stremio.vercel.app/realdebrid/ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ/
+https://watchhub.strem.io/
+https://caching.stremio.net/publicdomainmovies.now.sh/
+https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/sort=size|realdebrid=ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ/
+https://comet.feels.legal/
+https://hdhub.thevolecitor.qzz.io/
+
+# ── TORRENTIO VARIANTS ──────────────────────────────────────────────────
+https://torrentio.strem.fun/language=spanish/
+https://torrentio.strem.fun/language=hindi/
+https://torrentio.strem.fun/lite/
+
+# ── MAJOR TORRENT / DEBRID AGGREGATORS ─────────────────────────────────
+https://knightcrawler.elfhosted.com/
+https://comet.elfhosted.com/
+https://peerflix.mov/
+https://nucleus.stremio.tech/
+https://5a0d1888fa64-orion.baby-beamup.club/
+https://68d69db7dc40-debrid-search.baby-beamup.club/
+https://stremify.elfhosted.com/
+https://jackettio.elfhosted.com/
+https://aiostreams.elfhosted.com/
+https://150203dd784e-cinetorrent-addon.baby-beamup.club/
+https://torrin.app/
+
+# ── ANIME ───────────────────────────────────────────────────────────────
+https://akuma-delta.vercel.app/
+https://animepahe-addon.stremio.tech/
+https://7a625ac658ec-animeo.baby-beamup.club/
+https://onepaceaddon-zoropogger.koyeb.app/
+https://victorgveloso.github.io/animes-season-addon/
+https://86f0740f37f6-hanime-stremio.baby-beamup.club/
+
+# ── FREE / IPTV STREAMS ─────────────────────────────────────────────────
+https://skyflix.onrender.com/
+https://848b3516657c-argentinatv.baby-beamup.club/
+https://stremio-greek-tv-latest.onrender.com/
+https://xtreampro.onrender.com/
+https://3b4bbf5252c4-aio-streaming.baby-beamup.club/
+
+# ── REGIONAL ────────────────────────────────────────────────────────────
+https://latinmovies.vercel.app/
+https://zoreu.github.io/ricosstremio/
+https://0a5433015240-stremio-kinopub.baby-beamup.club/
+https://ftv-stremio.surge.sh/
+https://www.figarocorso.info/stremio/
+https://einthusan.asaddon.com/
+https://vstremio.vercel.app/
+https://f7094476a780-dubbindo.baby-beamup.club/
+https://a0da031547f5-stremio-mainelocalnews.baby-beamup.club/
+
+# ── UTILITY / SPECIALTY BACKENDS ───────────────────────────────────────
+https://youtubepro-macu.onrender.com/
+https://fshare.gaixixon.workers.dev/
+https://b89262c192b0-stremio-consumet-addon.baby-beamup.club/
+https://guindex-stremio.vercel.app/

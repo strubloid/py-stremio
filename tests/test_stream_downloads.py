@@ -81,6 +81,27 @@ class TestDetectLanguages:
         assert "english" in found
         assert "spanish" in found
 
+    def test_detects_russian_cyrillic_text(self):
+        """Title in Cyrillic should be detected as Russian."""
+        found = stream_downloads._detect_languages(
+            "Закусочная Боба / Bob's Burgers / Сезон: 13 / Серии: 1-22 из 22"
+        )
+        assert "russian" in found
+
+    def test_detects_cyrillic_with_english_text(self):
+        """Mixed Cyrillic+English should still detect Russian."""
+        found = stream_downloads._detect_languages(
+            "русская озвучка Bob's Burgers S13E01"
+        )
+        assert "russian" in found
+
+    def test_no_false_positive_on_pure_latin(self):
+        """Pure Latin text should not falsely detect Russian."""
+        found = stream_downloads._detect_languages(
+            "Bob's Burgers S13E01 1080p WEB-DL x264 English"
+        )
+        assert "russian" not in found
+
 
 class TestFilterStreamsByLanguage:
     """Integration tests for filter_streams_by_language."""
@@ -131,6 +152,30 @@ class TestFilterStreamsByLanguage:
         result = stream_downloads.filter_streams_by_language(streams)
         assert len(result) == 0
 
+    def test_filters_cyrillic_title(self, monkeypatch):
+        """Title with Cyrillic text should be filtered."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream(
+            "Закусочная Боба / Bob's Burgers / Сезон: 13 / Серии: 1-22 из 22 [1080p] MVO"
+        )]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 0
+
+    def test_passes_english_stream_with_cyrillic_in_name(self, monkeypatch):
+        """Addon name with non-language cyrillic shouldn't break English detection."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [StreamInfo(
+            name="Torrentio",
+            title="1080p WEBRip x264 English AC3 5.1",
+            url="https://example.test/video.mkv",
+        )]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 1
+
     def test_keeps_multi_language_stream(self, monkeypatch):
         monkeypatch.setattr(
             stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
@@ -147,14 +192,14 @@ class TestFilterStreamsByLanguage:
         result = stream_downloads.filter_streams_by_language(streams)
         assert len(result) == 1
 
-    def test_keeps_stream_with_show_name_containing_lang(self, monkeypatch):
-        """The Russian S01E01 1080p WEBRip x264 English should pass (English detected)."""
+    def test_filters_stream_with_russian_marker_even_if_english_is_detected(self, monkeypatch):
+        """Strict English configs remove anything marked Russian."""
         monkeypatch.setattr(
             stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
         )
         streams = [self.make_stream("The Russian S01E01 1080p WEBRip x264 English AAC")]
         result = stream_downloads.filter_streams_by_language(streams)
-        assert len(result) == 1
+        assert len(result) == 0
 
     def test_skip_filtering_when_any_is_preferred(self, monkeypatch):
         monkeypatch.setattr(
@@ -171,6 +216,44 @@ class TestFilterStreamsByLanguage:
         streams = [self.make_stream("English + French Dual Audio")]
         result = stream_downloads.filter_streams_by_language(streams)
         assert len(result) == 1
+
+    def test_filters_russian_even_when_english_is_also_marked(self, monkeypatch):
+        """English-preferred configs must not accept Russian/English dual releases."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("Bob's Burgers S13E01 1080p English Russian Dual Audio")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 0
+
+    def test_filters_russian_even_when_multi_audio_is_marked(self, monkeypatch):
+        """Multi-audio releases are still blocked when they also say Russian/RU."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("Bob's Burgers S13E01 1080p Multi Audio [RU]")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 0
+
+    def test_eng_marker_counts_as_english_preference(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("Bob's Burgers S13E01 1080p WEB-DL ENG AAC")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 1
+
+    def test_can_use_download_config_languages_instead_of_global_settings(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["any"]
+        )
+        streams = [
+            self.make_stream("Bob's Burgers S13E01 1080p Russian AAC"),
+            self.make_stream("Bob's Burgers S13E01 1080p ENG AAC"),
+        ]
+        result = stream_downloads.filter_streams_by_language(streams, preferred_languages=["english"])
+        assert len(result) == 1
+        assert "ENG" in result[0].title
 
     def test_spanish_preferred_keeps_spanish_filters_russian(self, monkeypatch):
         monkeypatch.setattr(

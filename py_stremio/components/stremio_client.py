@@ -21,6 +21,7 @@ def search_and_download(
     episode: int | None = None,
     folder_path: str | None = None,
     preferred_quality: str = "1080p",
+    preferred_languages: list[str] | None = None,
     working_addons: list[str] | None = None,
     progress_callback=None,
     bandwidth_limiter=None,
@@ -39,7 +40,11 @@ def search_and_download(
         return {"success": False, "error": "No streams found", "working_urls": working_urls}
 
     print(f"    Found {len(streams)} streams")
-    streams_to_try = select_quality_streams(streams, preferred_quality)
+    streams_to_try = select_quality_streams(
+        streams,
+        preferred_quality,
+        preferred_languages=preferred_languages,
+    )
     print(f"    {len(streams_to_try)} usable streams after quality filter")
 
     last_error = None

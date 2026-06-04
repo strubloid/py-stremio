@@ -1,65 +1,65 @@
 """Stream URL resolving and file download helpers."""
 import httpx
 
+import re
+
 from .addons.models import StreamInfo
 from .real_debrid import resolve_torrent_with_debrid
 from .settings import settings
 
 RD_PROXY_PREFIX = "https://torrentio.strem.fun/resolve/"
 
-# Language keyword map for stream title filtering.
-# Maps search keyword → canonical language name.
-_LANGUAGE_KEYWORDS: dict[str, str] = {
-    "english": "english",
-    "eng": "english",
-    "russian": "russian",
-    "русский": "russian",
-    "russkiy": "russian",
-    " [ru]": "russian",
-    " rus ": "russian",
-    " rus.": "russian",
-    "rudub": "russian",
-    " ru ": "russian",
-    "spanish": "spanish",
-    "español": "spanish",
-    "espanol": "spanish",
-    "french": "french",
-    "français": "french",
-    "francais": "french",
-    "german": "german",
-    "deutsch": "german",
-    "italian": "italian",
-    "italiano": "italian",
-    "portuguese": "portuguese",
-    "português": "portuguese",
-    "portugues": "portuguese",
-    "dutch": "dutch",
-    "nederlands": "dutch",
-    "polish": "polish",
-    "polski": "polish",
-    "turkish": "turkish",
-    "türkçe": "turkish",
-    "turkce": "turkish",
-    "japanese": "japanese",
-    "日本語": "japanese",
-    "korean": "korean",
-    "한국어": "korean",
-    "chinese": "chinese",
-    "中文": "chinese",
-    "arabic": "arabic",
-    "hindi": "hindi",
-    "thai": "thai",
-    "vietnamese": "vietnamese",
-    "swedish": "swedish",
-    "danish": "danish",
-    "norwegian": "norwegian",
-    "finnish": "finnish",
-    "czech": "czech",
-    "hungarian": "hungarian",
-    "romanian": "romanian",
-    "ukrainian": "ukrainian",
-    "greek": "greek",
-}
+# Language keyword patterns for stream title filtering.
+# Keep short codes token-bound so e.g. "legend" does not imply ENG.
+_LANGUAGE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\benglish\b", re.IGNORECASE), "english"),
+    (re.compile(r"(?:^|[^a-z0-9])eng(?:lish)?(?:$|[^a-z0-9])", re.IGNORECASE), "english"),
+    (re.compile(r"\brussian\b", re.IGNORECASE), "russian"),
+    (re.compile(r"\bрус(?:ский|ская|ское|ские)?\b", re.IGNORECASE), "russian"),
+    (re.compile(r"\brusskiy\b", re.IGNORECASE), "russian"),
+    (re.compile(r"(?:^|[^a-z0-9])ru(?:$|[^a-z0-9])", re.IGNORECASE), "russian"),
+    (re.compile(r"(?:^|[^a-z0-9])rus(?:$|[^a-z0-9])", re.IGNORECASE), "russian"),
+    (re.compile(r"\brudub\b", re.IGNORECASE), "russian"),
+    (re.compile(r"\bspanish\b", re.IGNORECASE), "spanish"),
+    (re.compile(r"\bespañol\b", re.IGNORECASE), "spanish"),
+    (re.compile(r"\bespanol\b", re.IGNORECASE), "spanish"),
+    (re.compile(r"\bfrench\b", re.IGNORECASE), "french"),
+    (re.compile(r"\bfrançais\b", re.IGNORECASE), "french"),
+    (re.compile(r"\bfrancais\b", re.IGNORECASE), "french"),
+    (re.compile(r"\bgerman\b", re.IGNORECASE), "german"),
+    (re.compile(r"\bdeutsch\b", re.IGNORECASE), "german"),
+    (re.compile(r"\bitalian\b", re.IGNORECASE), "italian"),
+    (re.compile(r"\bitaliano\b", re.IGNORECASE), "italian"),
+    (re.compile(r"\bportuguese\b", re.IGNORECASE), "portuguese"),
+    (re.compile(r"\bportuguês\b", re.IGNORECASE), "portuguese"),
+    (re.compile(r"\bportugues\b", re.IGNORECASE), "portuguese"),
+    (re.compile(r"\bdutch\b", re.IGNORECASE), "dutch"),
+    (re.compile(r"\bnederlands\b", re.IGNORECASE), "dutch"),
+    (re.compile(r"\bpolish\b", re.IGNORECASE), "polish"),
+    (re.compile(r"\bpolski\b", re.IGNORECASE), "polish"),
+    (re.compile(r"\bturkish\b", re.IGNORECASE), "turkish"),
+    (re.compile(r"\btürkçe\b", re.IGNORECASE), "turkish"),
+    (re.compile(r"\bturkce\b", re.IGNORECASE), "turkish"),
+    (re.compile(r"\bjapanese\b", re.IGNORECASE), "japanese"),
+    (re.compile(r"日本語", re.IGNORECASE), "japanese"),
+    (re.compile(r"\bkorean\b", re.IGNORECASE), "korean"),
+    (re.compile(r"한국어", re.IGNORECASE), "korean"),
+    (re.compile(r"\bchinese\b", re.IGNORECASE), "chinese"),
+    (re.compile(r"中文", re.IGNORECASE), "chinese"),
+    (re.compile(r"\barabic\b", re.IGNORECASE), "arabic"),
+    (re.compile(r"\bhindi\b", re.IGNORECASE), "hindi"),
+    (re.compile(r"\bthai\b", re.IGNORECASE), "thai"),
+    (re.compile(r"\bvietnamese\b", re.IGNORECASE), "vietnamese"),
+    (re.compile(r"\bswedish\b", re.IGNORECASE), "swedish"),
+    (re.compile(r"\bdanish\b", re.IGNORECASE), "danish"),
+    (re.compile(r"\bnorwegian\b", re.IGNORECASE), "norwegian"),
+    (re.compile(r"\bfinnish\b", re.IGNORECASE), "finnish"),
+    (re.compile(r"\bczech\b", re.IGNORECASE), "czech"),
+    (re.compile(r"\bhungarian\b", re.IGNORECASE), "hungarian"),
+    (re.compile(r"\bromanian\b", re.IGNORECASE), "romanian"),
+    (re.compile(r"\bukrainian\b", re.IGNORECASE), "ukrainian"),
+    (re.compile(r"\bgreek\b", re.IGNORECASE), "greek"),
+]
 
 _MULTI_LANGUAGE_INDICATORS = [
     "multi",
@@ -73,31 +73,46 @@ _MULTI_LANGUAGE_INDICATORS = [
     "multi subs",
 ]
 
+# Cyrillic script → strong indicator of Russian / Slavic content.
+# Common in Russian tracker releases even when the show is Western.
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF\u0500-\u052F]")
+
+
+def _normalize_preferred_languages(preferred_languages: list[str] | None = None) -> list[str]:
+    preferred = preferred_languages if preferred_languages is not None else settings.PREFERRED_LANGUAGES
+    normalized = [lang.strip().lower() for lang in preferred if lang and lang.strip()]
+    return normalized or ["any"]
+
 
 def _detect_languages(text: str) -> set[str]:
     """Return set of canonical language names found in the given text."""
-    text_lower = text.lower()
     found: set[str] = set()
-    for keyword, canonical in _LANGUAGE_KEYWORDS.items():
-        if keyword in text_lower:
+    text_lower = text.lower()
+    for pattern, canonical in _LANGUAGE_PATTERNS:
+        if pattern.search(text):
             found.add(canonical)
     for indicator in _MULTI_LANGUAGE_INDICATORS:
         if indicator in text_lower:
             found.add("multi")
             break
+    # Cyrillic text → Russian
+    if _CYRILLIC_RE.search(text):
+        found.add("russian")
     return found
 
 
-def filter_streams_by_language(streams: list) -> list:
-    """Filter streams to prefer those matching PREFERRED_LANGUAGES.
+def filter_streams_by_language(streams: list, preferred_languages: list[str] | None = None) -> list:
+    """Filter streams to prefer those matching the requested languages.
 
+    Streams with Russian/Cyrillic markers are blocked unless Russian is explicitly
+    preferred, even when they also advertise English or multi-audio.
     Streams with *no* detectable language are kept (safe default).
-    Multi-language streams always pass.
+    Multi-language streams pass only when no non-preferred language is detected.
     Streams whose detected languages include at least one preferred language pass.
     Streams whose only detected languages are non-preferred are filtered out.
-    When ``PREFERRED_LANGUAGES`` contains ``"any"``, all streams pass.
+    When preferred languages contains ``"any"``, all streams pass.
     """
-    preferred = [lang.strip().lower() for lang in settings.PREFERRED_LANGUAGES]
+    preferred = _normalize_preferred_languages(preferred_languages)
 
     if "any" in preferred:
         return streams
@@ -110,7 +125,14 @@ def filter_streams_by_language(streams: list) -> list:
 
         detected = _detect_languages(combined)
 
-        # Multi-language streams always pass
+        # If the user did not ask for Russian, do not accept Russian-marked
+        # releases even when they also advertise English or multi-audio.
+        if "russian" in detected and "russian" not in preferred:
+            short_title = title[:60].replace("\n", " ")
+            print(f"    Filtered out russian stream: {short_title}")
+            continue
+
+        # Multi-language streams pass after explicitly-banned languages were removed.
         if "multi" in detected:
             filtered.append(stream)
             continue
@@ -158,7 +180,11 @@ def _quality_sort_key(stream) -> tuple[int, int]:
     return (-qscore, -url_bonus)
 
 
-def select_quality_streams(streams: list, preferred_quality: str) -> list:
+def select_quality_streams(
+    streams: list,
+    preferred_quality: str,
+    preferred_languages: list[str] | None = None,
+) -> list:
     """Filter out unusable streams, then return all usable ones sorted by quality
     descending (1080p > 720p > 480p > ...) so the caller can try best first
     and fall back to lower qualities."""
@@ -169,7 +195,7 @@ def select_quality_streams(streams: list, preferred_quality: str) -> list:
     if not usable:
         return []
     # Apply language filter
-    usable = filter_streams_by_language(usable)
+    usable = filter_streams_by_language(usable, preferred_languages=preferred_languages)
     if not usable:
         return []
     # Sort by quality descending

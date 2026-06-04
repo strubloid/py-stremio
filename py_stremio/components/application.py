@@ -211,13 +211,13 @@ def _banner() -> None:
 def _menu() -> None:
     print()
     print(_c("Choose a step", ACCENT))
-    print("  1  ✨ Run all: scan → metadata → validate addons → download")
-    print("  2  🔎 Scan library")
-    print("  3  🧠 Refresh configs + metadata")
-    print("  4  ⬇  Download missing episodes/movies")
-    print("  5  🔍 Discover new addon URLs")
-    print("  6  🛠 Validate addon URLs")
-    print("  7  🚪 Exit")
+    print("  1  ✨  Run: scan → metadata → download")
+    print("  2  🔎  Scan library")
+    print("  3  🧠  Refresh configs + metadata")
+    print("  4  ⬇   Download missing episodes/movies")
+    print("  5  🔍  Discover new addon URLs")
+    print("  6  🛠  Validate addon URLs")
+    print("  7  🚪  Exit")
 
 
 def _current_year() -> int:
@@ -676,7 +676,6 @@ def run_menu() -> None:
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
         print(_c("\n🛠  Validate addon URLs", ACCENT))
-        validate_and_update()
         download_folders(folders, quiet=True, max_workers=_ask_download_threads())
     elif choice == "2":
         scan_library()

@@ -450,21 +450,6 @@ class RicosStremioAddon(HttpAddon):
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
 
-
-class KinopubAddon(HttpAddon):
-    """DEPRECATED – Kinopub (Russian/Eastern European content).
-
-    Removed from active registration in 2026 — Russian-only content source.
-    Class kept for import backward compatibility only; not registered.
-    """
-
-    name = "Kinopub"
-    base_url = "https://0a5433015240-stremio-kinopub.baby-beamup.club"
-
-    def get_url(self, api_key: str | None = None) -> str:
-        return self.base_url
-
-
 class FTVStremioAddon(HttpAddon):
     """FTV Stremio – French television catch-up and streaming."""
 
