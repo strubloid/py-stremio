@@ -379,6 +379,58 @@ def _result_items(value: Any, label: str, count: int) -> list[str]:
     return []
 
 
+def _series_overview_key(folder: ScannedFolder, config) -> tuple[str, str]:
+    title = config.title or folder.path.parent.name.replace("-", " ").replace("_", " ").title()
+    stable_id = config.imdb_id or title.casefold()
+    return stable_id, title
+
+
+def _series_completion_overviews(folders: list[ScannedFolder]) -> list[str]:
+    """Build one library/checking line per series, aggregated across seasons."""
+    from .config_file import load_config
+    from .media_files import detect_existing_season_episodes
+
+    series: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for folder in folders:
+        if folder.folder_type != FolderType.SERIES:
+            continue
+        try:
+            config, _ = load_config(folder.path)
+        except Exception:
+            continue
+        stable_id, title = _series_overview_key(folder, config)
+        if stable_id not in series:
+            series[stable_id] = {"title": title, "downloaded": 0, "total": 0, "unavailable": 0}
+            order.append(stable_id)
+        item = series[stable_id]
+        item["title"] = title
+        if not config.enabled and not config.episode_count:
+            item["unavailable"] += 1
+            continue
+        if not config.episode_count or config.episode_count <= 0:
+            continue
+        existing = detect_existing_season_episodes(folder.path, config.episode_count)
+        item["downloaded"] += min(len(existing), config.episode_count)
+        item["total"] += config.episode_count
+
+    lines = []
+    for stable_id in order:
+        item = series[stable_id]
+        title = item["title"]
+        downloaded = item["downloaded"]
+        total = item["total"]
+        if total:
+            percent = int(round((downloaded / total) * 100))
+            status = "nothing new" if downloaded >= total else "checking"
+            lines.append(f"  • {title} - {percent}% ({downloaded}/{total}) - {status}")
+        elif item["unavailable"]:
+            lines.append(f"  • {title} - not available yet")
+        else:
+            lines.append(f"  • {title} - metadata pending")
+    return lines
+
+
 def _run_processor(
     folder: ScannedFolder,
     quiet: bool,
@@ -440,12 +492,16 @@ def download_folders(
         suffix = f" S{folder.season_number:02d}" if folder.season_number else ""
         return f"{display_name}{suffix}"
 
+    for line in _series_completion_overviews(folders):
+        print(_c(line, ACCENT))
+
     for folder in folders:
-        print(f"  • {_c(folder_display(folder), ACCENT)}")
         if folder.folder_type not in (FolderType.SERIES, FolderType.MOVIES):
             skipped += 1
             print(_c("    skipped", DIM))
             continue
+        if folder.folder_type == FolderType.MOVIES:
+            print(f"  • {_c(folder_display(folder), ACCENT)}")
         runnable.append(folder)
 
     def process_folder(folder: ScannedFolder) -> tuple[ScannedFolder, dict[str, Any]]:
@@ -467,7 +523,8 @@ def download_folders(
         nonlocal processed, skipped, total_downloaded, total_failed
         if result.get("skipped") is True:
             skipped += 1
-            print(_c(f"  {folder_display(folder)} skipped ({result.get('reason', 'disabled')})", YELLOW))
+            if folder.folder_type != FolderType.SERIES:
+                print(_c(f"  {folder_display(folder)} skipped ({result.get('reason', 'disabled')})", YELLOW))
             report_folders.append({
                 "name": folder.path.name,
                 "type": folder.folder_type.value,
@@ -485,10 +542,11 @@ def download_folders(
         total_downloaded += downloaded_count
         total_failed += failed_count
 
-        status = _c(f"✓ {downloaded_count} downloaded", GREEN) if failed_count == 0 else _c(f"! {failed_count} failed", RED)
-        if downloaded_count and failed_count:
-            status = f"{_c(f'✓ {downloaded_count}', GREEN)} / {_c(f'! {failed_count}', RED)}"
-        print(f"  {folder_display(folder)} {status}")
+        if downloaded_count or failed_count or folder.folder_type != FolderType.SERIES:
+            status = _c(f"✓ {downloaded_count} downloaded", GREEN) if failed_count == 0 else _c(f"! {failed_count} failed", RED)
+            if downloaded_count and failed_count:
+                status = f"{_c(f'✓ {downloaded_count}', GREEN)} / {_c(f'! {failed_count}', RED)}"
+            print(f"  {folder_display(folder)} {status}")
 
         report_folders.append({
             "name": folder.path.name,

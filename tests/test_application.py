@@ -126,6 +126,71 @@ def test_metadata_refresh_disables_series_season_when_metadata_has_no_episodes(t
     assert config["episode_count"] is None
 
 
+def test_download_folders_lists_series_overview_instead_of_each_season(tmp_path, monkeypatch, capsys):
+    series_root = tmp_path / "series"
+    house_s01 = series_root / "House Of The Dragon" / "s01"
+    house_s02 = series_root / "House Of The Dragon" / "s02"
+    poppa_s01 = series_root / "Poppas House" / "s01"
+    poppa_s02 = series_root / "Poppas House" / "s02"
+    for folder in (house_s01, house_s02, poppa_s01, poppa_s02):
+        folder.mkdir(parents=True)
+    for episode in range(1, 11):
+        (house_s01 / f"House.Of.The.Dragon.S01E{episode:02d}.mkv").write_bytes(b"done")
+    for episode in range(1, 9):
+        (house_s02 / f"House.Of.The.Dragon.S02E{episode:02d}.mkv").write_bytes(b"done")
+    for episode in range(1, 19):
+        (poppa_s01 / f"Poppas.House.S01E{episode:02d}.mkv").write_bytes(b"done")
+
+    from py_stremio.components.config_file import DownloadConfig, save_config
+
+    save_config(house_s01 / "download-config.json", DownloadConfig(type="series", title="House of the Dragon", season=1, episode_count=10))
+    save_config(house_s02 / "download-config.json", DownloadConfig(type="series", title="House of the Dragon", season=2, episode_count=8))
+    save_config(poppa_s01 / "download-config.json", DownloadConfig(type="series", title="Poppa's House", season=1, episode_count=18))
+    save_config(poppa_s02 / "download-config.json", DownloadConfig(type="series", title="Poppa's House", season=2, episode_count=None, enabled=False))
+    folders = [
+        ScannedFolder(house_s01, FolderType.SERIES, series_root, 1),
+        ScannedFolder(house_s02, FolderType.SERIES, series_root, 2),
+        ScannedFolder(poppa_s01, FolderType.SERIES, series_root, 1),
+        ScannedFolder(poppa_s02, FolderType.SERIES, series_root, 2),
+    ]
+    monkeypatch.setattr(application, "_run_processor", lambda folder, **kwargs: {"downloaded": 0, "failed": 0, "skipped": 0})
+    monkeypatch.setattr(application, "print_and_send_report", lambda report: None)
+
+    application.download_folders(folders=folders, max_workers=1)
+
+    output = capsys.readouterr().out
+    assert "House of the Dragon - 100% (18/18) - nothing new" in output
+    assert "Poppa's House - 100% (18/18) - nothing new" in output
+    assert "House Of The Dragon S01" not in output
+    assert "House Of The Dragon S02" not in output
+    assert "Poppas House S01" not in output
+    assert "Poppas House S02" not in output
+
+
+def test_download_folders_series_overview_shows_partial_download_percentage(tmp_path, monkeypatch, capsys):
+    series_root = tmp_path / "series"
+    season_folder = series_root / "Doctor Who (2023)" / "s01"
+    season_folder.mkdir(parents=True)
+    for episode in range(1, 3):
+        (season_folder / f"Doctor.Who.2023.S01E{episode:02d}.mkv").write_bytes(b"done")
+
+    from py_stremio.components.config_file import DownloadConfig, save_config
+
+    save_config(
+        season_folder / "download-config.json",
+        DownloadConfig(type="series", title="Doctor Who (2023)", season=1, episode_count=8),
+    )
+    folders = [ScannedFolder(season_folder, FolderType.SERIES, series_root, 1)]
+    monkeypatch.setattr(application, "_run_processor", lambda folder, **kwargs: {"downloaded": 0, "failed": 0, "skipped": 0})
+    monkeypatch.setattr(application, "print_and_send_report", lambda report: None)
+
+    application.download_folders(folders=folders, max_workers=1)
+
+    output = capsys.readouterr().out
+    assert "Doctor Who (2023) - 25% (2/8) - checking" in output
+    assert "Doctor Who (2023) S01" not in output
+
+
 def test_download_folders_starts_next_season_when_thread_capacity_exists(tmp_path, monkeypatch):
     folders = [
         ScannedFolder(tmp_path / "series" / "Show" / "s01", FolderType.SERIES, tmp_path / "series", 1),
