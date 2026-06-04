@@ -211,10 +211,10 @@ def _banner() -> None:
 def _menu() -> None:
     print()
     print(_c("Choose a step", ACCENT))
-    print("  1  🔎 Scan library")
-    print("  2  🧠 Refresh configs + metadata")
-    print("  3  ⬇  Download missing episodes/movies")
-    print("  4  ✨ Run all: scan → metadata → download")
+    print("  1  ✨ Run all: scan → metadata → validate addons → download")
+    print("  2  🔎 Scan library")
+    print("  3  🧠 Refresh configs + metadata")
+    print("  4  ⬇  Download missing episodes/movies")
     print("  5  🔍 Discover new addon URLs")
     print("  6  🛠 Validate addon URLs")
     print("  7  🚪 Exit")
@@ -643,11 +643,13 @@ def download_folders(
 
 
 def run_pipeline(download: bool = True, quiet: bool = True, max_workers: int = 1, speed_percent: int | None = None) -> None:
-    """Run the standard scan → metadata → optional download pipeline."""
+    """Run the standard scan → metadata → validate addons → optional download pipeline."""
     _banner()
     folders = scan_library()
     print(_c("\n🧠 Metadata", ACCENT))
     update_config_imdb_ids(quiet=False)
+    print(_c("\n🛠  Validate addon URLs", ACCENT))
+    validate_and_update()
     if download:
         download_folders(folders, quiet=quiet, max_workers=max_workers, speed_percent=speed_percent)
 
@@ -669,18 +671,20 @@ def run_menu() -> None:
     _menu()
     choice = input(_c("Select 1-7 › ", ACCENT)).strip()
 
-    if choice == "1":
-        scan_library()
-    elif choice == "2":
-        print(_c("\n🧠 Metadata", ACCENT))
-        update_config_imdb_ids(quiet=False)
-    elif choice == "3":
-        download_folders(quiet=True, max_workers=_ask_download_threads())
-    elif choice == "4" or choice == "":
+    if choice == "1" or choice == "":
         folders = scan_library()
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
+        print(_c("\n🛠  Validate addon URLs", ACCENT))
+        validate_and_update()
         download_folders(folders, quiet=True, max_workers=_ask_download_threads())
+    elif choice == "2":
+        scan_library()
+    elif choice == "3":
+        print(_c("\n🧠 Metadata", ACCENT))
+        update_config_imdb_ids(quiet=False)
+    elif choice == "4":
+        download_folders(quiet=True, max_workers=_ask_download_threads())
     elif choice == "5":
         print(_c("\n🔍 Addon Discovery", ACCENT))
         discover_new_addons()
@@ -709,16 +713,16 @@ def run(interactive: bool | None = None) -> None:
         speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else None
         max_workers = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
 
-    if "--scan" in args or action == "1":
+    if "--scan" in args or action == "2":
         _banner()
         scan_library()
         return
-    if "--metadata" in args or "--config" in args or action == "2":
+    if "--metadata" in args or "--config" in args or action == "3":
         _banner()
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
         return
-    if "--download" in args or action == "3":
+    if "--download" in args or action == "4":
         _banner()
         download_folders(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
         return
@@ -730,7 +734,7 @@ def run(interactive: bool | None = None) -> None:
     if "--validate" in args or "--validate-addons" in args or action == "6":
         validate_and_update()
         return
-    if "--run" in args or "--all" in args or action == "4":
+    if "--run" in args or "--all" in args or action == "1":
         run_pipeline(download=True, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
         return
 

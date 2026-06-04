@@ -5,8 +5,126 @@ from .addons.models import StreamInfo
 from .real_debrid import resolve_torrent_with_debrid
 from .settings import settings
 
-
 RD_PROXY_PREFIX = "https://torrentio.strem.fun/resolve/"
+
+# Language keyword map for stream title filtering.
+# Maps search keyword → canonical language name.
+_LANGUAGE_KEYWORDS: dict[str, str] = {
+    "english": "english",
+    "eng": "english",
+    "russian": "russian",
+    "русский": "russian",
+    "russkiy": "russian",
+    "spanish": "spanish",
+    "español": "spanish",
+    "espanol": "spanish",
+    "french": "french",
+    "français": "french",
+    "francais": "french",
+    "german": "german",
+    "deutsch": "german",
+    "italian": "italian",
+    "italiano": "italian",
+    "portuguese": "portuguese",
+    "português": "portuguese",
+    "portugues": "portuguese",
+    "dutch": "dutch",
+    "nederlands": "dutch",
+    "polish": "polish",
+    "polski": "polish",
+    "turkish": "turkish",
+    "türkçe": "turkish",
+    "turkce": "turkish",
+    "japanese": "japanese",
+    "日本語": "japanese",
+    "korean": "korean",
+    "한국어": "korean",
+    "chinese": "chinese",
+    "中文": "chinese",
+    "arabic": "arabic",
+    "hindi": "hindi",
+    "thai": "thai",
+    "vietnamese": "vietnamese",
+    "swedish": "swedish",
+    "danish": "danish",
+    "norwegian": "norwegian",
+    "finnish": "finnish",
+    "czech": "czech",
+    "hungarian": "hungarian",
+    "romanian": "romanian",
+    "ukrainian": "ukrainian",
+    "greek": "greek",
+}
+
+_MULTI_LANGUAGE_INDICATORS = [
+    "multi",
+    "multi-lang",
+    "multi audio",
+    "dual audio",
+    "dual-lang",
+    "multi-language",
+    "multi-audio",
+    "multi audio",
+    "multi subs",
+]
+
+
+def _detect_languages(text: str) -> set[str]:
+    """Return set of canonical language names found in the given text."""
+    text_lower = text.lower()
+    found: set[str] = set()
+    for keyword, canonical in _LANGUAGE_KEYWORDS.items():
+        if keyword in text_lower:
+            found.add(canonical)
+    for indicator in _MULTI_LANGUAGE_INDICATORS:
+        if indicator in text_lower:
+            found.add("multi")
+            break
+    return found
+
+
+def filter_streams_by_language(streams: list) -> list:
+    """Filter streams to prefer those matching PREFERRED_LANGUAGES.
+
+    Streams with *no* detectable language are kept (safe default).
+    Multi-language streams always pass.
+    Streams whose detected languages include at least one preferred language pass.
+    Streams whose only detected languages are non-preferred are filtered out.
+    When ``PREFERRED_LANGUAGES`` contains ``"any"``, all streams pass.
+    """
+    preferred = [lang.strip().lower() for lang in settings.PREFERRED_LANGUAGES]
+
+    if "any" in preferred:
+        return streams
+
+    filtered = []
+    for stream in streams:
+        title = stream.title or ""
+        name = stream.name or ""
+        combined = f"{title} {name}"
+
+        detected = _detect_languages(combined)
+
+        # Multi-language streams always pass
+        if "multi" in detected:
+            filtered.append(stream)
+            continue
+
+        # No language detected → safe default, keep
+        if not detected:
+            filtered.append(stream)
+            continue
+
+        # At least one preferred language matches → keep
+        if any(pref in detected for pref in preferred):
+            filtered.append(stream)
+            continue
+
+        # Only non-preferred languages detected → filter out
+        short_title = title[:60].replace("\n", " ")
+        print(f"    Filtered out {', '.join(sorted(detected))} stream: {short_title}")
+
+    return filtered
 
 
 def _quality_sort_key(stream) -> tuple[int, int]:
@@ -43,6 +161,10 @@ def select_quality_streams(streams: list, preferred_quality: str) -> list:
         s for s in streams
         if s.url or s.info_hash
     ]
+    if not usable:
+        return []
+    # Apply language filter
+    usable = filter_streams_by_language(usable)
     if not usable:
         return []
     # Sort by quality descending

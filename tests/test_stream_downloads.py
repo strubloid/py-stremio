@@ -1,5 +1,8 @@
-"""Tests for stream download resume behavior."""
+"""Tests for stream download resume behavior and language filtering."""
 
+import pytest
+
+from py_stremio.components.addons.models import StreamInfo
 from py_stremio.components import stream_downloads
 
 
@@ -48,3 +51,141 @@ def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, mo
     assert target.read_bytes() == b"abcdefghij"
     assert not partial.exists()
     assert progress_events[-1] == (10, 10)
+
+
+class TestDetectLanguages:
+    """Unit tests for the _detect_languages helper."""
+
+    def test_detects_english(self):
+        found = stream_downloads._detect_languages("1080p WEBRip x264 English AC3")
+        assert "english" in found
+
+    def test_detects_russian_cyrillic(self):
+        found = stream_downloads._detect_languages("1080p WEBRip x264 Русский AC3")
+        assert "russian" in found
+
+    def test_detects_russian_latin(self):
+        found = stream_downloads._detect_languages("S01E01 1080p Russian AAC")
+        assert "russian" in found
+
+    def test_detects_multi(self):
+        found = stream_downloads._detect_languages("S01E01 1080p Multi Audio AAC")
+        assert "multi" in found
+
+    def test_detects_no_language(self):
+        found = stream_downloads._detect_languages("S01E01 1080p WEBRip x264 AAC")
+        assert found == set()
+
+    def test_detects_multiple_languages(self):
+        found = stream_downloads._detect_languages("English + Spanish Dual Audio")
+        assert "english" in found
+        assert "spanish" in found
+
+
+class TestFilterStreamsByLanguage:
+    """Integration tests for filter_streams_by_language."""
+
+    def make_stream(self, title: str, name: str = "Torrentio RD") -> StreamInfo:
+        return StreamInfo(name=name, title=title, url="https://example.test/video.mkv")
+
+    def test_keeps_english_stream(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("1080p WEBRip x264 English AC3 5.1")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 1
+
+    def test_filters_russian_stream(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("1080p WEBRip x264 Русский AC3 5.1")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 0
+
+    def test_keeps_multi_language_stream(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("1080p WEBRip Multi Audio AC3 5.1")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 1
+
+    def test_keeps_stream_with_no_language_info(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("1080p WEBRip x264 AAC 5.1")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 1
+
+    def test_keeps_stream_with_show_name_containing_lang(self, monkeypatch):
+        """The Russian S01E01 1080p WEBRip x264 English should pass (English detected)."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("The Russian S01E01 1080p WEBRip x264 English AAC")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 1
+
+    def test_skip_filtering_when_any_is_preferred(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["any"]
+        )
+        streams = [self.make_stream("1080p WEBRip x264 Русский AC3 5.1")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 1
+
+    def test_dual_language_including_english_passes(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [self.make_stream("English + French Dual Audio")]
+        result = stream_downloads.filter_streams_by_language(streams)
+        assert len(result) == 1
+
+    def test_spanish_preferred_keeps_spanish_filters_russian(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["spanish"]
+        )
+        es = self.make_stream("1080p WEBRip x264 Español AC3 5.1")
+        ru = self.make_stream("1080p WEBRip x264 Russian AC3 5.1")
+        en = self.make_stream("1080p WEBRip x264 English AC3 5.1")
+        result = stream_downloads.filter_streams_by_language([es, ru, en])
+        assert len(result) == 1  # only spanish matches; russian and english filtered
+        assert result[0] == es
+
+
+class TestSelectQualityStreamsWithLanguage:
+    """Verify select_quality_streams applies language filtering."""
+
+    def _make_stream(
+        self, title: str, name: str = "Torrentio", url: str | None = "https://dl.test"
+    ) -> StreamInfo:
+        return StreamInfo(name=name, title=title, url=url)
+
+    def test_filters_russian_with_english_default(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [
+            self._make_stream("S01E01 1080p WEBRip Русский AAC"),
+            self._make_stream("S01E01 1080p WEBRip English AAC"),
+        ]
+        result = stream_downloads.select_quality_streams(streams, "1080p")
+        assert len(result) == 1
+        assert "english" in result[0].title.lower()
+
+    def test_filters_by_addon_name_too(self, monkeypatch):
+        """Language detected in stream.name is also filtered."""
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        streams = [
+            self._make_stream("S01E01 1080p AAC", name="Torrentio Russian"),
+            self._make_stream("S01E01 1080p AAC", name="Torrentio English"),
+        ]
+        result = stream_downloads.select_quality_streams(streams, "1080p")
+        assert len(result) == 1
+        assert "English" in result[0].name
