@@ -1,4 +1,5 @@
 """Process configured series and movie folders."""
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import threading
@@ -264,18 +265,54 @@ def process_season_folder(
         with servers_lock:
             servers = _remember_working_urls(config, config_path, result.get("working_urls", []))
 
+    max_attempts = getattr(settings, "MAX_DOWNLOAD_ATTEMPTS", 5)
+    queue = deque(missing)
+    completed_successes: set[int] = set()
+
     if max_workers > 1 and total_missing > 1:
-        completed_successes: set[int] = set()
-        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
-            futures = [executor.submit(_download_episode_with_slot, index, episode_num) for index, episode_num in enumerate(missing, start=1)]
-            for future in as_completed(futures):
-                item = future.result()
-                apply_result(item["episode"], item["result"], completed_successes)
+        # Parallel with retry rounds — try failed episodes again in subsequent rounds
+        for round_num in range(max_attempts):
+            if not queue:
+                break
+            round_items = list(queue)
+            queue.clear()
+            print(f"  Round {round_num + 1}: {len(round_items)} episodes")
+            with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
+                futures = {
+                    executor.submit(_download_episode_with_slot, idx, ep_num): ep_num
+                    for idx, ep_num in enumerate(round_items, start=1)
+                }
+                for future in as_completed(futures):
+                    item = future.result()
+                    if item["result"].get("success"):
+                        apply_result(item["episode"], item["result"], completed_successes)
+                    else:
+                        queue.append(item["episode"])
+            if queue:
+                print(f"  -> {len(queue)} episodes deferred to next round")
     else:
-        for index, episode_num in enumerate(missing, start=1):
-            _set_current_episode(config, config_path, episode_num)
-            item = download_episode(index, episode_num)
-            apply_result(item["episode"], item["result"])
+        # Sequential with retry rounds
+        for round_num in range(max_attempts):
+            if not queue:
+                break
+            round_items = list(queue)
+            queue.clear()
+            if round_num > 0:
+                print(f"  Round {round_num + 1}: retrying {len(round_items)} deferred episodes")
+            for index, episode_num in enumerate(round_items, start=1):
+                _set_current_episode(config, config_path, episode_num)
+                item = download_episode(index, episode_num)
+                if item["result"].get("success"):
+                    apply_result(item["episode"], item["result"])
+                else:
+                    queue.append(episode_num)
+            if queue:
+                print(f"  -> {len(queue)} episodes deferred to next round")
+
+    # Mark episodes that exhausted all rounds as permanently failed
+    for episode_num in queue:
+        state.mark_failed(f"episode_{episode_num}", "All retry rounds exhausted", max_attempts)
+        failed += 1
 
     for ep in episodes:
         if ep["path"].exists() and not state.is_downloaded(ep["filename"]):

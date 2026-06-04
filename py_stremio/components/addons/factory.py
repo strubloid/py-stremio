@@ -16,6 +16,8 @@ from .builtin import (
     CineTorrentAddon,
     CometAddon,
     CometElfHostedAddon,
+    CometNetAddon,
+    EasyNewsPlusAddon,
     ConsumetAddon,
     DebridSearchAddon,
     DubbindoAddon,
@@ -92,6 +94,8 @@ def _register_builtin_addons(manager: AddonManager, api_key: str | None) -> None
     manager.register(KnightCrawlerAddon())
     manager.register(CometAddon())
     manager.register(CometElfHostedAddon())
+    manager.register(CometNetAddon())
+    manager.register(EasyNewsPlusAddon())
     manager.register(PeerflixAddon())
     manager.register(NucleusAddon())
     manager.register(OrionAddon())

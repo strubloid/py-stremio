@@ -23,6 +23,10 @@ class Settings:
     INTERNET_MAX_SPEED_MBPS: float = field(default_factory=lambda: float(os.getenv("INTERNET_MAX_SPEED_MBPS", "100")))
     DRY_RUN: bool = field(default_factory=lambda: os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes"))
 
+    PREFERRED_LANGUAGES: list[str] = field(default_factory=lambda: [
+        lang.strip() for lang in os.getenv("PREFERRED_LANGUAGES", "english").split(",") if lang.strip()
+    ])
+
     STREMIO_ADDON_URL: str | None = field(default_factory=lambda: os.getenv("STREMIO_ADDON_URL"))
     STREMIO_ADDON_URL_BASE: str = field(default_factory=lambda: os.getenv("STREMIO_ADDON_URL_BASE") or "https://torrentio.strem.fun")
 

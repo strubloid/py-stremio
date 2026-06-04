@@ -22,6 +22,8 @@ from .builtin import (
     CineTorrentAddon,
     CometAddon,
     CometElfHostedAddon,
+    CometNetAddon,
+    EasyNewsPlusAddon,
     ConsumetAddon,
     DebridSearchAddon,
     DubbindoAddon,
@@ -84,6 +86,7 @@ __all__ = [
     "CineTorrentAddon",
     "CometAddon",
     "CometElfHostedAddon",
+    "CometNetAddon",
     "ConsumetAddon",
     "DebridSearchAddon",
     "DubbindoAddon",
@@ -122,4 +125,5 @@ __all__ = [
     "WatchHubAddon",
     "XtreamProAddon",
     "YouTubeProAddon",
+    "EasyNewsPlusAddon",
 ]

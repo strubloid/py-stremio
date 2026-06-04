@@ -44,6 +44,7 @@ def test_run_creates_metadata_rich_series_config_when_config_was_deleted(tmp_pat
             "allow_higher": False,
             "allow_lower": True,
         },
+        "languages": ["english"],
         "language": "any",
         "subtitles": "any",
         "provider": "auto",

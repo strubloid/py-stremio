@@ -94,7 +94,9 @@ class MediaFusionAddon(HttpAddon):
 
 
 class KnightCrawlerAddon(HttpAddon):
-    """KnightCrawler – fast torrent scraper supporting RD, AD, PM, TorBox."""
+    """KnightCrawler – [DEPRECATED] Ceased development in 2024.
+    The public instance (knightcrawler.elfhosted.com) redirects to a
+    deprecation notice.  Use MediaFusion, Comet, or CometNet instead."""
 
     name = "KnightCrawler"
     base_url = "https://knightcrawler.elfhosted.com"
@@ -120,6 +122,28 @@ class CometElfHostedAddon(HttpAddon):
 
     name = "Comet-ElfHosted"
     base_url = "https://comet.elfhosted.com"
+
+    def get_url(self, api_key: str | None = None) -> str:
+        return self.base_url
+
+
+class CometNetAddon(HttpAddon):
+    """CometNet – Comet's next-gen, actively maintained by the Comet
+    team.  Supports movie, series, anime + other.  Hosted on ElfHosted."""
+
+    name = "CometNet"
+    base_url = "https://cometnet.elfhosted.com"
+
+    def get_url(self, api_key: str | None = None) -> str:
+        return self.base_url
+
+
+class EasyNewsPlusAddon(HttpAddon):
+    """Easynews+ – streams from the Easynews usenet binary retention
+    service, cached via ElfHosted.  Supports movie + series."""
+
+    name = "EasyNews+"
+    base_url = "https://easynewsplus.elfhosted.com"
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url

@@ -11,6 +11,7 @@ from typing import Any
 
 from .addon_validator import validate_and_update
 from .bandwidth import build_limiter
+from .collect import discover_new_addons
 from .output import install_thread_stdout_filter, restore_thread_stdout_filter, suppress_current_thread_output
 from .settings import settings
 from .scanner import Scanner, FolderType, ScannedFolder
@@ -214,8 +215,9 @@ def _menu() -> None:
     print("  2  🧠 Refresh configs + metadata")
     print("  3  ⬇  Download missing episodes/movies")
     print("  4  ✨ Run all: scan → metadata → download")
-    print("  5  🛠 Validate addon URLs")
-    print("  6  🚪 Exit")
+    print("  5  🔍 Discover new addon URLs")
+    print("  6  🛠 Validate addon URLs")
+    print("  7  🚪 Exit")
 
 
 def _current_year() -> int:
@@ -310,6 +312,7 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
                     "allow_higher": config_model.quality.allow_higher,
                     "allow_lower": config_model.quality.allow_lower,
                 } if config_model.quality else None,
+                "languages": config_model.languages,
                 "language": config_model.language,
                 "subtitles": config_model.subtitles,
                 "provider": config_model.provider,
@@ -327,6 +330,13 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
             }
 
             changed = False
+
+            # Inject preferred languages from settings if config doesn't have them
+            from .settings import settings as app_settings
+            if app_settings.PREFERRED_LANGUAGES and not config.get("languages"):
+                config["languages"] = list(app_settings.PREFERRED_LANGUAGES)
+                changed = True
+
             next_existing_episode = infer_next_episode_download(folder.path, config.get("episode_count"))
             if next_existing_episode and next_existing_episode > int(config.get("current_episode_download") or 1):
                 config["current_episode_download"] = next_existing_episode
@@ -657,7 +667,7 @@ def run_menu() -> None:
     """Interactive terminal menu for py-stremio."""
     _banner()
     _menu()
-    choice = input(_c("Select 1-6 › ", ACCENT)).strip()
+    choice = input(_c("Select 1-7 › ", ACCENT)).strip()
 
     if choice == "1":
         scan_library()
@@ -672,11 +682,14 @@ def run_menu() -> None:
         update_config_imdb_ids(quiet=False)
         download_folders(folders, quiet=True, max_workers=_ask_download_threads())
     elif choice == "5":
-        validate_and_update()
+        print(_c("\n🔍 Addon Discovery", ACCENT))
+        discover_new_addons()
     elif choice == "6":
+        validate_and_update()
+    elif choice == "7":
         print("Bye.")
     else:
-        print(_c("Unknown option. Choose 1-6.", RED))
+        print(_c("Unknown option. Choose 1-7.", RED))
 
 
 def run(interactive: bool | None = None) -> None:
@@ -709,7 +722,12 @@ def run(interactive: bool | None = None) -> None:
         _banner()
         download_folders(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
         return
-    if "--validate" in args or "--validate-addons" in args or action == "5":
+    if "--discover" in args or "--find-addons" in args or action == "5":
+        _banner()
+        print(_c("\n🔍 Addon Discovery", ACCENT))
+        discover_new_addons()
+        return
+    if "--validate" in args or "--validate-addons" in args or action == "6":
         validate_and_update()
         return
     if "--run" in args or "--all" in args or action == "4":

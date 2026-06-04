@@ -22,6 +22,7 @@ class QualitySettings:
 class DownloadConfig:
     type: str
     quality: QualitySettings | None = field(default_factory=QualitySettings)
+    languages: list[str] | None = None
     language: str = "any"
     subtitles: str = "any"
     provider: str = "auto"
@@ -67,9 +68,11 @@ def is_series_season_folder(folder_path: Path) -> bool:
 
 def get_default_config(folder_path: Path) -> DownloadConfig:
     """Get appropriate default config based on folder shape."""
-    if is_series_season_folder(folder_path):
-        return create_series_config(folder_path)
-    return create_movies_config(folder_path)
+    from .settings import settings
+    cfg = create_series_config(folder_path) if is_series_season_folder(folder_path) else create_movies_config(folder_path)
+    if settings.PREFERRED_LANGUAGES and cfg.languages is None:
+        cfg.languages = list(settings.PREFERRED_LANGUAGES)
+    return cfg
 
 
 def repair_series_season_config(folder_path: Path, config: DownloadConfig) -> bool:
