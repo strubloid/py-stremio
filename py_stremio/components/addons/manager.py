@@ -39,7 +39,9 @@ class AddonManager:
         self.addons: list[BaseAddon] = []
 
     def register(self, addon: BaseAddon):
-        """Register an addon."""
+        """Register an addon unless it has been disabled."""
+        if not getattr(addon, "enabled", True):
+            return
         self.addons.append(addon)
 
     def register_url(self, url: str):
@@ -98,8 +100,10 @@ class AddonManager:
                     streams = []
                 if streams:
                     with result_lock:
-                        all_streams.extend(streams)
                         addon_url = _addon_url(addon)
+                        for stream in streams:
+                            stream.addon_url = stream.addon_url or addon_url
+                        all_streams.extend(streams)
                         if addon_url and addon_url not in working_addon_urls:
                             working_addon_urls.append(addon_url)
 

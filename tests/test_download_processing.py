@@ -79,6 +79,80 @@ def test_process_season_folder_passes_config_languages_to_search(tmp_path, monke
     assert captured["preferred_languages"] == ["english"]
 
 
+def test_process_season_folder_persists_only_successful_download_server(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="How I Met Your Mother",
+        imdb_id="tt0460649",
+        season=1,
+        episode_count=1,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://stale-addon", "https://stream-only-addon"],
+    )
+    save_config(tmp_path / "download-config.json", config)
+    captured = {}
+
+    def fake_search_and_download(**kwargs):
+        captured.update(kwargs)
+        return {
+            "success": True,
+            "filename": "How I Met Your Mother_s01e01.mkv",
+            "quality": "1080p",
+            "working_urls": ["https://stream-only-addon", "https://successful-addon"],
+            "successful_url": "https://successful-addon",
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path)
+
+    with open(tmp_path / "download-config.json") as f:
+        saved = json.load(f)
+    assert result["downloaded"] == 1
+    assert captured["working_addons"] == ["https://stale-addon", "https://stream-only-addon"]
+    assert saved["servers"] == ["https://successful-addon"]
+
+
+def test_process_season_folder_clears_servers_when_no_download_succeeds(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="How I Met Your Mother",
+        imdb_id="tt0460649",
+        season=1,
+        episode_count=1,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://previously-working-addon"],
+    )
+    save_config(tmp_path / "download-config.json", config)
+
+    def fake_search_and_download(**kwargs):
+        return {
+            "success": False,
+            "error": "No streams downloaded",
+            "working_urls": ["https://stream-only-addon"],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download_processing.settings",
+        SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=0, MAX_DOWNLOAD_ATTEMPTS=1),
+    )
+
+    result = process_season_folder(tmp_path)
+
+    with open(tmp_path / "download-config.json") as f:
+        saved = json.load(f)
+    assert result["failed"] == 1
+    assert saved["servers"] == []
+
+
 def test_process_season_folder_skips_unverified_season_without_episode_count(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",

@@ -98,6 +98,39 @@ def test_search_continues_to_remaining_addons_when_working_url_has_no_streams(mo
     assert working_urls == ["https://fallback-addon"]
 
 
+def test_search_and_download_returns_successful_stream_addon_url(monkeypatch, tmp_path):
+    streams = [
+        StreamInfo(
+            name="Comet 1080p",
+            url="https://dl.test/episode.mp4",
+            title="Bob.S13E13",
+            addon_name="Comet",
+            addon_url="https://comet.feels.legal",
+        ),
+    ]
+
+    monkeypatch.setattr(stremio_client, "_resolve_imdb_id", lambda title, imdb_id, season: "tt123")
+    monkeypatch.setattr(
+        stremio_client,
+        "search_all_addons_for_streams",
+        lambda id_type, stremio_id, working_addons: (streams, ["https://comet.feels.legal", "https://stream-only-addon"]),
+    )
+    monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
+    monkeypatch.setattr(stremio_client, "download_stream_to_file", lambda download_url, filename, **kwargs: None)
+
+    result = stremio_client.search_and_download(
+        "Bob's Burgers",
+        imdb_id="tt123",
+        season=13,
+        episode=13,
+        folder_path=str(tmp_path),
+    )
+
+    assert result["success"] is True
+    assert result["successful_url"] == "https://comet.feels.legal"
+    assert result["working_urls"] == ["https://comet.feels.legal", "https://stream-only-addon"]
+
+
 def test_search_and_download_marks_all_invalid_video_streams_permanent(monkeypatch, tmp_path):
     streams = [
         StreamInfo(name="Comet 1080p", url="https://dl.test/error1.mp4", title="Bob.S13E13"),

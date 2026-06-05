@@ -154,6 +154,7 @@ activemq-data/
 
 # Addons file with API keys
 addons.txt
+addons.stremio
 env/
 venv/
 ENV/

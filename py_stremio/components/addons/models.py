@@ -11,3 +11,4 @@ class StreamInfo:
     title: str | None = None
     addon_name: str = ""
     filename: str | None = None
+    addon_url: str | None = None

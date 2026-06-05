@@ -133,17 +133,19 @@ class TestKnightCrawlerDeprecation:
         url = addon.query_stream_url("movie", "tt1375666")
         assert url == "https://knightcrawler.elfhosted.com/stream/movie/tt1375666.json"
 
-    def test_factory_includes_knightcrawler_for_backward_compat(self):
-        """KnightCrawler is still registered in the factory, not removed."""
+    def test_factory_excludes_disabled_knightcrawler_but_keeps_class_for_compat(self):
+        """KnightCrawler class remains importable but is not registered while disabled."""
         from py_stremio.components.addons.factory import _register_builtin_addons
         from py_stremio.components.addons.manager import AddonManager
+
+        assert KnightCrawlerAddon.enabled is False
 
         manager = AddonManager()
         _register_builtin_addons(manager)
 
         names = [a.name for a in manager.addons]
         assert "CometNet" in names
-        assert "KnightCrawler" in names
+        assert "KnightCrawler" not in names
         assert "EasyNews+" in names
 
 

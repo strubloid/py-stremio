@@ -22,6 +22,14 @@ def normalize_manifest_url(url: str | None) -> str:
     if parsed.netloc == "guindex-stremio.vercel.app":
         clean_path = re.sub(r"/realdebrid/[^/]+", "", parsed.path).rstrip("/")
         return f"{parsed.scheme}://{parsed.netloc}{clean_path}"
+    if parsed.netloc == "yomi.ruka.pw":
+        return f"{parsed.scheme}://{parsed.netloc}"
+    if parsed.netloc == "stremthru.13377001.xyz":
+        return f"{parsed.scheme}://{parsed.netloc}/stremio/torz"
+    if "brazuca-torrents.baby-beamup.club" in parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    if parsed.netloc == "hdhub.thevolecitor.qzz.io":
+        return f"{parsed.scheme}://{parsed.netloc}"
     return normalized
 
 

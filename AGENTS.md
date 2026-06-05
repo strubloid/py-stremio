@@ -114,7 +114,7 @@ Scanner.scan()
 - Per-episode progress bars with bandwidth limiting and speed display
 - Multi-threaded download support (DOWNLOAD_THREADS)
 - Partial download resume via .part files and Range headers
-- Working addon URL tracking in config (servers list)
+- Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
 
 ### 2. Legacy Path — used by `py-stremio-download` CLI
 `download.py` → `download_manager.py` → `series.py` / `movies.py` → `provider.py`
@@ -156,6 +156,10 @@ Uses regex patterns in `utils.parse_episode_number()`:
 1. Preferred quality from config (default: 1080p)
 2. Fallback qualities in list order (default: 720p, 480p)
 3. Skip if MAX_DOWNLOAD_ATTEMPTS reached
+
+### Addon Server Cache Rule
+
+`download-config.json` `servers` is a verified per-folder cache, not a generic "returned streams" list. A URL may be queried from this cache first, but it may only be saved back into `servers` after one of its streams successfully downloads an episode/movie for that folder. If a missing item is attempted and no download succeeds, clear stale `servers` for that folder instead of keeping previously cached URLs. Do not persist addons merely because they returned stream metadata, because those links may still fail during URL resolution or video download.
 
 ### Addon Discovery Order
 
@@ -243,7 +247,7 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 
 - **Built-in addons**: 9 predefined in `components/addons/builtin.py`
 - **Custom addons**: create `addons.txt` in project root with one URL per line (URLs replace built-ins entirely)
-- **Working URL tracking**: successful addon URLs saved to `config.servers` per folder
+- **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
 - **Export from Stremio Desktop**: `py-stremio-export` reads `~/.config/Stremio/UserData/storage.json`
 
 ## Important Files for Changes

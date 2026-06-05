@@ -69,6 +69,30 @@ def load_addons_from_file(filepath: str = "addons.txt") -> list[str]:
         return []
 
 
+def _addon_identity(url: str) -> str:
+    """Return a dedupe identity for base URLs and final manifest URLs."""
+    return unquote(url.strip()).rstrip("/").removesuffix("/manifest.json")
+
+
+def load_addon_urls() -> list[str]:
+    """Load clean addon URLs plus final Stremio manifest URLs.
+
+    `addons.txt` remains the editable clean-base source. `addons.stremio` is a
+    final-product file where each URL may point directly to `manifest.json`.
+    Both are loaded, with duplicates removed by their queryable addon base.
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+    for filepath in ("addons.stremio", "addons.txt"):
+        for url in load_addons_from_file(filepath):
+            identity = _addon_identity(url)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            urls.append(url)
+    return urls
+
+
 def _register_builtin_addons(manager: AddonManager) -> None:
     """Register all built-in stream-providing addons."""
 
@@ -178,7 +202,7 @@ def create_addon_manager() -> AddonManager:
     _register_builtin_addons(manager)
 
     # 2. Supplement with file addons, skipping duplicates by host
-    addon_urls = load_addons_from_file("addons.txt")
+    addon_urls = load_addon_urls()
     if addon_urls:
         skipped = 0
         for url in addon_urls:
@@ -195,10 +219,10 @@ def create_addon_manager() -> AddonManager:
                 log_error("load_addon_from_file", exc, url)
         file_total = len(addon_urls) - skipped
         if file_total:
-            print(f"    Loaded {file_total} addon(s) from addons.txt"
+            print(f"    Loaded {file_total} addon(s) from addon file(s)"
                   f" ({skipped} skipped, covered by built-in)")
         else:
-            print(f"    All {skipped} addon(s) from addons.txt covered by built-ins — skipped")
+            print(f"    All {skipped} addon(s) from addon file(s) covered by built-ins — skipped")
 
     # 3. Apply the RD key to all addons
     _apply_api_key(manager, api_key)

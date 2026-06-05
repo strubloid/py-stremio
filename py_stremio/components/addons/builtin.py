@@ -4,7 +4,7 @@ Each addon knows how to construct its stream-query URL, optionally embedding
 a debrid-service API key that the factory sets at runtime via .api_key.
 """
 
-from .base import HttpAddon, build_comet_config_url, build_hdhub_config_url
+from .base import HttpAddon, build_comet_config_url, build_hdhub_config_url, build_stremthru_config_url
 
 
 # ── Torrentio family ──────────────────────────────────────────────────────────
@@ -97,6 +97,7 @@ class KnightCrawlerAddon(HttpAddon):
 
     name = "KnightCrawler"
     base_url = "https://knightcrawler.elfhosted.com"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
@@ -163,6 +164,7 @@ class NucleusAddon(HttpAddon):
 
     name = "Nucleus"
     base_url = "https://nucleus.stremio.tech"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
@@ -233,6 +235,7 @@ class TorrinAddon(HttpAddon):
 
     name = "Torrin"
     base_url = "https://torrin.app"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
@@ -289,6 +292,7 @@ class WatchHubAddon(HttpAddon):
 
     name = "WatchHub"
     base_url = "https://watchhub.strem.fun"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
@@ -299,6 +303,7 @@ class AkumaAddon(HttpAddon):
 
     name = "Akuma"
     base_url = "https://akuma-delta.vercel.app"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
@@ -309,6 +314,7 @@ class AnimepaheAddon(HttpAddon):
 
     name = "Animepahe"
     base_url = "https://animepahe-addon.stremio.tech"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
@@ -351,6 +357,7 @@ class SkyflixAddon(HttpAddon):
 
     name = "Skyflix"
     base_url = "https://skyflix.onrender.com"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
@@ -412,9 +419,12 @@ class StremThruAddon(HttpAddon):
     """StremThru – multi-debrid proxy aggregator (RD, AD, PM, TB)."""
 
     name = "StremThru"
-    base_url = "https://stremthru.13377001.xyz"
+    base_url = "https://stremthru.13377001.xyz/stremio/torz"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
+        if api_key:
+            return build_stremthru_config_url(self.base_url, api_key)
         return self.base_url
 
 
@@ -484,6 +494,7 @@ class VStremioAddon(HttpAddon):
 
     name = "VStremio"
     base_url = "https://vstremio.vercel.app"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url
@@ -536,6 +547,7 @@ class FShareAddon(HttpAddon):
 
     name = "FShare"
     base_url = "https://fshare.gaixixon.workers.dev"
+    enabled = False
 
     def get_url(self, api_key: str | None = None) -> str:
         return self.base_url

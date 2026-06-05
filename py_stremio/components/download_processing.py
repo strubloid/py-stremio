@@ -27,21 +27,22 @@ def scan_folder_for_episodes(folder_path: Path) -> list[dict]:
     ]
 
 
-def _remember_working_urls(config, config_path: Path, urls: list[str] | None) -> list[str]:
-    servers = unique_manifest_urls(config.servers)
-    changed = False
+def _save_verified_server_urls(config, config_path: Path, urls: list[str] | None) -> list[str]:
+    """Replace the server cache with URLs that actually completed a download.
 
-    for url in urls or []:
-        normalized = normalize_manifest_url(url)
-        if normalized and normalized not in servers:
-            servers.append(normalized)
-            changed = True
-            print(f"    ✓ Found working server: {normalized}")
+    Addons that merely returned streams are not enough for this cache: the
+    config.servers list is a confidence list for this folder, so a URL only stays
+    there after one of its streams successfully downloads.
+    """
+    servers = unique_manifest_urls(urls)
 
-    if servers and (changed or servers != config.servers):
+    if servers != unique_manifest_urls(config.servers):
         config.servers = servers
         save_config(config_path, config)
-        print(f"  Saved {len(servers)} working servers to config")
+        if servers:
+            print(f"  Saved {len(servers)} verified download servers to config")
+        else:
+            print("  Cleared server cache; no addon completed a download")
 
     return servers
 
@@ -178,6 +179,7 @@ def process_season_folder(
     skipped = 0
     failed = 0
     servers = unique_manifest_urls(config.servers)
+    verified_servers: list[str] = []
     servers_lock = threading.Lock()
     progress_lock = threading.Lock()
     total_missing = len(missing)
@@ -267,11 +269,15 @@ def process_season_folder(
                 worker_semaphore.release()
 
     def apply_result(episode_num: int, result: dict, completed_successes: set[int] | None = None) -> None:
-        nonlocal downloaded, failed, servers
+        nonlocal downloaded, failed, servers, verified_servers
         if result.get("success"):
             filename = Path(result.get("filename", f"episode_{episode_num}.mkv")).name
             state.add_download(filename, result.get("quality", quality), "stremio")
             downloaded += 1
+            successful_url = normalize_manifest_url(result.get("successful_url"))
+            if successful_url and successful_url not in verified_servers:
+                verified_servers.append(successful_url)
+                print(f"    ✓ Verified download server: {successful_url}")
             if completed_successes is not None:
                 completed_successes.add(episode_num)
                 next_cursor = min((ep for ep in missing if ep not in completed_successes), default=max(missing) + 1)
@@ -282,7 +288,7 @@ def process_season_folder(
             state.mark_failed(f"episode_{episode_num}", result.get("error", "failed"), 1)
             failed += 1
         with servers_lock:
-            servers = _remember_working_urls(config, config_path, result.get("working_urls", []))
+            servers = _save_verified_server_urls(config, config_path, verified_servers)
 
     max_attempts = getattr(settings, "MAX_DOWNLOAD_ATTEMPTS", 5)
     queue = deque(missing)
@@ -337,6 +343,10 @@ def process_season_folder(
         state.mark_failed(f"episode_{episode_num}", "All retry rounds exhausted", max_attempts)
         failed += 1
 
+    if missing:
+        with servers_lock:
+            servers = _save_verified_server_urls(config, config_path, verified_servers)
+
     for ep in episodes:
         if ep["path"].exists() and not state.is_downloaded(ep["filename"]):
             state.add_download(ep["filename"], quality, "stremio")
@@ -390,12 +400,13 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
         bandwidth_limiter=bandwidth_limiter,
     )
 
-    _remember_working_urls(config, config_path, result.get("working_urls", []))
-
     if result.get("success"):
+        successful_url = normalize_manifest_url(result.get("successful_url"))
+        _save_verified_server_urls(config, config_path, [successful_url] if successful_url else [])
         filename = Path(result.get("filename", f"{title}.mkv")).name
         state.add_download(filename, result.get("quality", quality), "stremio")
         save_state(folder_path, state)
         return {"downloaded": 1, "skipped": 0}
 
+    _save_verified_server_urls(config, config_path, [])
     return {"downloaded": 0, "skipped": 0, "failed": 1, "error": result.get("error")}

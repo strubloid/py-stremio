@@ -32,6 +32,7 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
                     file_idx=stream.get("fileIdx"),
                     title=stream.get("title"),
                     filename=(stream.get("behaviorHints") or {}).get("filename"),
+                    addon_url=normalize_manifest_url(addon_url),
                 )
             )
     except httpx.RequestError as e:

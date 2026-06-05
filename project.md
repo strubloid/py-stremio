@@ -282,7 +282,8 @@ download_folders()
   all addons are queried concurrently using `ThreadPoolExecutor(max_workers=10)`.
 - Each addon has an 8-second timeout (`BaseAddon`) + 10-second HTTP timeout.
 - A single rotating spinner shows progress: `"⠋ Searching addons (17/57)"`.
-- Working addon URLs are cached per folder in `config.servers`.
+- Verified addon URLs are cached per folder in `config.servers` only after one of that addon's streams completes a real download.
+- Addons that only return streams but fail URL resolution or download are not saved; if no missing item downloads, stale cached servers are cleared.
 - On subsequent runs, working URLs are queried first for faster results.
 
 ### Quality Fallback via Descending Sort
@@ -388,7 +389,7 @@ py-stremio-export [output_path]
   - Other backends (NoTorrent, StremThru, Guindex, YouTubePro, FShare, Consumet)
   - RD-keyed variant (Torrentio-PT, registered only when `REAL_DEBRID_API_KEY` is set)
 - **Custom addons**: create `addons.txt` with one URL per line (replaces built-ins when present)
-- **Working URL tracking**: successful addon URLs saved to `config.servers` per folder
+- **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
 - **Export from Stremio Desktop**: `py-stremio-export` reads `~/.config/Stremio/UserData/storage.json`
 
 ## Important Files for Changes

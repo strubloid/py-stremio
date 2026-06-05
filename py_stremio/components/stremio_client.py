@@ -69,6 +69,7 @@ def search_and_download(
                 "quality": stream.name,
                 "provider": "stremio-dry-run",
                 "working_urls": working_urls,
+                "successful_url": stream.addon_url,
             }
 
         filename = build_media_filename(title, season, episode, folder_path)
@@ -139,4 +140,5 @@ def _success_result(filename: str, stream: StreamInfo, working_urls: list[str]) 
         "quality": stream.name,
         "addon_name": getattr(stream, "addon_name", ""),
         "working_urls": working_urls,
+        "successful_url": getattr(stream, "addon_url", None),
     }

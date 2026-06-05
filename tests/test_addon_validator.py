@@ -354,6 +354,58 @@ class TestUrlAddonRDInjection:
         result = addon.get_url("TESTKEY456")
         assert result == "https://guindex-stremio.vercel.app/realdebrid/TESTKEY456/"
 
+    def test_yomi_clean_url_builds_nested_realdebrid_config(self):
+        import base64
+        import json
+        from urllib.parse import unquote, urlparse
+
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://yomi.ruka.pw")
+        result = addon.get_url("TESTKEY456")
+
+        assert result.startswith("https://yomi.ruka.pw/")
+        outer = json.loads(unquote(urlparse(result).path.strip("/")))
+        inner = outer["Yomi"]
+        padded = inner + "=" * ((4 - len(inner) % 4) % 4)
+        config = json.loads(base64.urlsafe_b64decode(padded))
+        assert config["rdKey"] == "TESTKEY456"
+        assert config["language"] == ["ENG"]
+        assert "1080p" in config["resolutions"]
+
+    def test_yomi_configured_url_is_clean_when_no_api_key(self):
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://yomi.ruka.pw")
+        assert addon.get_url(None) == "https://yomi.ruka.pw"
+
+    def test_brazuca_clean_url_injects_realdebrid_for_server_cache(self):
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://94c8cb9f702d-brazuca-torrents.baby-beamup.club")
+        result = addon.get_url("TESTKEY456")
+        assert result == (
+            "https://94c8cb9f702d-brazuca-torrents.baby-beamup.club/"
+            "sort=size|realdebrid=TESTKEY456/"
+        )
+
+    def test_stremthru_config_builder_can_build_realdebrid_store_config(self):
+        import base64
+        import json
+        from urllib.parse import urlparse
+
+        from py_stremio.components.addons.types.strem_thru_addon import StremThruAddonConfigurer
+
+        result = StremThruAddonConfigurer().configure(
+            "https://stremthru.13377001.xyz/stremio/torz",
+            "TESTKEY456",
+        )
+        assert result.startswith("https://stremthru.13377001.xyz/stremio/torz/")
+        encoded = urlparse(result).path.strip("/").split("/")[-1]
+        padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
+        config = json.loads(base64.urlsafe_b64decode(padded))
+        assert config == {"indexers": None, "stores": [{"c": "rd", "t": "TESTKEY456"}]}
+
     def test_no_injection_for_unknown_host(self):
         """Addons without a registered injector return the base URL unchanged."""
         from py_stremio.components.addons.base import UrlAddon
