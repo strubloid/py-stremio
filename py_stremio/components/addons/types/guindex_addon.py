@@ -11,6 +11,11 @@ class GuindexAddonConfigurer(AddonUrlConfigurer):
 
     host_match = "guindex-stremio.vercel.app"
 
+    def normalize(self, url: str) -> str:
+        parsed = urlparse(url.strip().rstrip("/").removesuffix("/manifest.json"))
+        clean_path = re.sub(r"/realdebrid/[^/]+", "", parsed.path).rstrip("/")
+        return f"{parsed.scheme}://{parsed.netloc}{clean_path}"
+
     def configure(self, base_url: str, api_key: str) -> str:
         parsed = urlparse(base_url.rstrip("/"))
         clean_path = re.sub(r"/realdebrid/[^/]+", "", parsed.path).rstrip("/")

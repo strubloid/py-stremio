@@ -3,7 +3,7 @@ import time
 
 import httpx
 
-from .settings import settings
+from py_stremio.components.configs.app_settings import settings
 
 
 def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> str | None:

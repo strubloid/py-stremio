@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from py_stremio.components.stream_downloads import InvalidVideoDownloadError
+from py_stremio.components.download.stream_download import InvalidVideoDownloadError
 
 
 class ErrorCategory(str, Enum):

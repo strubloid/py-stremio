@@ -16,6 +16,10 @@ class CometAddonConfigurer(AddonUrlConfigurer):
         parsed = urlparse(url)
         return parsed.netloc in {"comet.feels.legal", "comet.elfhosted.com"}
 
+    def normalize(self, url: str) -> str:
+        parsed = urlparse(url.strip().rstrip("/").removesuffix("/manifest.json"))
+        return f"{parsed.scheme}://{parsed.netloc}"
+
     def configure(self, base_url: str, api_key: str) -> str:
         parsed_base = urlparse(base_url)
         if parsed_base.netloc in {"comet.feels.legal", "comet.elfhosted.com"}:

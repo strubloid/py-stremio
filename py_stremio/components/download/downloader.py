@@ -2,10 +2,10 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config_file import DownloadConfig, QualitySettings
-from .provider import BaseProvider, get_provider, DownloadResult
-from .state import load_state, save_state
-from .settings import settings
+from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings
+from py_stremio.components.download.provider import BaseProvider, get_provider, DownloadResult
+from py_stremio.components.state.app_state import load_state, save_state
+from py_stremio.components.configs.app_settings import settings
 
 
 @dataclass

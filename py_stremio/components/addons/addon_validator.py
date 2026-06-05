@@ -13,8 +13,8 @@ from urllib.parse import unquote
 
 import httpx
 
-from .addons.base import UrlAddon
-from .settings import settings
+from .base import UrlAddon
+from py_stremio.components.configs.app_settings import settings
 
 # ── Test target ──────────────────────────────────────────────────────────
 # Game of Thrones S01E01 — almost universally available across addons

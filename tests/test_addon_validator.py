@@ -5,7 +5,7 @@ from urllib.parse import unquote
 import httpx
 import pytest
 
-from py_stremio.components.addon_validator import (
+from py_stremio.components.addons.addon_validator import (
     check_addon_url,
     update_addons_file,
     validate_all_addons,
@@ -524,7 +524,7 @@ class TestValidatorRDInjection:
 
     def test_check_addon_url_injects_rd_key_for_known_host(self, monkeypatch):
         """When api_key is provided and URL matches an injector, httpx gets the injected URL."""
-        from py_stremio.components.addon_validator import check_addon_url
+        from py_stremio.components.addons.addon_validator import check_addon_url
 
         captured_urls = []
 
@@ -554,7 +554,7 @@ class TestValidatorRDInjection:
 
     def test_check_addon_url_without_api_key_uses_raw_url(self, monkeypatch):
         """Without api_key, the raw URL from addons.txt is tested."""
-        from py_stremio.components.addon_validator import check_addon_url
+        from py_stremio.components.addons.addon_validator import check_addon_url
 
         captured_urls = []
 
@@ -579,7 +579,7 @@ class TestValidatorRDInjection:
 
     def test_check_addon_url_preserves_original_url_in_result(self, monkeypatch):
         """The result dict contains the *original* URL (from addons.txt), not the injected one."""
-        from py_stremio.components.addon_validator import check_addon_url
+        from py_stremio.components.addons.addon_validator import check_addon_url
 
         def fake_get(url, **kwargs):
             return FakeResponse(200, {

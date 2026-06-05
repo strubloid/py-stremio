@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from py_stremio.components.scanner import Scanner, FolderType, ScannedFolder
+from py_stremio.components.library.library_scanner import Scanner, FolderType, ScannedFolder
 
 
 class TestScanner:

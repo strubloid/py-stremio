@@ -10,6 +10,12 @@ class TorrentioAddonConfigurer(AddonUrlConfigurer):
 
     host_match = "torrentio.strem.fun"
 
+    def normalize(self, url: str) -> str:
+        parsed = urlparse(url.strip().rstrip("/").removesuffix("/manifest.json"))
+        path = parsed.path.strip("/")
+        parts = [part for part in path.split("|") if part and not part.startswith("realdebrid=")]
+        return f"{parsed.scheme}://{parsed.netloc}" + (f"/{'|'.join(parts)}" if parts else "")
+
     def configure(self, base_url: str, api_key: str) -> str:
         parsed = urlparse(base_url.rstrip("/"))
         path = parsed.path.strip("/")

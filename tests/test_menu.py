@@ -21,7 +21,7 @@ def test_menu_choice_two_scans_without_downloading(monkeypatch, capsys):
     assert "Scan library" in output
 
 
-def test_menu_choice_one_runs_ordered_scan_metadata_validate_download(monkeypatch):
+def test_menu_choice_one_runs_ordered_scan_metadata_download(monkeypatch):
     calls = []
     folders = [object()]
     answers = iter(["1", "3"])
@@ -38,7 +38,7 @@ def test_menu_choice_one_runs_ordered_scan_metadata_validate_download(monkeypatc
 
     application.run_menu()
 
-    assert calls == ["scan", "metadata", "validate", ("download", folders, True, 3)]
+    assert calls == ["scan", "metadata", ("download", folders, True, 3)]
 
 
 def test_cron_positional_run_all_and_speed_limit(monkeypatch):

@@ -3,7 +3,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 import json
 
-from .utils import parse_season_from_folder
+from py_stremio.utils.media import parse_season_from_folder
 
 
 @dataclass
@@ -68,7 +68,7 @@ def is_series_season_folder(folder_path: Path) -> bool:
 
 def get_default_config(folder_path: Path) -> DownloadConfig:
     """Get appropriate default config based on folder shape."""
-    from .settings import settings
+    from py_stremio.components.configs.app_settings import settings
     cfg = create_series_config(folder_path) if is_series_season_folder(folder_path) else create_movies_config(folder_path)
     if settings.PREFERRED_LANGUAGES and cfg.languages is None:
         cfg.languages = list(settings.PREFERRED_LANGUAGES)

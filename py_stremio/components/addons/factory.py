@@ -1,9 +1,9 @@
 """Addon manager construction helpers."""
 from urllib.parse import unquote, urlparse
 
-from ..settings import settings
+from py_stremio.components.configs.app_settings import settings
 from .base import UrlAddon
-from .builtin import (
+from .types.builtin_addons import (
     AIOStreamingAddon,
     AIOStreamsAddon,
     AkumaAddon,
@@ -214,7 +214,7 @@ def create_addon_manager() -> AddonManager:
                 addon.api_key = api_key
                 manager.register(addon)
             except Exception as exc:
-                from ..error_logger import log_error
+                from py_stremio.components.errors.error_logger import log_error
 
                 log_error("load_addon_from_file", exc, url)
         file_total = len(addon_urls) - skipped
@@ -240,7 +240,7 @@ def create_addon_manager_from_urls(urls: list[str]) -> AddonManager:
             addon.api_key = api_key
             manager.register(addon)
         except Exception as exc:
-            from ..error_logger import log_error
+            from py_stremio.components.errors.error_logger import log_error
 
             log_error("create_manager_from_urls", exc, url)
 

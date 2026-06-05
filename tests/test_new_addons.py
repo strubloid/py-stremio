@@ -2,7 +2,7 @@
 
 import pytest
 
-from py_stremio.components.addons.builtin import (
+from py_stremio.components.addons.types.builtin_addons import (
     CometAddon,
     CometNetAddon,
     EasyNewsPlusAddon,

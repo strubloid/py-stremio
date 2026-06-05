@@ -1,6 +1,6 @@
 """Console entry point for config/state driven downloads."""
 
-from .components.download_manager import main, run_downloads
+from .components.download.manager import main, run_downloads
 
 __all__ = ["main", "run_downloads"]
 

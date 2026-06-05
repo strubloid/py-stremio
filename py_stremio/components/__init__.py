@@ -1,5 +1,5 @@
 """Reusable py-stremio components."""
 
-from .settings import Settings, settings
+from py_stremio.components.configs.app_settings import Settings, settings
 
 __all__ = ["Settings", "settings"]

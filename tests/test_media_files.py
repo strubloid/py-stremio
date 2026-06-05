@@ -1,7 +1,7 @@
 """Tests for media file episode detection."""
 
-from py_stremio.components.media_files import detect_existing_season_episodes, infer_next_episode_download
-from py_stremio.components.utils import parse_episode_number
+from py_stremio.components.library.media_file import detect_existing_season_episodes, infer_next_episode_download
+from py_stremio.utils.media import parse_episode_number
 
 
 BLEACH_TYBW_S03_FILES = [

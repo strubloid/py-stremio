@@ -9,7 +9,7 @@ from .manager import (
     load_addons_from_file,
     search_addons,
 )
-from .builtin import (
+from .types.builtin_addons import (
     AIOStreamingAddon,
     AIOStreamsAddon,
     AkumaAddon,

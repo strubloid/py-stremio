@@ -10,6 +10,10 @@ class BrazucaAddonConfigurer(AddonUrlConfigurer):
 
     host_match = "brazuca-torrents.baby-beamup.club"
 
+    def normalize(self, url: str) -> str:
+        parsed = urlparse(url.strip().rstrip("/").removesuffix("/manifest.json"))
+        return f"{parsed.scheme}://{parsed.netloc}"
+
     def configure(self, base_url: str, api_key: str) -> str:
         parsed = urlparse(base_url.rstrip("/"))
         clean_base_url = f"{parsed.scheme}://{parsed.netloc}"

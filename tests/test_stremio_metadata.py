@@ -3,7 +3,7 @@ import gzip
 
 from datetime import datetime, timezone
 
-from py_stremio.components.stremio_metadata import get_series_metadata
+from py_stremio.components.stremio.stremio_metadata import get_series_metadata
 
 
 class FakeResponse:
@@ -47,7 +47,7 @@ def test_get_series_metadata_returns_imdb_title_and_episode_count(monkeypatch):
             }
         )
 
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
 
     metadata = get_series_metadata("House of Dragon", 1)
 
@@ -77,7 +77,7 @@ def test_get_series_metadata_marks_missing_season_when_series_exists_but_season_
             }
         )
 
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
 
     metadata = get_series_metadata("Poppas House", 2)
 
@@ -91,7 +91,7 @@ def test_get_series_metadata_marks_missing_season_when_series_exists_but_season_
 
 
 def test_get_imdb_max_season_reads_highest_season_from_imdb_dataset(monkeypatch):
-    from py_stremio.components.stremio_metadata import _load_imdb_max_seasons, get_imdb_max_season
+    from py_stremio.components.stremio.stremio_metadata import _load_imdb_max_seasons, get_imdb_max_season
 
     dataset = "\n".join(
         [
@@ -103,7 +103,7 @@ def test_get_imdb_max_season_reads_highest_season_from_imdb_dataset(monkeypatch)
         ]
     )
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata.httpx.get",
+        "py_stremio.components.stremio.stremio_metadata.httpx.get",
         lambda url, timeout: FakeContentResponse(gzip.compress(dataset.encode("utf-8"))),
     )
     _load_imdb_max_seasons.cache_clear()
@@ -113,7 +113,7 @@ def test_get_imdb_max_season_reads_highest_season_from_imdb_dataset(monkeypatch)
 
 
 def test_get_current_year_series_seasons_returns_only_seasons_with_current_year_releases(monkeypatch):
-    from py_stremio.components.stremio_metadata import get_current_year_series_seasons
+    from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
 
     def fake_get(url, timeout):
         if "/catalog/" in url:
@@ -133,10 +133,10 @@ def test_get_current_year_series_seasons_returns_only_seasons_with_current_year_
             }
         )
 
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.httpx.get", fake_get)
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.get_imdb_max_season", lambda imdb_id: 9)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_imdb_max_season", lambda imdb_id: 9)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata._current_datetime",
+        "py_stremio.components.stremio.stremio_metadata._current_datetime",
         lambda: datetime(2026, 7, 28, tzinfo=timezone.utc),
     )
 
@@ -148,7 +148,7 @@ def test_get_current_year_series_seasons_returns_only_seasons_with_current_year_
 
 
 def test_get_current_year_series_seasons_filters_cinemeta_placeholder_season(monkeypatch):
-    from py_stremio.components.stremio_metadata import get_current_year_series_seasons
+    from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
 
     def fake_get(url, timeout):
         if "/catalog/" in url:
@@ -172,8 +172,8 @@ def test_get_current_year_series_seasons_filters_cinemeta_placeholder_season(mon
             }
         )
 
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.httpx.get", fake_get)
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.get_imdb_max_season", lambda imdb_id: 4)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_imdb_max_season", lambda imdb_id: 4)
 
     seasons = get_current_year_series_seasons("Bleach Thousand-Year Blood War", 2026)
 
@@ -181,7 +181,7 @@ def test_get_current_year_series_seasons_filters_cinemeta_placeholder_season(mon
 
 
 def test_get_current_year_series_seasons_filters_unreleased_tba_season(monkeypatch):
-    from py_stremio.components.stremio_metadata import get_current_year_series_seasons
+    from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
 
     def fake_get(url, timeout):
         if "/catalog/" in url:
@@ -199,10 +199,10 @@ def test_get_current_year_series_seasons_filters_unreleased_tba_season(monkeypat
             }
         )
 
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.httpx.get", fake_get)
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.get_imdb_max_season", lambda imdb_id: 3)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_imdb_max_season", lambda imdb_id: 3)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata._current_datetime",
+        "py_stremio.components.stremio.stremio_metadata._current_datetime",
         lambda: datetime(2026, 6, 4, tzinfo=timezone.utc),
     )
 
@@ -227,8 +227,8 @@ def test_get_series_metadata_marks_season_missing_when_only_placeholder_episodes
             }
         )
 
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.httpx.get", fake_get)
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.get_imdb_max_season", lambda imdb_id: 4)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_imdb_max_season", lambda imdb_id: 4)
 
     metadata = get_series_metadata("Bleach Thousand-Year Blood War", 4)
 
@@ -258,10 +258,10 @@ def test_get_series_metadata_marks_unreleased_tba_season_missing(monkeypatch):
             }
         )
 
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.httpx.get", fake_get)
-    monkeypatch.setattr("py_stremio.components.stremio_metadata.get_imdb_max_season", lambda imdb_id: 3)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_imdb_max_season", lambda imdb_id: 3)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata._current_datetime",
+        "py_stremio.components.stremio.stremio_metadata._current_datetime",
         lambda: datetime(2026, 6, 4, tzinfo=timezone.utc),
     )
 

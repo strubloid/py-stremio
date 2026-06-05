@@ -2,9 +2,9 @@
 import json
 from types import SimpleNamespace
 
-from py_stremio.components.config_file import DownloadConfig, QualitySettings, save_config
-from py_stremio.components.download_processing import process_season_folder
-from py_stremio.components.output import install_thread_stdout_filter, restore_thread_stdout_filter
+from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings, save_config
+from py_stremio.components.download.processing import process_season_folder
+from py_stremio.components.reports.output_writer import install_thread_stdout_filter, restore_thread_stdout_filter
 
 
 def _download_settings():
@@ -32,10 +32,10 @@ def test_process_season_folder_downloads_all_missing_episodes_by_default(tmp_pat
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path)
 
@@ -68,10 +68,10 @@ def test_process_season_folder_passes_config_languages_to_search(tmp_path, monke
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path)
 
@@ -103,10 +103,10 @@ def test_process_season_folder_persists_only_successful_download_server(tmp_path
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path)
 
@@ -114,6 +114,89 @@ def test_process_season_folder_persists_only_successful_download_server(tmp_path
         saved = json.load(f)
     assert result["downloaded"] == 1
     assert captured["working_addons"] == ["https://stale-addon", "https://stream-only-addon"]
+    assert saved["servers"] == ["https://successful-addon"]
+
+
+def test_process_season_folder_saves_working_urls_when_success_lacks_exact_addon(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="How I Met Your Mother",
+        imdb_id="tt0460649",
+        season=1,
+        episode_count=1,
+        quality=QualitySettings(preferred="1080p"),
+        servers=[],
+    )
+    save_config(tmp_path / "download-config.json", config)
+
+    def fake_search_and_download(**kwargs):
+        return {
+            "success": True,
+            "filename": "How I Met Your Mother_s01e01.mkv",
+            "quality": "1080p",
+            "working_urls": ["https://torrentio.strem.fun/manifest.json"],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path)
+
+    with open(tmp_path / "download-config.json") as f:
+        saved = json.load(f)
+    assert result["downloaded"] == 1
+    assert saved["servers"] == ["https://torrentio.strem.fun"]
+
+
+def test_process_season_folder_does_not_clear_servers_after_transient_failure(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="How I Met Your Mother",
+        imdb_id="tt0460649",
+        season=1,
+        episode_count=2,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://previously-working-addon"],
+    )
+    save_config(tmp_path / "download-config.json", config)
+    servers_seen_by_second_episode = []
+
+    def fake_search_and_download(**kwargs):
+        if kwargs["episode"] == 1:
+            return {
+                "success": False,
+                "error": "temporary failure",
+                "working_urls": [],
+            }
+        with open(tmp_path / "download-config.json") as f:
+            servers_seen_by_second_episode.extend(json.load(f)["servers"])
+        return {
+            "success": True,
+            "filename": "How I Met Your Mother_s01e02.mkv",
+            "quality": "1080p",
+            "successful_url": "https://successful-addon",
+            "working_urls": ["https://successful-addon"],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.settings",
+        SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=0, MAX_DOWNLOAD_ATTEMPTS=1),
+    )
+
+    result = process_season_folder(tmp_path)
+
+    with open(tmp_path / "download-config.json") as f:
+        saved = json.load(f)
+    assert result["downloaded"] == 1
+    assert result["failed"] == 1
+    assert servers_seen_by_second_episode == ["https://previously-working-addon"]
     assert saved["servers"] == ["https://successful-addon"]
 
 
@@ -137,11 +220,11 @@ def test_process_season_folder_clears_servers_when_no_download_succeeds(tmp_path
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.settings",
+        "py_stremio.components.download.processing.settings",
         SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=0, MAX_DOWNLOAD_ATTEMPTS=1),
     )
 
@@ -170,10 +253,10 @@ def test_process_season_folder_skips_unverified_season_without_episode_count(tmp
         return {"success": True, "filename": "should_not_download.mkv"}
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path)
 
@@ -219,10 +302,10 @@ def test_process_season_folder_uses_metadata_available_episodes_instead_of_bruta
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path)
 
@@ -252,10 +335,10 @@ def test_process_season_folder_uses_current_episode_download_as_start_episode(tm
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     process_season_folder(tmp_path)
 
@@ -285,10 +368,10 @@ def test_process_season_folder_persists_next_episode_after_each_success(tmp_path
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     process_season_folder(tmp_path)
 
@@ -323,10 +406,10 @@ def test_process_season_folder_repairs_stale_season_config_from_folder_path(tmp_
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     process_season_folder(season_folder)
 
@@ -358,10 +441,10 @@ def test_process_season_folder_quiet_output_suppresses_worker_prints(tmp_path, m
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
     _, restore_stdout = install_thread_stdout_filter()
     try:
         process_season_folder(tmp_path, max_workers=2, quiet_output=True)
@@ -405,10 +488,10 @@ def test_process_season_folder_uses_shared_worker_semaphore_to_cap_active_downlo
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     process_season_folder(tmp_path, max_workers=4, worker_semaphore=threading.Semaphore(2))
 
@@ -438,10 +521,10 @@ def test_process_season_folder_accepts_download_threads(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path, max_workers=2)
 
@@ -471,10 +554,10 @@ def test_process_season_folder_does_not_redownload_existing_generated_episode_fi
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path)
 
@@ -506,10 +589,10 @@ def test_process_season_folder_resumes_partial_part_file(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     process_season_folder(tmp_path)
 
@@ -540,11 +623,11 @@ def test_process_season_folder_treats_tiny_untracked_generated_file_as_interrupt
         }
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.settings",
+        "py_stremio.components.download.processing.settings",
         SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=100),
     )
 
@@ -588,10 +671,10 @@ def test_process_season_folder_treats_absolute_numbered_complete_season_as_exist
         return {"success": True, "filename": f"episode_{kwargs['episode']}.mkv", "quality": "1080p", "working_urls": []}
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path)
 
@@ -637,10 +720,10 @@ def test_process_season_folder_downloads_only_new_episode_after_absolute_numbere
         return {"success": True, "filename": f"episode_{kwargs['episode']}.mkv", "quality": "1080p", "working_urls": []}
 
     monkeypatch.setattr(
-        "py_stremio.components.download_processing.search_and_download",
+        "py_stremio.components.download.processing.search_and_download",
         fake_search_and_download,
     )
-    monkeypatch.setattr("py_stremio.components.download_processing.settings", _download_settings())
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
 
     result = process_season_folder(tmp_path)
 

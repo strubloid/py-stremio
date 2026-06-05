@@ -2,10 +2,10 @@
 from pathlib import Path
 import sys
 
-from .download_discovery import find_movie_folders, find_season_folders
-from .download_processing import process_movie_folder, process_season_folder, scan_folder_for_episodes
-from .settings import settings
-from .stremio_urls import normalize_manifest_url, unique_manifest_urls
+from .discovery import find_movie_folders, find_season_folders
+from .processing import process_movie_folder, process_season_folder, scan_folder_for_episodes
+from py_stremio.components.configs.app_settings import settings
+from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
 
 
 normalize_server_url = normalize_manifest_url

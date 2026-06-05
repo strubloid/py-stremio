@@ -9,16 +9,16 @@ import time
 from datetime import datetime
 from typing import Any
 
-from .addon_validator import validate_and_update
-from .bandwidth import build_limiter
+from py_stremio.components.addons.addon_validator import validate_and_update
+from py_stremio.components.download.bandwidth_service import build_limiter
 from .collect import discover_new_addons
-from .output import install_thread_stdout_filter, restore_thread_stdout_filter, suppress_current_thread_output
-from .settings import settings
-from .scanner import Scanner, FolderType, ScannedFolder
-from .download_processing import process_movie_folder as process_movies
-from .download_processing import process_season_folder as process_series
-from .errors import print_error_summary
-from .report import ReportData, print_and_send_report
+from py_stremio.components.reports.output_writer import install_thread_stdout_filter, restore_thread_stdout_filter, suppress_current_thread_output
+from py_stremio.components.configs.app_settings import settings
+from py_stremio.components.library.library_scanner import Scanner, FolderType, ScannedFolder
+from .download.processing import process_movie_folder as process_movies
+from .download.processing import process_season_folder as process_series
+from py_stremio.components.errors import print_error_summary
+from py_stremio.components.reports.report import ReportData, print_and_send_report
 
 
 ACCENT = "\033[96m"
@@ -226,7 +226,7 @@ def _current_year() -> int:
 
 
 def _existing_series_seasons(series_path) -> set[int]:
-    from .utils import parse_season_from_folder
+    from py_stremio.utils.media import parse_season_from_folder
 
     return {
         season
@@ -237,7 +237,7 @@ def _existing_series_seasons(series_path) -> set[int]:
 
 def _create_current_year_season_folders(scanner: Scanner, quiet: bool = False) -> list[ScannedFolder]:
     """Create missing current-year season folders for already tracked series."""
-    from .stremio_metadata import get_current_year_series_seasons
+    from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
 
     created: list[ScannedFolder] = []
     year = _current_year()
@@ -248,9 +248,7 @@ def _create_current_year_season_folders(scanner: Scanner, quiet: bool = False) -
         if not series_path.is_dir():
             continue
         existing = _existing_series_seasons(series_path)
-        if not existing:
-            continue
-        latest_existing = max(existing)
+        latest_existing = max(existing) if existing else 0
         for season_info in get_current_year_series_seasons(series_path.name, year):
             season = int(season_info.get("season") or 0)
             if season <= latest_existing or season in existing:
@@ -289,11 +287,11 @@ def scan_library() -> list[ScannedFolder]:
 
 def update_config_imdb_ids(quiet: bool = False) -> None:
     """Create/update series download-config.json files with metadata."""
-    from .config_file import load_config, save_config
-    from .media_files import infer_next_episode_download
-    from .stremio_client import get_series_imdb_id
-    from .stremio_metadata import get_series_metadata
-    from .utils import parse_season_from_folder
+    from py_stremio.components.configs.config_file import load_config, save_config
+    from py_stremio.components.library.media_file import infer_next_episode_download
+    from py_stremio.components.stremio.stremio_client import get_series_imdb_id
+    from py_stremio.components.stremio.stremio_metadata import get_series_metadata
+    from py_stremio.utils.media import parse_season_from_folder
 
     scanner = Scanner()
     folders = scanner.scan()
@@ -333,7 +331,7 @@ def update_config_imdb_ids(quiet: bool = False) -> None:
             changed = False
 
             # Inject preferred languages from settings if config doesn't have them
-            from .settings import settings as app_settings
+            from py_stremio.components.configs.app_settings import settings as app_settings
             if app_settings.PREFERRED_LANGUAGES and not config.get("languages"):
                 config["languages"] = list(app_settings.PREFERRED_LANGUAGES)
                 changed = True
@@ -446,8 +444,8 @@ def _series_overview_key(folder: ScannedFolder, config) -> tuple[str, str]:
 
 def _series_completion_overviews(folders: list[ScannedFolder]) -> list[str]:
     """Build one library/checking line per series, aggregated across seasons."""
-    from .config_file import load_config
-    from .media_files import detect_existing_season_episodes
+    from py_stremio.components.configs.config_file import load_config
+    from py_stremio.components.library.media_file import detect_existing_season_episodes
 
     series: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -681,8 +679,11 @@ def run_menu() -> None:
         folders = scan_library()
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
-        print(_c("\n🛠  Validate addon URLs", ACCENT))
-        validate_and_update()
+        
+        # please do not uncomment this
+        # print(_c("\n🛠  Validate addon URLs", ACCENT))
+        # validate_and_update()
+        
         download_folders(folders, quiet=True, max_workers=max_workers)
     elif choice == "2":
         scan_library()
@@ -700,7 +701,7 @@ def run_menu() -> None:
         print("Bye.")
     else:
         print(_c("Unknown option. Choose 1-7.", RED))
-    print_error_summary()
+    # print_error_summary()
 
 
 def run(interactive: bool | None = None) -> None:

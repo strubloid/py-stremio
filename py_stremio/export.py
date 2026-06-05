@@ -2,7 +2,7 @@
 
 import sys
 
-from .components.stremio_exporter import export_addons_to_file, main
+from .components.stremio.stremio_exporter import export_addons_to_file, main
 
 __all__ = ["export_addons_to_file", "main"]
 

@@ -28,8 +28,8 @@ from py_stremio.components.errors import (
     report_error,
     reset_error_reporter,
 )
-from py_stremio.components.error_logger import log_error
-from py_stremio.components.stream_downloads import InvalidVideoDownloadError
+from py_stremio.components.errors.error_logger import log_error
+from py_stremio.components.download.stream_download import InvalidVideoDownloadError
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────

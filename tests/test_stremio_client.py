@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import py_stremio.components.addons as addons
 from py_stremio.components.addons.models import StreamInfo
-from py_stremio.components import stremio_client
-from py_stremio.components.stremio_client import search_all_addons_for_streams
+from py_stremio.components.stremio import stremio_client
+from py_stremio.components.stremio.stremio_client import search_all_addons_for_streams
 
 
 class FakeAddon:
@@ -161,3 +161,87 @@ def test_search_and_download_marks_all_invalid_video_streams_permanent(monkeypat
     assert result["success"] is False
     assert result["permanent_failure"] is True
     assert "only 42 bytes" in result["error"]
+
+
+def test_search_and_download_falls_back_to_remaining_addons_when_cached_server_fails(monkeypatch, tmp_path):
+    cached_stream = StreamInfo(
+        name="Cached 1080p",
+        url="https://cached.test/error.mp4",
+        title="Bob.S13E13",
+        addon_name="CachedAddon",
+        addon_url="https://cached-addon",
+    )
+    fallback_stream = StreamInfo(
+        name="Fallback 1080p",
+        url="https://fallback.test/episode.mp4",
+        title="Bob.S13E13",
+        addon_name="FallbackAddon",
+        addon_url="https://fallback-addon",
+    )
+    search_calls = []
+    download_calls = []
+
+    monkeypatch.setattr(stremio_client, "_resolve_imdb_id", lambda title, imdb_id, season: "tt123")
+    monkeypatch.setattr(
+        stremio_client,
+        "search_working_addons_for_streams",
+        lambda id_type, stremio_id, working_addons: (
+            search_calls.append(("cached", working_addons)) or ([cached_stream], ["https://cached-addon"])
+        ),
+    )
+    monkeypatch.setattr(
+        stremio_client,
+        "search_remaining_addons_for_streams",
+        lambda id_type, stremio_id, excluded_addons: (
+            search_calls.append(("remaining", excluded_addons)) or ([fallback_stream], ["https://fallback-addon"])
+        ),
+    )
+    monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
+
+    def fake_download(download_url, filename, **kwargs):
+        download_calls.append(download_url)
+        if "cached" in download_url:
+            raise RuntimeError("cached server failed")
+
+    monkeypatch.setattr(stremio_client, "download_stream_to_file", fake_download)
+
+    result = stremio_client.search_and_download(
+        "Bob's Burgers",
+        imdb_id="tt123",
+        season=13,
+        episode=13,
+        folder_path=str(tmp_path),
+        working_addons=["https://cached-addon"],
+    )
+
+    assert result["success"] is True
+    assert result["successful_url"] == "https://fallback-addon"
+    assert result["working_urls"] == ["https://cached-addon", "https://fallback-addon"]
+    assert search_calls == [
+        ("cached", ["https://cached-addon"]),
+        ("remaining", ["https://cached-addon"]),
+    ]
+    assert download_calls == ["https://cached.test/error.mp4", "https://fallback.test/episode.mp4"]
+
+
+def test_retry_with_real_debrid_without_info_hash_returns_none(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_resolve_torrent_with_debrid(info_hash, file_idx):
+        calls.append((info_hash, file_idx))
+        return "https://rd.test/video.mkv"
+
+    monkeypatch.setattr(
+        stremio_client,
+        "resolve_torrent_with_debrid",
+        fake_resolve_torrent_with_debrid,
+    )
+
+    result = stremio_client._retry_with_real_debrid(
+        StreamInfo(name="No hash stream", url="https://dl.test/file.mkv"),
+        str(tmp_path / "file.mkv"),
+        [],
+    )
+
+    assert result is None
+    assert calls == []

@@ -43,7 +43,7 @@ class BaseAddon(ABC):
             response.raise_for_status()
             return response.json().get("streams", [])
         except Exception as exc:
-            from ..error_logger import log_error
+            from py_stremio.components.errors.error_logger import log_error
 
             log_error(f"fetch_streams({self.name})", exc, url)
             return []

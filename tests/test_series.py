@@ -4,8 +4,8 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from py_stremio.components.series import detect_existing_episodes, plan_missing_episodes
-from py_stremio.components.config_file import DownloadConfig, QualitySettings
+from py_stremio.components.library.series import detect_existing_episodes, plan_missing_episodes
+from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings
 
 
 class TestDetectExistingEpisodes:

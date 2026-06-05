@@ -13,6 +13,10 @@ class StremThruAddonConfigurer(AddonUrlConfigurer):
     host_match = "stremthru.13377001.xyz"
     enabled = False
 
+    def normalize(self, url: str) -> str:
+        parsed = urlparse(url.strip().rstrip("/").removesuffix("/manifest.json"))
+        return f"{parsed.scheme}://{parsed.netloc}/stremio/torz"
+
     def configure(self, base_url: str, api_key: str) -> str:
         parsed = urlparse(base_url.rstrip("/"))
         base_path = parsed.path.rstrip("/")

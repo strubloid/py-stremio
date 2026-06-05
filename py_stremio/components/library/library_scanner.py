@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from enum import Enum
 
-from .settings import settings
+from py_stremio.components.configs.app_settings import settings
 
 
 class FolderType(Enum):

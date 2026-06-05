@@ -3,9 +3,9 @@ import httpx
 
 import re
 
-from .addons.models import StreamInfo
-from .real_debrid import resolve_torrent_with_debrid
-from .settings import settings
+from py_stremio.components.addons.models import StreamInfo
+from py_stremio.components.debrid.real_debrid_client import resolve_torrent_with_debrid
+from py_stremio.components.configs.app_settings import settings
 
 RD_PROXY_PREFIX = "https://torrentio.strem.fun/resolve/"
 
@@ -379,7 +379,7 @@ def resolve_real_debrid_proxy_url(download_url: str) -> str | None:
         print(f"    RD proxy failed ({response.status_code}), trying info_hash fallback...")
     except Exception as e:
         print(f"    Resolve error: {e}, trying info_hash fallback...")
-        from .error_logger import log_error
+        from py_stremio.components.errors.error_logger import log_error
 
         log_error("resolve_rd_proxy", e, download_url)
     return None

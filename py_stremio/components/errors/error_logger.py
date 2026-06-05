@@ -20,7 +20,7 @@ from pathlib import Path
 import sys
 import traceback
 
-from .errors import report_error, print_error_summary
+from py_stremio.components.errors import report_error, print_error_summary
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 ERROR_LOG = PROJECT_ROOT / "errors.md"

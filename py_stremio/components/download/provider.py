@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 import re
 
-from .settings import settings
+from py_stremio.components.configs.app_settings import settings
 
 
 @dataclass

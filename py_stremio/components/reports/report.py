@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Any
 
-from .settings import settings
+from py_stremio.components.configs.app_settings import settings
 
 
 @dataclass
@@ -84,14 +84,27 @@ def format_terminal_report(data: ReportData) -> str:
 
 
 def send_email_report(data: ReportData) -> bool:
-    """Send report via email if SMTP is configured."""
-    if not settings.smtp_configured:
+    """Send report via email when all required SMTP settings are present."""
+    host = settings.SMTP_HOST
+    port = settings.SMTP_PORT
+    user = settings.SMTP_USER
+    password = settings.SMTP_PASSWORD
+    to_address = settings.SMTP_TO
+    from_address = settings.SMTP_FROM or user
+
+    if (
+        host is None
+        or user is None
+        or password is None
+        or to_address is None
+        or from_address is None
+    ):
         return False
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"Py-Stremio Report - {data.timestamp}"
-    msg["From"] = settings.SMTP_FROM
-    msg["To"] = settings.SMTP_TO
+    msg["From"] = from_address
+    msg["To"] = to_address
 
     text_content = format_terminal_report(data)
     html_content = f"""
@@ -109,18 +122,18 @@ def send_email_report(data: ReportData) -> bool:
     msg.attach(MIMEText(html_content, "html"))
 
     try:
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+        with smtplib.SMTP(host, port) as server:
             if settings.SMTP_USE_TLS:
                 server.starttls()
-            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            server.login(user, password)
             server.send_message(msg)
         return True
-    except Exception as e:
-        print(f"  Email report failed: {e}")
+    except Exception as exc:
+        print(f"  Email report failed: {exc}")
         return False
 
 
 def print_and_send_report(data: ReportData) -> None:
     """Print terminal report and send email if configured."""
     print(format_terminal_report(data))
-    return None
+    send_email_report(data)

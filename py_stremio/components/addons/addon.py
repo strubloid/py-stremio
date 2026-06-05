@@ -67,6 +67,18 @@ def configure_addon_url(base_url: str, api_key: str | None) -> str:
     return base_url
 
 
+def normalize_addon_url(url: str | None) -> str:
+    """Return the clean persisted URL using the matching addon type rule."""
+    if not url:
+        return ""
+
+    stripped_url = url.strip().rstrip("/").removesuffix("/manifest.json")
+    for configurer in _ADDON_CONFIGURERS:
+        if configurer.matches(stripped_url):
+            return configurer.normalize(stripped_url)
+    return stripped_url
+
+
 def register_rd_injector(url_match: str, injector: Callable[[str, str], str]) -> None:
     """Register a custom URL injector for local/non-core addon rules."""
     URL_RD_INJECTORS[url_match] = injector

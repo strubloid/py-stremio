@@ -4,7 +4,7 @@ Each addon knows how to construct its stream-query URL, optionally embedding
 a debrid-service API key that the factory sets at runtime via .api_key.
 """
 
-from .base import HttpAddon, build_comet_config_url, build_hdhub_config_url, build_stremthru_config_url
+from ..base import HttpAddon, build_comet_config_url, build_hdhub_config_url, build_stremthru_config_url
 
 
 # ── Torrentio family ──────────────────────────────────────────────────────────

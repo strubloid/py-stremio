@@ -1,12 +1,12 @@
 """Series episode management and download planning."""
 from pathlib import Path
 
-from .config_file import DownloadConfig, load_config
-from .downloader import Downloader, plan_quality_fallback
-from .media_files import detect_episode_numbers
-from .state import load_state, save_state
-from .utils import sanitize_filename
-from .settings import settings
+from py_stremio.components.configs.config_file import DownloadConfig, load_config
+from py_stremio.components.download.downloader import Downloader, plan_quality_fallback
+from py_stremio.components.library.media_file import detect_episode_numbers
+from py_stremio.components.state.app_state import load_state, save_state
+from py_stremio.utils.media import sanitize_filename
+from py_stremio.components.configs.app_settings import settings
 
 
 def detect_existing_episodes(folder_path: Path) -> set[int]:

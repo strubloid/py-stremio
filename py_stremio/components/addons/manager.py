@@ -3,17 +3,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 from .base import BaseAddon, UrlAddon
-from .builtin import (
-    AnimeKitsuAddon,
-    BrazucaTorrentsAddon,
-    CometAddon,
-    HDHubAddon,
-    MediaFusionAddon,
-    ThePirateBayPlusAddon,
-    TorrentioAddon,
-    TorrentioPortugueseAddon,
-    TorrentioSortSeedersAddon,
-)
 from .models import StreamInfo
 
 SEARCH_CONCURRENCY = 10  # max parallel addon queries
@@ -90,7 +79,7 @@ class AddonManager:
                 try:
                     streams = future.result(timeout=20)
                 except Exception as exc:
-                    from ..error_logger import log_error
+                    from py_stremio.components.errors.error_logger import log_error
 
                     log_error(
                         f"addon_timeout({addon.name})",
@@ -117,7 +106,7 @@ class AddonManager:
         try:
             return addon.get_streams(type_, id_)
         except Exception as exc:
-            from ..error_logger import log_error
+            from py_stremio.components.errors.error_logger import log_error
 
             log_error(f"try_addon({addon.name})", exc, f"{type_}/{id_}")
             return []

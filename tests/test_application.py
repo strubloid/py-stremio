@@ -4,7 +4,7 @@ import json
 import threading
 
 from py_stremio.components import application
-from py_stremio.components.scanner import FolderType, ScannedFolder
+from py_stremio.components.library.library_scanner import FolderType, ScannedFolder
 
 
 def test_run_creates_metadata_rich_series_config_when_config_was_deleted(tmp_path, monkeypatch):
@@ -19,9 +19,9 @@ def test_run_creates_metadata_rich_series_config_when_config_was_deleted(tmp_pat
         DRY_RUN=True,
     )
     monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
-    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.library.library_scanner.settings", test_settings)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata.get_series_metadata",
+        "py_stremio.components.stremio.stremio_metadata.get_series_metadata",
         lambda title, season: {
             "imdb_id": "tt11198330",
             "title": "House of the Dragon",
@@ -77,9 +77,9 @@ def test_metadata_refresh_creates_config_at_next_episode_when_absolute_numbered_
         DRY_RUN=True,
     )
     monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
-    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.library.library_scanner.settings", test_settings)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata.get_series_metadata",
+        "py_stremio.components.stremio.stremio_metadata.get_series_metadata",
         lambda title, season: {
             "imdb_id": "tt14986406",
             "title": "Bleach: Thousand-Year Blood War",
@@ -107,9 +107,9 @@ def test_metadata_refresh_disables_series_season_when_metadata_has_no_episodes(t
         DRY_RUN=True,
     )
     monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
-    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.library.library_scanner.settings", test_settings)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata.get_series_metadata",
+        "py_stremio.components.stremio.stremio_metadata.get_series_metadata",
         lambda title, season: {
             "imdb_id": "tt26678932",
             "title": "Poppa's House",
@@ -130,7 +130,7 @@ def test_metadata_refresh_disables_series_season_when_metadata_has_no_episodes(t
 
 
 def test_metadata_refresh_updates_existing_episode_list_when_config_already_has_episode_count(tmp_path, monkeypatch):
-    from py_stremio.components.config_file import DownloadConfig, save_config
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
 
     season_folder = tmp_path / "series" / "Rick and Morty" / "s00"
     season_folder.mkdir(parents=True)
@@ -153,9 +153,9 @@ def test_metadata_refresh_updates_existing_episode_list_when_config_already_has_
         DRY_RUN=True,
     )
     monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
-    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.library.library_scanner.settings", test_settings)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata.get_series_metadata",
+        "py_stremio.components.stremio.stremio_metadata.get_series_metadata",
         lambda title, season: {
             "imdb_id": "tt2861424",
             "title": "Rick and Morty",
@@ -185,10 +185,10 @@ def test_scan_library_creates_current_year_next_season_folder(tmp_path, monkeypa
         DRY_RUN=True,
     )
     monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
-    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.library.library_scanner.settings", test_settings)
     monkeypatch.setattr(application, "_current_year", lambda: 2026)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata.get_current_year_series_seasons",
+        "py_stremio.components.stremio.stremio_metadata.get_current_year_series_seasons",
         lambda title, year: [
             {"imdb_id": "tt2861424", "title": "Rick and Morty", "season": 9, "episode_count": 10}
         ] if title == "Rick and Morty" and year == 2026 else [],
@@ -200,6 +200,35 @@ def test_scan_library_creates_current_year_next_season_folder(tmp_path, monkeypa
     assert any(folder.path == series_root / "Rick and Morty" / "s09" for folder in folders)
     output = capsys.readouterr().out
     assert "created Rick and Morty S09" in output
+
+
+def test_scan_library_creates_current_year_season_for_empty_tracked_series(tmp_path, monkeypatch, capsys):
+    series_root = tmp_path / "series"
+    movies_root = tmp_path / "movies"
+    (series_root / "Taskmaster").mkdir(parents=True)
+    movies_root.mkdir(parents=True)
+    test_settings = SimpleNamespace(
+        ROOT_FOLDER=tmp_path,
+        SERIES_FOLDER=series_root,
+        MOVIES_FOLDER=movies_root,
+        DRY_RUN=True,
+    )
+    monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.library.library_scanner.settings", test_settings)
+    monkeypatch.setattr(application, "_current_year", lambda: 2026)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio.stremio_metadata.get_current_year_series_seasons",
+        lambda title, year: [
+            {"imdb_id": "tt4934214", "title": "Taskmaster", "season": 21, "episode_count": 9}
+        ] if title == "Taskmaster" and year == 2026 else [],
+    )
+
+    folders = application.scan_library()
+
+    assert (series_root / "Taskmaster" / "s21").is_dir()
+    assert any(folder.path == series_root / "Taskmaster" / "s21" for folder in folders)
+    output = capsys.readouterr().out
+    assert "created Taskmaster S21" in output
 
 
 def test_scan_library_does_not_create_missing_old_season_from_previous_year(tmp_path, monkeypatch):
@@ -214,10 +243,10 @@ def test_scan_library_does_not_create_missing_old_season_from_previous_year(tmp_
         DRY_RUN=True,
     )
     monkeypatch.setattr("py_stremio.components.application.settings", test_settings)
-    monkeypatch.setattr("py_stremio.components.scanner.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.library.library_scanner.settings", test_settings)
     monkeypatch.setattr(application, "_current_year", lambda: 2026)
     monkeypatch.setattr(
-        "py_stremio.components.stremio_metadata.get_current_year_series_seasons",
+        "py_stremio.components.stremio.stremio_metadata.get_current_year_series_seasons",
         lambda title, year: [],
     )
 
@@ -241,7 +270,7 @@ def test_download_folders_lists_series_overview_instead_of_each_season(tmp_path,
     for episode in range(1, 19):
         (poppa_s01 / f"Poppas.House.S01E{episode:02d}.mkv").write_bytes(b"done")
 
-    from py_stremio.components.config_file import DownloadConfig, save_config
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
 
     save_config(house_s01 / "download-config.json", DownloadConfig(type="series", title="House of the Dragon", season=1, episode_count=10))
     save_config(house_s02 / "download-config.json", DownloadConfig(type="series", title="House of the Dragon", season=2, episode_count=8))
@@ -274,7 +303,7 @@ def test_download_folders_series_overview_shows_partial_download_percentage(tmp_
     for episode in range(1, 3):
         (season_folder / f"Doctor.Who.2023.S01E{episode:02d}.mkv").write_bytes(b"done")
 
-    from py_stremio.components.config_file import DownloadConfig, save_config
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
 
     save_config(
         season_folder / "download-config.json",

@@ -1,11 +1,15 @@
 """Public Stremio client facade for stream search and downloads."""
-from .addons.models import StreamInfo
-from .real_debrid import resolve_torrent_with_debrid
-from .settings import settings
-from .stremio_addon_search import query_addon_for_streams, search_all_addons_for_streams
-from .stremio_ids import build_stremio_id
-from .stremio_metadata import get_imdb_id, get_series_imdb_id
-from .stream_downloads import (
+from py_stremio.components.addons.models import StreamInfo
+from py_stremio.components.debrid.real_debrid_client import resolve_torrent_with_debrid
+from py_stremio.components.configs.app_settings import settings
+from py_stremio.components.addons.addon_search_service import (
+    search_all_addons_for_streams,
+    search_remaining_addons_for_streams,
+    search_working_addons_for_streams,
+)
+from py_stremio.components.stremio.stremio_ids import build_stremio_id
+from py_stremio.components.stremio.stremio_metadata import get_imdb_id, get_series_imdb_id
+from py_stremio.components.download.stream_download import (
     InvalidVideoDownloadError,
     build_media_filename,
     can_retry_with_debrid,
@@ -34,10 +38,81 @@ def search_and_download(
     id_type = "series" if season else "movie"
     stremio_id = build_stremio_id(imdb_id, title, season, episode)
 
-    streams, working_urls = search_all_addons_for_streams(id_type, stremio_id, working_addons)
+    if working_addons:
+        cached_streams, cached_working_urls = search_working_addons_for_streams(
+            id_type,
+            stremio_id,
+            working_addons,
+        )
+        cached_result = _try_download_streams(
+            title=title,
+            streams=cached_streams,
+            working_urls=cached_working_urls,
+            season=season,
+            episode=episode,
+            folder_path=folder_path,
+            preferred_quality=preferred_quality,
+            preferred_languages=preferred_languages,
+            progress_callback=progress_callback,
+            bandwidth_limiter=bandwidth_limiter,
+        )
+        if cached_result.get("success"):
+            return cached_result
+        print("    Cached server did not complete this item; trying remaining addons...")
 
-    if not streams:
+        remaining_streams, remaining_working_urls = search_remaining_addons_for_streams(
+            id_type,
+            stremio_id,
+            excluded_addons=working_addons,
+        )
+        combined_working_urls = [*cached_working_urls, *remaining_working_urls]
+        remaining_result = _try_download_streams(
+            title=title,
+            streams=remaining_streams,
+            working_urls=combined_working_urls,
+            season=season,
+            episode=episode,
+            folder_path=folder_path,
+            preferred_quality=preferred_quality,
+            preferred_languages=preferred_languages,
+            progress_callback=progress_callback,
+            bandwidth_limiter=bandwidth_limiter,
+        )
+        if remaining_result.get("success"):
+            return remaining_result
+        if cached_streams or remaining_streams:
+            return remaining_result if remaining_streams else cached_result
         print(f"    No streams found for ID: {stremio_id}")
+        return {"success": False, "error": "No streams found", "working_urls": combined_working_urls}
+
+    streams, working_urls = search_all_addons_for_streams(id_type, stremio_id, working_addons)
+    return _try_download_streams(
+        title=title,
+        streams=streams,
+        working_urls=working_urls,
+        season=season,
+        episode=episode,
+        folder_path=folder_path,
+        preferred_quality=preferred_quality,
+        preferred_languages=preferred_languages,
+        progress_callback=progress_callback,
+        bandwidth_limiter=bandwidth_limiter,
+    )
+
+
+def _try_download_streams(
+    title: str,
+    streams: list[StreamInfo],
+    working_urls: list[str],
+    season: int | None = None,
+    episode: int | None = None,
+    folder_path: str | None = None,
+    preferred_quality: str = "1080p",
+    preferred_languages: list[str] | None = None,
+    progress_callback=None,
+    bandwidth_limiter=None,
+) -> dict:
+    if not streams:
         return {"success": False, "error": "No streams found", "working_urls": working_urls}
 
     print(f"    Found {len(streams)} streams")
@@ -79,7 +154,7 @@ def search_and_download(
         except InvalidVideoDownloadError as e:
             invalid_download_errors += 1
             print(f"    Invalid video stream: {e}", flush=True)
-            from .error_logger import log_error
+            from py_stremio.components.errors.error_logger import log_error
 
             log_error(f"invalid_video({stream.addon_name})", e, stream.url or stream.info_hash or "?")
             if can_retry_with_debrid(stream, download_url):
@@ -89,7 +164,7 @@ def search_and_download(
             last_error = str(e)
         except Exception as e:
             print(f"    Download error: {e}", flush=True)
-            from .error_logger import log_error
+            from py_stremio.components.errors.error_logger import log_error
 
             log_error(f"download_stream({stream.addon_name})", e, stream.url or stream.info_hash or "?")
             if can_retry_with_debrid(stream, download_url):
@@ -120,6 +195,9 @@ def _resolve_imdb_id(title: str, imdb_id: str | None, season: int | None) -> str
 
 
 def _retry_with_real_debrid(stream: StreamInfo, filename: str, working_urls: list[str], progress_callback=None, bandwidth_limiter=None) -> dict | None:
+    if not stream.info_hash:
+        return None
+
     print("    Retrying with info_hash via RealDebrid...")
     rd_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
     if not rd_url:

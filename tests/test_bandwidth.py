@@ -1,6 +1,6 @@
 """Tests for bandwidth limiting helpers."""
 
-from py_stremio.components.bandwidth import BandwidthLimiter, build_limiter
+from py_stremio.components.download.bandwidth_service import BandwidthLimiter, build_limiter
 
 
 def test_build_limiter_uses_percentage_of_max_speed_mbps():
