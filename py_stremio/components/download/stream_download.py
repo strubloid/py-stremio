@@ -476,7 +476,7 @@ def download_stream_to_file(
     if existing_size:
         print(f"    Resuming from {existing_size} bytes", flush=True)
 
-    with httpx.stream("GET", download_url, timeout=300, headers=headers) as response:
+    with httpx.stream("GET", download_url, timeout=300, headers=headers, follow_redirects=True) as response:
         response.raise_for_status()
         resumed = bool(existing_size and response.status_code == 206)
         mode = "ab" if resumed else "wb"

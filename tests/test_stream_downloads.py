@@ -57,6 +57,7 @@ def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, mo
         captured["method"] = method
         captured["url"] = url
         captured["headers"] = kwargs.get("headers", {})
+        captured["follow_redirects"] = kwargs.get("follow_redirects")
         return FakeResponse()
 
     monkeypatch.setattr(stream_download.httpx, "stream", fake_stream)
@@ -69,6 +70,7 @@ def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, mo
     )
 
     assert captured["headers"]["Range"] == "bytes=4-"
+    assert captured["follow_redirects"] is True
     assert target.read_bytes() == b"abcdefghij"
     assert not partial.exists()
     assert progress_events[-1] == (10, 10)

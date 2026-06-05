@@ -32,7 +32,7 @@ def parse_season_from_folder(folder_name: str) -> int | None:
     return None
 
 
-def natural_sort_key(path: Path) -> tuple[int, ...]:
-    """Generate sort key for natural sorting of filenames."""
+def natural_sort_key(path: Path) -> tuple[tuple[int, int | str], ...]:
+    """Generate a type-safe natural sort key for filenames."""
     parts = re.split(r'(\d+)', path.name)
-    return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
+    return tuple((0, int(part)) if part.isdigit() else (1, part.lower()) for part in parts)

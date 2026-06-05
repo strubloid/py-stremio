@@ -1,7 +1,7 @@
 """Tests for media file episode detection."""
 
 from py_stremio.components.library.media_file import detect_existing_season_episodes, infer_next_episode_download
-from py_stremio.utils.media import parse_episode_number
+from py_stremio.utils.media import natural_sort_key, parse_episode_number
 
 
 BLEACH_TYBW_S03_FILES = [
@@ -27,6 +27,14 @@ def test_parse_episode_number_prefers_release_dash_number_over_codec_and_crc_has
     assert parse_episode_number("[Lazier] Bleach Thousand-Year Blood War - 40 (WEB 1080p AAC) [E323D12D].mkv") == 40
     assert parse_episode_number("Show_S03E12.mkv") == 12
     assert parse_episode_number("episode 05.mkv") == 5
+
+
+def test_natural_sort_key_sorts_numeric_and_text_filename_prefixes(tmp_path):
+    paths = [tmp_path / "10.mkv", tmp_path / "2.mkv", tmp_path / "Episode 1.mkv", tmp_path / "1.mkv"]
+
+    sorted_names = [path.name for path in sorted(paths, key=natural_sort_key)]
+
+    assert sorted_names == ["1.mkv", "2.mkv", "10.mkv", "Episode 1.mkv"]
 
 
 def test_absolute_numbered_bleach_season_maps_episodes_27_to_40_as_season_1_to_14(tmp_path):

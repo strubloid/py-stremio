@@ -1,7 +1,7 @@
 """Series episode management and download planning."""
 from pathlib import Path
 
-from py_stremio.components.configs.config_file import DownloadConfig, load_config
+from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings, load_config
 from py_stremio.components.download.downloader import Downloader, plan_quality_fallback
 from py_stremio.components.library.media_file import detect_episode_numbers
 from py_stremio.components.state.app_state import load_state, save_state
@@ -40,11 +40,14 @@ def process_series(folder_path: Path) -> dict:
         if state.is_downloaded(episode_key):
             results["skipped"] += 1
             continue
-        target_quality = config.quality.preferred
-        qualities = plan_quality_fallback(config.quality, target_quality)
-        episode_title = f"{config.title} S{config.season:02d}E{ep_num:02d}"
+        quality = config.quality or QualitySettings()
+        target_quality = quality.preferred
+        qualities = plan_quality_fallback(quality, target_quality)
+        series_title = config.title or folder_path.parent.name.replace("-", " ").replace("_", " ").title()
+        season = config.season or 1
+        episode_title = f"{series_title} S{season:02d}E{ep_num:02d}"
         result = downloader.download_with_fallback(
-            f"{sanitize_filename(config.title)}_S{config.season:02d}E{ep_num:02d}_[1080p].mkv",
+            f"{sanitize_filename(series_title)}_S{season:02d}E{ep_num:02d}_[{target_quality}].mkv",
             qualities
         )
         if result.success:

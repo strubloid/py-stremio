@@ -1,7 +1,7 @@
 """Movie group management and download planning."""
 from pathlib import Path
 
-from py_stremio.components.configs.config_file import DownloadConfig, load_config
+from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings, load_config
 from py_stremio.components.download.downloader import Downloader, plan_quality_fallback
 from py_stremio.components.library.media_file import detect_movie_titles
 from py_stremio.components.state.app_state import load_state, save_state
@@ -24,9 +24,10 @@ def process_movies(folder_path: Path) -> dict:
     downloader = Downloader(folder_path, config)
     results = {"downloaded": [], "failed": [], "skipped": 0, "dry_run": settings.DRY_RUN}
 
-    movie_title = config.search_group
-    target_quality = config.quality.preferred
-    qualities = plan_quality_fallback(config.quality, target_quality)
+    movie_title = config.search_group or config.title or folder_path.name.replace("-", " ").replace("_", " ").title()
+    quality = config.quality or QualitySettings()
+    target_quality = quality.preferred
+    qualities = plan_quality_fallback(quality, target_quality)
     movie_filename = f"{movie_title}_[{target_quality}].mkv"
 
     if state.is_downloaded(movie_filename):
