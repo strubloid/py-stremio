@@ -10,3 +10,4 @@ class StreamInfo:
     file_idx: int | None = None
     title: str | None = None
     addon_name: str = ""
+    filename: str | None = None

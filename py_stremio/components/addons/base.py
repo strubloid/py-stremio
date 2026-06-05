@@ -50,6 +50,7 @@ class BaseAddon(ABC):
                 file_idx=stream.get("fileIdx"),
                 title=stream.get("title"),
                 addon_name=self.name,
+                filename=(stream.get("behaviorHints") or {}).get("filename"),
             )
             for stream in streams_data
         ]

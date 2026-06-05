@@ -76,6 +76,57 @@ _MULTI_LANGUAGE_INDICATORS = [
 # Cyrillic script → strong indicator of Russian / Slavic content.
 # Common in Russian tracker releases even when the show is Western.
 _CYRILLIC_RE = re.compile(r"[\u0400-\u04FF\u0500-\u052F]")
+_ADVISORY_MARKERS = (
+    "kindly configure this addon",
+    "configure this addon",
+    "elfhosted addons disabled",
+    "reddit.com/r/stremioaddons",
+    "[⛔️]",
+    "⛔",
+    "ℹ",
+)
+
+
+def _combined_stream_text(stream) -> str:
+    return f"{stream.title or ''} {stream.name or ''} {getattr(stream, 'filename', '') or ''}"
+
+
+def _is_advisory_stream(stream) -> bool:
+    text = _combined_stream_text(stream).lower()
+    return any(marker in text for marker in _ADVISORY_MARKERS)
+
+
+def _matches_target_episode(stream, target_season: int | None, target_episode: int | None) -> bool:
+    if target_season is None or target_episode is None:
+        return True
+    text = _combined_stream_text(stream)
+    compact = re.sub(r"[^a-z0-9]", "", text.lower())
+    season = int(target_season)
+    episode = int(target_episode)
+    episode_tokens = {
+        f"s{season:02d}e{episode:02d}",
+        f"s{season}e{episode:02d}",
+        f"s{season:02d}e{episode}",
+        f"season{season}episode{episode}",
+    }
+    return any(token in compact for token in episode_tokens)
+
+
+def _filter_streams_by_target_episode(
+    streams: list,
+    target_season: int | None = None,
+    target_episode: int | None = None,
+) -> list:
+    filtered = []
+    for stream in streams:
+        if _is_advisory_stream(stream):
+            continue
+        if not _matches_target_episode(stream, target_season, target_episode):
+            short_title = (stream.title or stream.name or "")[:60].replace("\n", " ")
+            print(f"    Filtered out off-target stream: {short_title}")
+            continue
+        filtered.append(stream)
+    return filtered
 
 
 def _normalize_preferred_languages(preferred_languages: list[str] | None = None) -> list[str]:
@@ -184,6 +235,8 @@ def select_quality_streams(
     streams: list,
     preferred_quality: str,
     preferred_languages: list[str] | None = None,
+    target_season: int | None = None,
+    target_episode: int | None = None,
 ) -> list:
     """Filter out unusable streams, then return all usable ones sorted by quality
     descending (1080p > 720p > 480p > ...) so the caller can try best first
@@ -192,6 +245,14 @@ def select_quality_streams(
         s for s in streams
         if s.url or s.info_hash
     ]
+    # Apply target media filter before language/quality sorting so unrelated
+    # high-quality results (for example The Bob's Burgers Movie on a series ID)
+    # cannot crowd real episode streams out of the retry list.
+    usable = _filter_streams_by_target_episode(
+        usable,
+        target_season=target_season,
+        target_episode=target_episode,
+    )
     if not usable:
         return []
     # Apply language filter

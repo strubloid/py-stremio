@@ -44,6 +44,8 @@ def search_and_download(
         streams,
         preferred_quality,
         preferred_languages=preferred_languages,
+        target_season=season,
+        target_episode=episode,
     )
     print(f"    {len(streams_to_try)} usable streams after quality filter")
 

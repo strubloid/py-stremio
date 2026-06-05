@@ -268,12 +268,25 @@ class TestFilterStreamsByLanguage:
 
 
 class TestSelectQualityStreamsWithLanguage:
-    """Verify select_quality_streams applies language filtering."""
+    """Verify select_quality_streams applies language/media filtering."""
 
     def _make_stream(
-        self, title: str, name: str = "Torrentio", url: str | None = "https://dl.test"
+        self,
+        title: str,
+        name: str = "Torrentio",
+        url: str | None = "https://dl.test",
+        info_hash: str | None = None,
+        file_idx: int | None = None,
+        filename: str | None = None,
     ) -> StreamInfo:
-        return StreamInfo(name=name, title=title, url=url)
+        return StreamInfo(
+            name=name,
+            title=title,
+            url=url,
+            info_hash=info_hash,
+            file_idx=file_idx,
+            filename=filename,
+        )
 
     def test_filters_russian_with_english_default(self, monkeypatch):
         monkeypatch.setattr(
@@ -299,3 +312,62 @@ class TestSelectQualityStreamsWithLanguage:
         result = stream_downloads.select_quality_streams(streams, "1080p")
         assert len(result) == 1
         assert "English" in result[0].name
+
+    def test_target_episode_filter_removes_unrelated_bobs_burgers_movie(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        movie = self._make_stream(
+            "The.Bobs.Burgers.Movie.2022.2160p.UHD.BluRay.x265"
+        )
+        episode = self._make_stream(
+            "Bobs Burgers S13 1080p WEB-DL Bobs.Burgers.S13E13.mkv",
+            url=None,
+            info_hash="abc123",
+            file_idx=12,
+        )
+        result = stream_downloads.select_quality_streams(
+            [movie, episode],
+            "1080p",
+            target_season=13,
+            target_episode=13,
+        )
+        assert result == [episode]
+
+    def test_target_episode_filter_uses_behavior_hint_filename(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        episode = self._make_stream(
+            "[RD] Torz 1080p",
+            filename="Bobs.Burgers.S13E20.1080p.WEB-DL.mkv",
+        )
+        result = stream_downloads.select_quality_streams(
+            [episode],
+            "1080p",
+            target_season=13,
+            target_episode=20,
+        )
+        assert result == [episode]
+
+    def test_target_episode_filter_removes_advisory_addon_messages(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        advisory = self._make_stream(
+            "ℹ Kindly configure this addon to access streams.",
+            url="https://addon.example/playback/not-a-video",
+        )
+        episode = self._make_stream(
+            "Bobs.Burgers.S13E13.1080p.WEB-DL.mkv",
+            url=None,
+            info_hash="def456",
+            file_idx=12,
+        )
+        result = stream_downloads.select_quality_streams(
+            [advisory, episode],
+            "1080p",
+            target_season=13,
+            target_episode=13,
+        )
+        assert result == [episode]
