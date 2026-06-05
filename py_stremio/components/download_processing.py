@@ -114,7 +114,16 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
         candidates = list(range(start_episode, final_episode + 1))
     for episode in candidates:
         generated_filename = _generated_episode_filename(folder_path, config, season, episode)
-        if state.is_downloaded(f"episode_{episode}.mkv") or state.is_downloaded(generated_filename):
+        legacy_key = f"episode_{episode}.mkv"
+        if state.is_downloaded(legacy_key) or state.is_downloaded(generated_filename):
+            # State says downloaded, but verify the file actually exists on disk.
+            # If the user moved/removed files, treat as missing.
+            final_path = folder_path / generated_filename
+            if not final_path.exists():
+                print(f"    State marks S{season:02d}E{episode:02d} downloaded but file "
+                      f"missing — re-downloading")
+                missing.append(episode)
+                continue
             continue
         if _maybe_convert_tiny_untracked_file_to_partial(folder_path, config, season, episode, state):
             missing.append(episode)
@@ -296,6 +305,8 @@ def process_season_folder(
                     item = future.result()
                     if item["result"].get("success"):
                         apply_result(item["episode"], item["result"], completed_successes)
+                    elif item["result"].get("permanent_failure"):
+                        apply_result(item["episode"], item["result"])
                     else:
                         queue.append(item["episode"])
             if queue:
@@ -313,6 +324,8 @@ def process_season_folder(
                 _set_current_episode(config, config_path, episode_num)
                 item = download_episode(index, episode_num)
                 if item["result"].get("success"):
+                    apply_result(item["episode"], item["result"])
+                elif item["result"].get("permanent_failure"):
                     apply_result(item["episode"], item["result"])
                 else:
                     queue.append(episode_num)

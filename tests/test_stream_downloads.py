@@ -3,6 +3,7 @@
 import pytest
 
 from py_stremio.components.addons.models import StreamInfo
+from py_stremio.components.addons.base import UrlAddon
 from py_stremio.components import stream_downloads
 
 
@@ -22,6 +23,25 @@ class FakeResponse:
     def iter_bytes(self, chunk_size=8192):
         yield b"ef"
         yield b"ghij"
+
+
+class FakeDownloadResponse:
+    def __init__(self, body: bytes, headers: dict | None = None, status_code: int = 200):
+        self.body = body
+        self.headers = headers or {"content-length": str(len(body))}
+        self.status_code = status_code
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_bytes(self, chunk_size=8192):
+        yield self.body
 
 
 def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, monkeypatch):
@@ -51,6 +71,118 @@ def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, mo
     assert target.read_bytes() == b"abcdefghij"
     assert not partial.exists()
     assert progress_events[-1] == (10, 10)
+
+
+def test_download_stream_to_file_rejects_tiny_response_before_writing(tmp_path, monkeypatch):
+    monkeypatch.setattr(stream_downloads.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100)
+    target = tmp_path / "episode.mkv"
+
+    def fake_stream(method, url, **kwargs):
+        return FakeDownloadResponse(
+            b"RealDebrid says this video is unavailable",
+            headers={"content-length": "42", "content-type": "video/mp4"},
+        )
+
+    monkeypatch.setattr(stream_downloads.httpx, "stream", fake_stream)
+
+    with pytest.raises(stream_downloads.InvalidVideoDownloadError, match="only 42 bytes"):
+        stream_downloads.download_stream_to_file("https://example.test/error.mp4", str(target))
+
+    assert not target.exists()
+    assert not (tmp_path / "episode.mkv.part").exists()
+
+
+def test_download_stream_to_file_rejects_text_error_response(tmp_path, monkeypatch):
+    monkeypatch.setattr(stream_downloads.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100)
+    target = tmp_path / "episode.mkv"
+
+    def fake_stream(method, url, **kwargs):
+        return FakeDownloadResponse(
+            b"{\"error\":\"not available\"}",
+            headers={"content-length": "25", "content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(stream_downloads.httpx, "stream", fake_stream)
+
+    with pytest.raises(stream_downloads.InvalidVideoDownloadError, match="application/json"):
+        stream_downloads.download_stream_to_file("https://example.test/error", str(target))
+
+    assert not target.exists()
+    assert not (tmp_path / "episode.mkv.part").exists()
+
+
+def test_parse_streams_extracts_hash_and_file_idx_from_torrentio_rd_proxy_url():
+    addon = UrlAddon("https://torrentio.strem.fun")
+    streams = addon.parse_streams([
+        {
+            "name": "[RD+] Torrentio\n1080p",
+            "title": "Show.S01E01.1080p.mkv",
+            "url": "https://torrentio.strem.fun/resolve/realdebrid/SECRET/"
+                   "106e91b93321f9c8aeeeb32ea6c92317327e7b3b/null/7/Show.mkv",
+            "behaviorHints": {
+                "bingeGroup": "torrentio|106e91b93321f9c8aeeeb32ea6c92317327e7b3b",
+                "filename": "Show.S01E01.1080p.mkv",
+            },
+        }
+    ])
+
+    assert streams[0].info_hash == "106e91b93321f9c8aeeeb32ea6c92317327e7b3b"
+    assert streams[0].file_idx == 7
+
+
+def test_parse_streams_prefers_explicit_info_hash_and_file_idx():
+    addon = UrlAddon("https://example.test")
+    streams = addon.parse_streams([
+        {
+            "name": "Direct",
+            "url": "https://example.test/video.mkv",
+            "infoHash": "abc123",
+            "fileIdx": "4",
+        }
+    ])
+
+    assert streams[0].info_hash == "abc123"
+    assert streams[0].file_idx == 4
+
+
+class FakeStreamInfo:
+    """Minimal StreamInfo-like object for testing title matching."""
+    def __init__(self, title="", name="", filename=""):
+        self.title = title
+        self.name = name
+        self.filename = filename
+
+
+def test_matches_show_title_match():
+    """Stream title containing the show name should match."""
+    stream = FakeStreamInfo(title="Bob's.Burgers.S15E21.1080p.WEBRip.x264-GROUP")
+    assert stream_downloads._matches_show_title(stream, "Bob's Burgers")
+
+
+def test_matches_show_title_no_match():
+    """Stream title for a different show should NOT match."""
+    stream = FakeStreamInfo(title="Some.Other.Show.S15E21.1080p.WEBRip.x264-GROUP")
+    assert not stream_downloads._matches_show_title(stream, "Bob's Burgers")
+
+
+def test_matches_show_title_no_title_provided():
+    """When no title is given, all streams pass."""
+    stream = FakeStreamInfo(title="Anything.At.All.S01E01.mkv")
+    assert stream_downloads._matches_show_title(stream, None)
+
+
+def test_matches_show_title_via_name():
+    """Should also check stream.name field, not just title."""
+    stream = FakeStreamInfo(title="S15E21.1080p", name="Bob's Burgers")
+    assert stream_downloads._matches_show_title(stream, "Bob's Burgers")
+
+
+def test_matches_show_title_apostrophe_variants():
+    """Both apostrophe and dot-separated variants should match."""
+    s1 = FakeStreamInfo(title="Bob.s.Burgers.S15E21.mkv")
+    assert stream_downloads._matches_show_title(s1, "Bob's Burgers")
+    s2 = FakeStreamInfo(title="Bobs.Burgers.S15E21.mkv")
+    assert stream_downloads._matches_show_title(s2, "Bob's Burgers")
 
 
 class TestDetectLanguages:

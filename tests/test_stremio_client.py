@@ -2,6 +2,8 @@
 from types import SimpleNamespace
 
 import py_stremio.components.addons as addons
+from py_stremio.components.addons.models import StreamInfo
+from py_stremio.components import stremio_client
 from py_stremio.components.stremio_client import search_all_addons_for_streams
 
 
@@ -94,3 +96,35 @@ def test_search_continues_to_remaining_addons_when_working_url_has_no_streams(mo
     assert calls == ["https://dead-addon", "https://fallback-addon"]
     assert [stream.name for stream in streams] == ["stream:https://fallback-addon"]
     assert working_urls == ["https://fallback-addon"]
+
+
+def test_search_and_download_marks_all_invalid_video_streams_permanent(monkeypatch, tmp_path):
+    streams = [
+        StreamInfo(name="Comet 1080p", url="https://dl.test/error1.mp4", title="Bob.S13E13"),
+        StreamInfo(name="Torrentio 720p", url="https://dl.test/error2.mp4", title="Bob.S13E13"),
+    ]
+
+    monkeypatch.setattr(stremio_client, "_resolve_imdb_id", lambda title, imdb_id, season: "tt123")
+    monkeypatch.setattr(
+        stremio_client,
+        "search_all_addons_for_streams",
+        lambda id_type, stremio_id, working_addons: (streams, ["https://comet.feels.legal"]),
+    )
+    monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
+
+    def fake_download(download_url, filename, **kwargs):
+        raise stremio_client.InvalidVideoDownloadError("Resolved stream is only 42 bytes")
+
+    monkeypatch.setattr(stremio_client, "download_stream_to_file", fake_download)
+
+    result = stremio_client.search_and_download(
+        "Bob's Burgers",
+        imdb_id="tt123",
+        season=13,
+        episode=13,
+        folder_path=str(tmp_path),
+    )
+
+    assert result["success"] is False
+    assert result["permanent_failure"] is True
+    assert "only 42 bytes" in result["error"]

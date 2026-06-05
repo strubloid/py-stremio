@@ -35,7 +35,7 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
         httpx.post(
             f"{base_url}/torrents/selectFiles/{torrent_id}",
             headers=headers,
-            data={"files": str(file_idx) if file_idx else "all"},
+            data={"files": str(file_idx) if file_idx is not None else "all"},
             timeout=30,
         )
 

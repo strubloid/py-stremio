@@ -17,6 +17,7 @@ from .settings import settings
 from .scanner import Scanner, FolderType, ScannedFolder
 from .download_processing import process_movie_folder as process_movies
 from .download_processing import process_season_folder as process_series
+from .errors import print_error_summary
 from .report import ReportData, print_and_send_report
 
 
@@ -527,7 +528,10 @@ def download_folders(
         folders = Scanner().scan()
 
     print(_c("\n⬇ Downloads", ACCENT))
-    speed_percent = getattr(settings, "INTERNET_SPEED_LIMIT", 100) if speed_percent is None else speed_percent
+    if speed_percent is None:
+        speed_percent = settings.INTERNET_SPEED_LIMIT if hasattr(settings, "INTERNET_SPEED_LIMIT") else getattr(settings, "INTERNET_SPEED_LIMIT", 100)
+    assert speed_percent is not None, "speed_percent must resolve to int"
+
     bandwidth_limiter = build_limiter(speed_percent, getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100))
     print(f"  Threads: {max_workers} · speed: {speed_percent}%")
     report_folders: list[dict[str, Any]] = []
@@ -652,6 +656,7 @@ def run_pipeline(download: bool = True, quiet: bool = True, max_workers: int = 1
     validate_and_update()
     if download:
         download_folders(folders, quiet=quiet, max_workers=max_workers, speed_percent=speed_percent)
+    print_error_summary()
 
 
 def _ask_download_threads() -> int:
@@ -672,11 +677,13 @@ def run_menu() -> None:
     choice = input(_c("Select 1-7 › ", ACCENT)).strip()
 
     if choice == "1" or choice == "":
+        max_workers = _ask_download_threads()
         folders = scan_library()
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
         print(_c("\n🛠  Validate addon URLs", ACCENT))
-        download_folders(folders, quiet=True, max_workers=_ask_download_threads())
+        validate_and_update()
+        download_folders(folders, quiet=True, max_workers=max_workers)
     elif choice == "2":
         scan_library()
     elif choice == "3":
@@ -693,6 +700,7 @@ def run_menu() -> None:
         print("Bye.")
     else:
         print(_c("Unknown option. Choose 1-7.", RED))
+    print_error_summary()
 
 
 def run(interactive: bool | None = None) -> None:
@@ -715,23 +723,28 @@ def run(interactive: bool | None = None) -> None:
     if "--scan" in args or action == "2":
         _banner()
         scan_library()
+        print_error_summary()
         return
     if "--metadata" in args or "--config" in args or action == "3":
         _banner()
         print(_c("\n🧠 Metadata", ACCENT))
         update_config_imdb_ids(quiet=False)
+        print_error_summary()
         return
     if "--download" in args or action == "4":
         _banner()
         download_folders(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+        print_error_summary()
         return
     if "--discover" in args or "--find-addons" in args or action == "5":
         _banner()
         print(_c("\n🔍 Addon Discovery", ACCENT))
         discover_new_addons()
+        print_error_summary()
         return
     if "--validate" in args or "--validate-addons" in args or action == "6":
         validate_and_update()
+        print_error_summary()
         return
     if "--run" in args or "--all" in args or action == "1":
         run_pipeline(download=True, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
@@ -743,3 +756,4 @@ def run(interactive: bool | None = None) -> None:
         run_menu()
     else:
         run_pipeline(download=True, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+    # Both branches above also call print_error_summary()

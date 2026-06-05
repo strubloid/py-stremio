@@ -3,10 +3,49 @@
 import pytest
 
 from py_stremio.components.addons.builtin import (
+    CometAddon,
     CometNetAddon,
     EasyNewsPlusAddon,
+    HDHubAddon,
     KnightCrawlerAddon,
 )
+
+
+class TestManifestUrlQueryHandling:
+    """Configured addon URLs may include /manifest.json, but stream queries must not."""
+
+    def test_comet_manifest_url_is_stripped_for_stream_query(self):
+        addon = CometAddon()
+        addon.api_key = "testkey"
+        url = addon.query_stream_url("series", "tt0944947:1:1")
+
+        assert "/manifest.json/stream/" not in url
+        assert url.endswith("/stream/series/tt0944947:1:1.json")
+
+    def test_comet_embeds_realdebrid_config_when_key_present(self):
+        addon = CometAddon()
+
+        url = addon.get_url("testkey")
+
+        assert url.startswith("https://comet.feels.legal/")
+        assert url.endswith("/manifest.json")
+        assert "testkey" not in url
+
+    def test_comet_config_path_is_stripped_for_stream_query(self):
+        addon = CometAddon()
+        addon.api_key = "testkey"
+
+        url = addon.query_stream_url("series", "tt0944947:1:1")
+
+        assert "/manifest.json/stream/" not in url
+        assert url.endswith("/stream/series/tt0944947:1:1.json")
+
+    def test_hdhub_manifest_url_is_stripped_for_stream_query(self):
+        addon = HDHubAddon()
+        url = addon.query_stream_url("movie", "tt1375666")
+
+        assert "/manifest.json/stream/" not in url
+        assert url.endswith("/stream/movie/tt1375666.json")
 
 
 class TestCometNetAddon:
@@ -103,8 +142,8 @@ class TestKnightCrawlerDeprecation:
         _register_builtin_addons(manager)
 
         names = [a.name for a in manager.addons]
-        assert "KnightCrawler" in names
         assert "CometNet" in names
+        assert "KnightCrawler" in names
         assert "EasyNews+" in names
 
 
@@ -139,4 +178,4 @@ class TestFactoryRegistration:
         manager = AddonManager()
         _register_builtin_addons(manager)
 
-        assert len(manager.addons) >= 35  # was ~33+ before, now 35+
+        assert len(manager.addons) >= 36  # was ~33+ before, now 36+

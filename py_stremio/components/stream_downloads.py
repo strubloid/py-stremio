@@ -9,6 +9,19 @@ from .settings import settings
 
 RD_PROXY_PREFIX = "https://torrentio.strem.fun/resolve/"
 
+
+class InvalidVideoDownloadError(ValueError):
+    """Raised when a resolved stream downloads an invalid placeholder/error file."""
+
+
+_TEXT_ERROR_CONTENT_TYPES = (
+    "text/html",
+    "text/plain",
+    "application/json",
+    "application/xml",
+    "text/xml",
+)
+
 # Language keyword patterns for stream title filtering.
 # Keep short codes token-bound so e.g. "legend" does not imply ENG.
 _LANGUAGE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -17,7 +30,6 @@ _LANGUAGE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\brussian\b", re.IGNORECASE), "russian"),
     (re.compile(r"\bрус(?:ский|ская|ское|ские)?\b", re.IGNORECASE), "russian"),
     (re.compile(r"\brusskiy\b", re.IGNORECASE), "russian"),
-    (re.compile(r"(?:^|[^a-z0-9])ru(?:$|[^a-z0-9])", re.IGNORECASE), "russian"),
     (re.compile(r"(?:^|[^a-z0-9])rus(?:$|[^a-z0-9])", re.IGNORECASE), "russian"),
     (re.compile(r"\brudub\b", re.IGNORECASE), "russian"),
     (re.compile(r"\bspanish\b", re.IGNORECASE), "spanish"),
@@ -110,6 +122,47 @@ def _matches_target_episode(stream, target_season: int | None, target_episode: i
         f"season{season}episode{episode}",
     }
     return any(token in compact for token in episode_tokens)
+
+def _matches_show_title(stream, title: str | None) -> bool:
+    """Check if stream title/release name contains the expected show title.
+    
+    Returns True when the stream title references the show, False when the
+    stream title clearly belongs to a different show (mismatched IMDB ID).
+    
+    Uses lower-case normalized substring matching with common filename
+    separators removed so both \"Bob's Burgers\" and \"Bob.s.Burgers\" match.
+    """
+    if not title:
+        return True  # no title to check against -> pass
+    
+    # Normalize the show title: lowercase, collapse special chars
+    show_normalized = re.sub(r"[^a-z0-9]", "", title.lower())
+    if not show_normalized:
+        return True
+    
+    # Combined stream text (title + name + filename)
+    text = _combined_stream_text(stream)
+    text_normalized = re.sub(r"[^a-z0-9]", "", text.lower())
+    
+    return show_normalized in text_normalized
+
+
+def _filter_streams_by_title(
+    streams: list,
+    title: str | None = None,
+) -> list:
+    """Filter streams that don't match the expected show title.
+    
+    Streams whose release name doesn't contain the show title are warned
+    but NOT removed — this avoids false negatives from abbreviated names.
+    A warning is printed so the user can spot the issue."""
+    filtered = []
+    for stream in streams:
+        if not _matches_show_title(stream, title):
+            short = (stream.title or stream.name or "")[:80].replace("\n", " ")
+            print(f"    ⚠ Stream title doesn't match \"{title}\": {short}")
+        filtered.append(stream)
+    return filtered
 
 
 def _filter_streams_by_target_episode(
@@ -205,7 +258,7 @@ def filter_streams_by_language(streams: list, preferred_languages: list[str] | N
     return filtered
 
 
-def _quality_sort_key(stream) -> tuple[int, int]:
+def _quality_sort_key(stream) -> tuple[int, int, int]:
     """Sort streams by quality: 4K > 1080p > 720p > 480p > 360p > others.
     Prefers streams with a direct URL over info_hash-only at the same quality."""
     name = (stream.name or "").lower()
@@ -227,8 +280,16 @@ def _quality_sort_key(stream) -> tuple[int, int]:
         qscore = 20
 
     url_bonus = 1 if stream.url else 0
-    # Sort descending: high quality first, direct URL bonus
-    return (-qscore, -url_bonus)
+    addon_bonus = 0
+    if "comet" in addon:
+        # Configured Comet returns RD playback URLs for the exact episode and
+        # has proven more reliable for Bob's Burgers than Torrentio season-pack
+        # RD proxies / info_hash fallback.
+        addon_bonus = 30
+    elif "torrentio" not in addon:
+        addon_bonus = 10
+    # Sort descending: high quality first, then preferred addon family, direct URL.
+    return (-qscore, -addon_bonus, -url_bonus)
 
 
 def select_quality_streams(
@@ -237,10 +298,15 @@ def select_quality_streams(
     preferred_languages: list[str] | None = None,
     target_season: int | None = None,
     target_episode: int | None = None,
+    title: str | None = None,
 ) -> list:
     """Filter out unusable streams, then return all usable ones sorted by quality
     descending (1080p > 720p > 480p > ...) so the caller can try best first
-    and fall back to lower qualities."""
+    and fall back to lower qualities.
+
+    When *title* is provided, warns about streams whose release name doesn't
+    contain the show title — this helps catch IMDB-ID mismatches where an
+    addon returns a wrong show's episode under the requested ID."""
     usable = [
         s for s in streams
         if s.url or s.info_hash
@@ -255,6 +321,8 @@ def select_quality_streams(
     )
     if not usable:
         return []
+    # Warn about streams that don't match the show title
+    usable = _filter_streams_by_title(usable, title=title)
     # Apply language filter
     usable = filter_streams_by_language(usable, preferred_languages=preferred_languages)
     if not usable:
@@ -311,6 +379,9 @@ def resolve_real_debrid_proxy_url(download_url: str) -> str | None:
         print(f"    RD proxy failed ({response.status_code}), trying info_hash fallback...")
     except Exception as e:
         print(f"    Resolve error: {e}, trying info_hash fallback...")
+        from .error_logger import log_error
+
+        log_error("resolve_rd_proxy", e, download_url)
     return None
 
 
@@ -344,6 +415,48 @@ def _total_size_from_headers(headers: dict, existing_size: int) -> int:
     return 0
 
 
+def _minimum_completed_video_bytes() -> int:
+    return max(0, getattr(settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100)) * 1024 * 1024
+
+
+def _content_type(headers: dict) -> str:
+    return (headers.get("content-type") or headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+
+
+def _delete_invalid_download(file_path, partial_path) -> None:
+    file_path.unlink(missing_ok=True)
+    partial_path.unlink(missing_ok=True)
+
+
+def _validate_response_before_download(response, file_path, partial_path, total_size: int) -> None:
+    """Reject known non-video placeholder/error responses before writing bytes."""
+    content_type = _content_type(response.headers)
+    if content_type in _TEXT_ERROR_CONTENT_TYPES:
+        _delete_invalid_download(file_path, partial_path)
+        raise InvalidVideoDownloadError(
+            f"Resolved stream returned {content_type or 'non-video'} content, not a video"
+        )
+
+    min_bytes = _minimum_completed_video_bytes()
+    if min_bytes > 0 and total_size and total_size < min_bytes:
+        _delete_invalid_download(file_path, partial_path)
+        raise InvalidVideoDownloadError(
+            f"Resolved stream is only {total_size} bytes "
+            f"(min {min_bytes} bytes for a complete video)"
+        )
+
+
+def _validate_completed_file(file_path, partial_path) -> None:
+    actual_size = file_path.stat().st_size
+    min_bytes = _minimum_completed_video_bytes()
+    if min_bytes > 0 and actual_size < min_bytes:
+        _delete_invalid_download(file_path, partial_path)
+        raise InvalidVideoDownloadError(
+            f"Downloaded file is only {actual_size} bytes "
+            f"(min {min_bytes} bytes for a complete video)"
+        )
+
+
 def download_stream_to_file(
     download_url: str,
     filename: str,
@@ -369,6 +482,7 @@ def download_stream_to_file(
         mode = "ab" if resumed else "wb"
         downloaded = existing_size if resumed else 0
         total_size = _total_size_from_headers(response.headers, downloaded)
+        _validate_response_before_download(response, file_path, partial_path, total_size)
 
         if progress_callback:
             progress_callback(downloaded, total_size)
@@ -385,16 +499,7 @@ def download_stream_to_file(
                     progress_callback(downloaded, total_size)
 
     partial_path.replace(file_path)
-
-    # Verify the downloaded file is large enough to be a real video
-    actual_size = file_path.stat().st_size
-    min_bytes = getattr(settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100) * 1024 * 1024
-    if min_bytes > 0 and actual_size < min_bytes:
-        file_path.unlink(missing_ok=True)
-        raise ValueError(
-            f"Downloaded file is only {actual_size} bytes "
-            f"(min {min_bytes} bytes for a complete video)"
-        )
+    _validate_completed_file(file_path, partial_path)
 
     print(complete_message, flush=True)
 

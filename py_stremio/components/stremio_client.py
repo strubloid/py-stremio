@@ -6,6 +6,7 @@ from .stremio_addon_search import query_addon_for_streams, search_all_addons_for
 from .stremio_ids import build_stremio_id
 from .stremio_metadata import get_imdb_id, get_series_imdb_id
 from .stream_downloads import (
+    InvalidVideoDownloadError,
     build_media_filename,
     can_retry_with_debrid,
     download_stream_to_file,
@@ -46,10 +47,12 @@ def search_and_download(
         preferred_languages=preferred_languages,
         target_season=season,
         target_episode=episode,
+        title=title,
     )
     print(f"    {len(streams_to_try)} usable streams after quality filter")
 
     last_error = None
+    invalid_download_errors = 0
     for index, stream in enumerate(streams_to_try):
         print(f"    Stream {index + 1}/{len(streams_to_try)}: {stream.name[:50]} "
               f"{'(direct URL)' if stream.url else '(info_hash, needs RD)'}", flush=True)
@@ -72,18 +75,34 @@ def search_and_download(
         try:
             download_stream_to_file(download_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
             return _success_result(filename, stream, working_urls)
+        except InvalidVideoDownloadError as e:
+            invalid_download_errors += 1
+            print(f"    Invalid video stream: {e}", flush=True)
+            from .error_logger import log_error
+
+            log_error(f"invalid_video({stream.addon_name})", e, stream.url or stream.info_hash or "?")
+            if can_retry_with_debrid(stream, download_url):
+                retry_result = _retry_with_real_debrid(stream, filename, working_urls, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
+                if retry_result:
+                    return retry_result
+            last_error = str(e)
         except Exception as e:
             print(f"    Download error: {e}", flush=True)
+            from .error_logger import log_error
+
+            log_error(f"download_stream({stream.addon_name})", e, stream.url or stream.info_hash or "?")
             if can_retry_with_debrid(stream, download_url):
                 retry_result = _retry_with_real_debrid(stream, filename, working_urls, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
                 if retry_result:
                     return retry_result
             last_error = str(e)
 
+    permanent_failure = bool(streams_to_try) and invalid_download_errors == len(streams_to_try)
     return {
         "success": False,
         "error": f"All streams failed. Last error: {last_error}",
         "working_urls": working_urls,
+        "permanent_failure": permanent_failure,
     }
 
 

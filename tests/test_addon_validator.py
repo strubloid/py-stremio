@@ -314,7 +314,8 @@ class TestUrlAddonRDInjection:
     """UrlAddon.get_url(api_key) injects RealDebrid key for known addons."""
 
     def test_intell_debridsearch_injection(self):
-        """intell-debridsearch URL gets /realdebrid=KEY/ appended."""
+        """intell-debridsearch URL gets /realdebrid=KEY/ appended via UrlAddon
+        injector (server-URL path)."""
         from py_stremio.components.addons.base import UrlAddon
 
         addon = UrlAddon("https://intell-debridsearch.nepiraw.com")
@@ -328,6 +329,30 @@ class TestUrlAddonRDInjection:
         addon = UrlAddon("https://nyaa-scraper-stremio-addon.nmtl.app")
         result = addon.get_url("TESTKEY456")
         assert result == "https://nyaa-scraper-stremio-addon.nmtl.app/source=nyaa&rd=TESTKEY456&v=1.9.1/"
+
+    def test_comet_injection_embeds_config_without_plain_key(self):
+        """Comet clean URLs get configured so they return RD playback URLs."""
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://comet.feels.legal")
+        result = addon.get_url("TESTKEY456")
+        assert result.startswith("https://comet.feels.legal/")
+        assert result.endswith("/manifest.json")
+        assert "TESTKEY456" not in result
+
+    def test_torrentio_clean_url_injects_realdebrid_for_server_cache(self):
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://torrentio.strem.fun/sort=seeders")
+        result = addon.get_url("TESTKEY456")
+        assert result == "https://torrentio.strem.fun/sort=seeders|realdebrid=TESTKEY456/"
+
+    def test_guindex_clean_url_injects_realdebrid_for_server_cache(self):
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://guindex-stremio.vercel.app")
+        result = addon.get_url("TESTKEY456")
+        assert result == "https://guindex-stremio.vercel.app/realdebrid/TESTKEY456/"
 
     def test_no_injection_for_unknown_host(self):
         """Addons without a registered injector return the base URL unchanged."""
@@ -462,14 +487,15 @@ class TestValidatorRDInjection:
 
         monkeypatch.setattr(httpx, "get", fake_get)
 
+        # Use nyaa-scraper which still has a UrlAddon-level RD injector
         result = check_addon_url(
-            "https://intell-debridsearch.nepiraw.com",
-            api_key="TESTKEY",
+            "https://nyaa-scraper-stremio-addon.nmtl.app",
+            api_key="RDTEST",
         )
 
         # The manifest check should hit the injected URL
         manifest_urls = [u for u in captured_urls if u.endswith("/manifest.json")]
-        assert any("realdebrid=TESTKEY" in u for u in manifest_urls), (
+        assert any("rd=RDTEST" in u for u in manifest_urls), (
             f"Expected injected RD key in URL, got: {captured_urls}"
         )
         assert result["manifest_ok"] is True
@@ -491,10 +517,10 @@ class TestValidatorRDInjection:
 
         monkeypatch.setattr(httpx, "get", fake_get)
 
-        result = check_addon_url("https://intell-debridsearch.nepiraw.com")
+        result = check_addon_url("https://nyaa-scraper-stremio-addon.nmtl.app")
 
         manifest_urls = [u for u in captured_urls if u.endswith("/manifest.json")]
-        assert any("realdebrid" in u for u in manifest_urls) is False, (
+        assert any("rd=" in u for u in manifest_urls) is False, (
             f"Raw URL should NOT have RD key injected, got: {captured_urls}"
         )
         assert result["manifest_ok"] is True
@@ -514,8 +540,8 @@ class TestValidatorRDInjection:
         monkeypatch.setattr(httpx, "get", fake_get)
 
         result = check_addon_url(
-            "https://intell-debridsearch.nepiraw.com",
+            "https://nyaa-scraper-stremio-addon.nmtl.app",
             api_key="SECRET",
         )
-        assert result["url"] == "https://intell-debridsearch.nepiraw.com"
-        assert "realdebrid=SECRET" not in result["url"]
+        assert result["url"] == "https://nyaa-scraper-stremio-addon.nmtl.app"
+        assert "rd=SECRET" not in result["url"]

@@ -80,7 +80,6 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(TorrentioHindiAddon())
     manager.register(TorrentioLiteAddon())
 
-    # ── Core torrent scrapers ─────────────────────────────────────────────
     manager.register(MediaFusionAddon())
     manager.register(KnightCrawlerAddon())
     manager.register(CometAddon())
@@ -190,8 +189,10 @@ def create_addon_manager() -> AddonManager:
                 addon = UrlAddon(url)
                 addon.api_key = api_key
                 manager.register(addon)
-            except Exception:
-                pass
+            except Exception as exc:
+                from ..error_logger import log_error
+
+                log_error("load_addon_from_file", exc, url)
         file_total = len(addon_urls) - skipped
         if file_total:
             print(f"    Loaded {file_total} addon(s) from addons.txt"
@@ -214,8 +215,10 @@ def create_addon_manager_from_urls(urls: list[str]) -> AddonManager:
             addon = UrlAddon(url)
             addon.api_key = api_key
             manager.register(addon)
-        except Exception:
-            pass
+        except Exception as exc:
+            from ..error_logger import log_error
+
+            log_error("create_manager_from_urls", exc, url)
 
     return manager
 

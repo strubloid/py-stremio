@@ -36,8 +36,14 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
             )
     except httpx.RequestError as e:
         print(f"    Network error: {e}")
+        from .error_logger import log_error
+
+        log_error("query_addon", e, url)
     except Exception as e:
         print(f"    Error: {e}")
+        from .error_logger import log_error
+
+        log_error("query_addon", e, url)
 
     return streams
 

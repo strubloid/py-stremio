@@ -20,8 +20,14 @@ SEARCH_CONCURRENCY = 10  # max parallel addon queries
 
 
 def _addon_url(addon: BaseAddon) -> str:
+    """Return the clean addon URL to remember in configs.
+
+    Runtime get_url(api_key) may embed RealDebrid keys or base64 configs.  Those
+    URLs are only for requests; persisted server caches must stay clean so the
+    key continues to live in .env only.
+    """
     try:
-        return addon.get_url(getattr(addon, "api_key", None))
+        return addon.get_url(None)
     except TypeError:
         return addon.get_url()
 
@@ -81,7 +87,14 @@ class AddonManager:
                 addon = futures[future]
                 try:
                     streams = future.result(timeout=20)
-                except Exception:
+                except Exception as exc:
+                    from ..error_logger import log_error
+
+                    log_error(
+                        f"addon_timeout({addon.name})",
+                        exc,
+                        f"{type_}/{id_}",
+                    )
                     streams = []
                 if streams:
                     with result_lock:
@@ -99,7 +112,10 @@ class AddonManager:
         """Query one addon — returns streams or empty list."""
         try:
             return addon.get_streams(type_, id_)
-        except Exception:
+        except Exception as exc:
+            from ..error_logger import log_error
+
+            log_error(f"try_addon({addon.name})", exc, f"{type_}/{id_}")
             return []
 
     def search_until_found(self, type_: str, id_: str) -> list[StreamInfo]:

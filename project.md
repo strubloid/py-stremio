@@ -497,3 +497,6 @@ Uses regex patterns in `media_files.parse_episode_number()`:
 - No web UI or REST API
 - Single-user, single-machine design
 - When `addons.txt` exists, built-in addons are not loaded (mutually exclusive)
+
+## todo
+check for the file type, maybe with mkv or avi

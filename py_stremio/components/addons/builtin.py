@@ -4,10 +4,7 @@ Each addon knows how to construct its stream-query URL, optionally embedding
 a debrid-service API key that the factory sets at runtime via .api_key.
 """
 
-from .base import HttpAddon
-
-COMET_CONFIG = "eyJtYX...ZX19"
-HDHUB_CONFIG = "eyJ0b3...YyJ9"
+from .base import HttpAddon, build_comet_config_url, build_hdhub_config_url
 
 
 # ── Torrentio family ──────────────────────────────────────────────────────────
@@ -113,7 +110,7 @@ class CometAddon(HttpAddon):
 
     def get_url(self, api_key: str | None = None) -> str:
         if api_key:
-            return f"{self.base_url}/{COMET_CONFIG}/manifest.json"
+            return build_comet_config_url(self.base_url, api_key)
         return self.base_url
 
 
@@ -124,6 +121,8 @@ class CometElfHostedAddon(HttpAddon):
     base_url = "https://comet.elfhosted.com"
 
     def get_url(self, api_key: str | None = None) -> str:
+        if api_key:
+            return build_comet_config_url(self.base_url, api_key)
         return self.base_url
 
 
@@ -258,7 +257,7 @@ class HDHubAddon(HttpAddon):
     base_url = "https://hdhub.thevolecitor.qzz.io"
 
     def get_url(self, api_key: str | None = None) -> str:
-        return f"{self.base_url}/{HDHUB_CONFIG}/manifest.json"
+        return build_hdhub_config_url(self.base_url)
 
 
 class BrazucaTorrentsAddon(HttpAddon):
