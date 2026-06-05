@@ -1,5 +1,8 @@
 """Validate addon URLs from addons.txt by testing manifest + stream endpoints.
 
+Addon URLs are tested with the RealDebrid key injected (if configured in .env),
+so the validator tests the same URL the app would use at runtime.
+
 Usage:
     validate_and_update("addons.txt")   # Test all URLs, comment out failing ones
     validate_all_addons("addons.txt")   # Test all URLs, return (working, failed) lists
@@ -9,6 +12,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import unquote
 
 import httpx
+
+from .addons.base import UrlAddon
+from .settings import settings
 
 # ── Test target ──────────────────────────────────────────────────────────
 # Game of Thrones S01E01 — almost universally available across addons
@@ -29,7 +35,7 @@ def _addon_label(url: str, max_len: int = 55) -> str:
     if len(clean) <= max_len:
         return clean
     # Show last N chars so the meaningful part isn't lost
-    return f"…{clean[-max_len:]}"
+    return f"\u2026{clean[-max_len:]}"  # … (ellipsis char)
 
 
 def _extract_lines(filepath: str) -> tuple[list[str], list[tuple[str, int, str]]]:
@@ -49,8 +55,13 @@ def _extract_lines(filepath: str) -> tuple[list[str], list[tuple[str, int, str]]
 
 # ── Single-addon test ────────────────────────────────────────────────────
 
-def check_addon_url(url: str) -> dict:
+def check_addon_url(url: str, api_key: str | None = None) -> dict:
     """Test a single addon URL.
+
+    When ``api_key`` is provided (from .env REAL_DEBRID_API_KEY), the URL
+    is first passed through ``UrlAddon.get_url(api_key)`` to inject the
+    debrid key — exactly as the app does at runtime.  This ensures the
+    validator tests real-world URLs, not the clean-but-unusable file version.
 
     Checks:
       1. ``{base}/manifest.json`` returns 200 + parseable JSON
@@ -58,8 +69,18 @@ def check_addon_url(url: str) -> dict:
 
     Returns dict with keys: *url*, *manifest_ok*, *streams_found*, *error*.
     """
+    original_url = url
+
+    # Inject RD key via the addon framework so we test the same URL
+    # the app would actually query at runtime.
+    if api_key:
+        try:
+            url = UrlAddon(url).get_url(api_key)
+        except Exception:
+            pass  # fall back to raw URL on any framework error
+
     base = url.rstrip("/").replace("/manifest.json", "")
-    result = {"url": url, "manifest_ok": False, "streams_found": 0, "error": None}
+    result = {"url": original_url, "manifest_ok": False, "streams_found": 0, "error": None}
 
     headers = {
         "User-Agent": "Stremio/4.4.168",
@@ -126,6 +147,7 @@ def validate_all_addons(
         print("  No addon URLs found to validate.")
         return [], []
 
+    api_key = settings.REAL_DEBRID_API_KEY
     working: list[str] = []
     failed: list[str] = []
     total = len(candidates)
@@ -136,7 +158,7 @@ def validate_all_addons(
 
     with ThreadPoolExecutor(max_workers=VALIDATION_CONCURRENCY) as executor:
         futures = {
-            executor.submit(check_addon_url, url): (lineno, url, orig_line)
+            executor.submit(check_addon_url, url, api_key): (lineno, url, orig_line)
             for url, lineno, orig_line in candidates
         }
         for future in as_completed(futures):
@@ -234,7 +256,7 @@ def validate_and_update(
         print(f"  Commented out {changes} non-working URL(s) in {filepath}")
 
     if not failed:
-        print(f"\n  \033[92m✓ All {len(working)} addon(s) working\033[0m")
+        print(f"\n  \033[92m\u2713 All {len(working)} addon(s) working\033[0m")
     else:
         print(
             f"\n  \033[93m{len(working)} working, "

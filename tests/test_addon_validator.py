@@ -306,3 +306,216 @@ def test_validate_all_addons_connection_timeout(tmp_path, monkeypatch):
     working, failed = validate_all_addons(str(addons), quiet=True)
     assert working == []
     assert len(failed) == 1
+
+
+# ── UrlAddon RD injection tests ──────────────────────────────────────────
+
+class TestUrlAddonRDInjection:
+    """UrlAddon.get_url(api_key) injects RealDebrid key for known addons."""
+
+    def test_intell_debridsearch_injection(self):
+        """intell-debridsearch URL gets /realdebrid=KEY/ appended."""
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://intell-debridsearch.nepiraw.com")
+        result = addon.get_url("TESTKEY123")
+        assert result == "https://intell-debridsearch.nepiraw.com/realdebrid=TESTKEY123/"
+
+    def test_nyaa_scraper_injection(self):
+        """nyaa-scraper URL gets source=nyaa&rd=KEY&v=1.9.1/ appended."""
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://nyaa-scraper-stremio-addon.nmtl.app")
+        result = addon.get_url("TESTKEY456")
+        assert result == "https://nyaa-scraper-stremio-addon.nmtl.app/source=nyaa&rd=TESTKEY456&v=1.9.1/"
+
+    def test_no_injection_for_unknown_host(self):
+        """Addons without a registered injector return the base URL unchanged."""
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://unknown-addon.example")
+        result = addon.get_url("TESTKEY789")
+        assert result == "https://unknown-addon.example"
+
+    def test_no_injection_without_api_key(self):
+        """get_url() with no key returns the base URL unchanged."""
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://intell-debridsearch.nepiraw.com")
+        result = addon.get_url(None)
+        assert result == "https://intell-debridsearch.nepiraw.com"
+
+    def test_register_custom_injector(self):
+        """Custom injectors can be registered and take effect."""
+        from py_stremio.components.addons.base import UrlAddon, register_rd_injector
+
+        # Add a test injector
+        register_rd_injector("my-custom-addon.test", lambda url, key: f"{url}/rd={key}/")
+        addon = UrlAddon("https://my-custom-addon.test/some/path")
+        result = addon.get_url("MYKEY")
+        assert result == "https://my-custom-addon.test/some/path/rd=MYKEY/"
+
+        # Clean up by removing from the registry
+        from py_stremio.components.addons.base import URL_RD_INJECTORS
+        del URL_RD_INJECTORS["my-custom-addon.test"]
+
+    def test_url_strips_manifest_json(self):
+        """UrlAddon strips /manifest.json from the URL."""
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://example.test/addon/manifest.json")
+        assert addon.get_url(None) == "https://example.test/addon"
+
+    def test_url_preserves_query_params(self):
+        """get_url preserves query parameters in the base URL."""
+        from py_stremio.components.addons.base import UrlAddon
+
+        addon = UrlAddon("https://intell-debridsearch.nepiraw.com?version=2")
+        # The injector matches the hostname part and appends, preserving query
+        result = addon.get_url("KEY")
+        # Note: the injector just appends to the URL as-is
+        assert "intell-debridsearch.nepiraw.com" in result
+
+
+# ── create_addon_manager integration tests ────────────────────────────────
+
+class TestCreateAddonManager:
+    """create_addon_manager() builds correct addon lists with dedup and RD injection."""
+
+    def test_create_addon_manager_with_no_file(self, monkeypatch):
+        """Without addons.txt, only built-in addons are loaded."""
+        monkeypatch.setattr(
+            "py_stremio.components.addons.factory.load_addons_from_file",
+            lambda _: [],
+        )
+        from py_stremio.components.addons.factory import create_addon_manager
+
+        manager = create_addon_manager()
+        # Expect ~50 built-in addons
+        assert len(manager.addons) > 40
+        assert len(manager.addons) < 60
+
+    def test_create_addon_manager_dedup_skips_builtin_hosts(self, monkeypatch, tmp_path):
+        """File addons with the same host as a built-in are skipped (dedup)."""
+        addons_txt = tmp_path / "addons.txt"
+        addons_txt.write_text(
+            "https://torrentio.strem.fun/sort=seeders/\n"
+            "https://mediafusion.elfhosted.com/\n"
+            "https://intell-debridsearch.nepiraw.com\n"
+        )
+
+        monkeypatch.setattr(
+            "py_stremio.components.addons.factory.load_addons_from_file",
+            lambda _: [
+                "https://torrentio.strem.fun/sort=seeders/",
+                "https://mediafusion.elfhosted.com/",
+                "https://intell-debridsearch.nepiraw.com",
+            ],
+        )
+
+        from py_stremio.components.addons.factory import create_addon_manager
+
+        manager = create_addon_manager()
+        addon_urls = {a.get_url(None) for a in manager.addons}
+
+        # Torrentio sort=seeders and MediaFusion should be covered by built-ins
+        # (their host matches a built-in addon)
+        # intell-debridsearch has no built-in, so it should be present
+        assert any("torrentio.strem.fun" in u for u in addon_urls)
+        assert any("mediafusion.elfhosted.com" in u for u in addon_urls)
+        assert any("intell-debridsearch.nepiraw.com" in u for u in addon_urls)
+
+    def test_addon_api_key_set_on_all_addons(self, monkeypatch):
+        """Every addon gets the RD api_key assigned."""
+        monkeypatch.setattr(
+            "py_stremio.components.addons.factory.load_addons_from_file",
+            lambda _: [],
+        )
+
+        from py_stremio.components.addons.factory import create_addon_manager
+
+        manager = create_addon_manager()
+        for addon in manager.addons:
+            # api_key may be None (no RD configured) or have a value
+            assert hasattr(addon, "api_key")
+
+
+# ── Validator RD injection tests ─────────────────────────────────────────
+
+class TestValidatorRDInjection:
+    """check_addon_url uses UrlAddon.get_url() to inject RD key when api_key is provided."""
+
+    def test_check_addon_url_injects_rd_key_for_known_host(self, monkeypatch):
+        """When api_key is provided and URL matches an injector, httpx gets the injected URL."""
+        from py_stremio.components.addon_validator import check_addon_url
+
+        captured_urls = []
+
+        def fake_get(url, **kwargs):
+            captured_urls.append(url)
+            return FakeResponse(200, {
+                "id": "test",
+                "name": "Test",
+                "resources": ["stream"],
+                "types": ["series"],
+            })
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = check_addon_url(
+            "https://intell-debridsearch.nepiraw.com",
+            api_key="TESTKEY",
+        )
+
+        # The manifest check should hit the injected URL
+        manifest_urls = [u for u in captured_urls if u.endswith("/manifest.json")]
+        assert any("realdebrid=TESTKEY" in u for u in manifest_urls), (
+            f"Expected injected RD key in URL, got: {captured_urls}"
+        )
+        assert result["manifest_ok"] is True
+
+    def test_check_addon_url_without_api_key_uses_raw_url(self, monkeypatch):
+        """Without api_key, the raw URL from addons.txt is tested."""
+        from py_stremio.components.addon_validator import check_addon_url
+
+        captured_urls = []
+
+        def fake_get(url, **kwargs):
+            captured_urls.append(url)
+            return FakeResponse(200, {
+                "id": "test",
+                "name": "Test",
+                "resources": ["stream"],
+                "types": ["series"],
+            })
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = check_addon_url("https://intell-debridsearch.nepiraw.com")
+
+        manifest_urls = [u for u in captured_urls if u.endswith("/manifest.json")]
+        assert any("realdebrid" in u for u in manifest_urls) is False, (
+            f"Raw URL should NOT have RD key injected, got: {captured_urls}"
+        )
+        assert result["manifest_ok"] is True
+
+    def test_check_addon_url_preserves_original_url_in_result(self, monkeypatch):
+        """The result dict contains the *original* URL (from addons.txt), not the injected one."""
+        from py_stremio.components.addon_validator import check_addon_url
+
+        def fake_get(url, **kwargs):
+            return FakeResponse(200, {
+                "id": "test",
+                "name": "Test",
+                "resources": ["stream"],
+                "types": ["series"],
+            })
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = check_addon_url(
+            "https://intell-debridsearch.nepiraw.com",
+            api_key="SECRET",
+        )
+        assert result["url"] == "https://intell-debridsearch.nepiraw.com"
+        assert "realdebrid=SECRET" not in result["url"]

@@ -100,7 +100,7 @@ class TestKnightCrawlerDeprecation:
         from py_stremio.components.addons.manager import AddonManager
 
         manager = AddonManager()
-        _register_builtin_addons(manager, api_key=None)
+        _register_builtin_addons(manager)
 
         names = [a.name for a in manager.addons]
         assert "KnightCrawler" in names
@@ -116,7 +116,7 @@ class TestFactoryRegistration:
         from py_stremio.components.addons.manager import AddonManager
 
         manager = AddonManager()
-        _register_builtin_addons(manager, api_key=None)
+        _register_builtin_addons(manager)
 
         names = [a.name for a in manager.addons]
         assert "CometNet" in names
@@ -126,7 +126,7 @@ class TestFactoryRegistration:
         from py_stremio.components.addons.manager import AddonManager
 
         manager = AddonManager()
-        _register_builtin_addons(manager, api_key=None)
+        _register_builtin_addons(manager)
 
         names = [a.name for a in manager.addons]
         assert "EasyNews+" in names
@@ -137,6 +137,6 @@ class TestFactoryRegistration:
         from py_stremio.components.addons.manager import AddonManager
 
         manager = AddonManager()
-        _register_builtin_addons(manager, api_key=None)
+        _register_builtin_addons(manager)
 
         assert len(manager.addons) >= 35  # was ~33+ before, now 35+

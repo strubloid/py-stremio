@@ -1,5 +1,5 @@
 """Addon manager construction helpers."""
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 from ..settings import settings
 from .base import UrlAddon
@@ -69,15 +69,7 @@ def load_addons_from_file(filepath: str = "addons.txt") -> list[str]:
         return []
 
 
-def _register_file_addons(manager: AddonManager, addon_urls: list[str]) -> None:
-    for url in addon_urls:
-        try:
-            manager.register(UrlAddon(url))
-        except Exception:
-            pass
-
-
-def _register_builtin_addons(manager: AddonManager, api_key: str | None) -> None:
+def _register_builtin_addons(manager: AddonManager) -> None:
     """Register all built-in stream-providing addons."""
 
     # ── Torrentio family ──────────────────────────────────────────────────
@@ -146,9 +138,23 @@ def _register_builtin_addons(manager: AddonManager, api_key: str | None) -> None
     manager.register(FShareAddon())
     manager.register(ConsumetAddon())
 
-    # ── RD-keyed variant (only when key present) ──────────────────────────
-    if api_key:
-        manager.register(TorrentioPortugueseAddon())
+
+def _is_covered_by_builtin(url: str, manager: AddonManager) -> bool:
+    """Check if a URL from addons.txt is already covered by a built-in addon.
+
+    Uses host (netloc) comparison so that Torrentio variants etc. loaded
+    from file are skipped in favour of the built-in class, which handles
+    RD key injection correctly.
+    """
+    url_clean = url.rstrip("/").replace("/manifest.json", "")
+    parsed = urlparse(url_clean)
+
+    for addon in manager.addons:
+        addon_clean = addon.get_url(None).rstrip("/")
+        addon_parsed = urlparse(addon_clean)
+        if parsed.netloc == addon_parsed.netloc:
+            return True
+    return False
 
 
 def _apply_api_key(manager: AddonManager, api_key: str | None) -> None:
@@ -157,17 +163,43 @@ def _apply_api_key(manager: AddonManager, api_key: str | None) -> None:
 
 
 def create_addon_manager() -> AddonManager:
-    """Create and configure addon manager with all available addons."""
+    """Create and configure addon manager with all available addons.
+
+    Strategy:
+      1. Always register built-in addons (Torrentio, MediaFusion, Comet,
+         etc.) — they handle RD key injection in their own get_url().
+      2. Supplement with addons from addons.txt for any extra URLs not
+         already covered by built-ins.
+      3. Apply the RD key from settings to every addon.
+    """
     api_key = settings.REAL_DEBRID_API_KEY
     manager = AddonManager()
+
+    # 1. Always register built-in addons (correct RD injection)
+    _register_builtin_addons(manager)
+
+    # 2. Supplement with file addons, skipping duplicates by host
     addon_urls = load_addons_from_file("addons.txt")
-
     if addon_urls:
-        print(f"    Loading {len(addon_urls)} addons from addons.txt...")
-        _register_file_addons(manager, addon_urls)
-    else:
-        _register_builtin_addons(manager, api_key)
+        skipped = 0
+        for url in addon_urls:
+            if _is_covered_by_builtin(url, manager):
+                skipped += 1
+                continue
+            try:
+                addon = UrlAddon(url)
+                addon.api_key = api_key
+                manager.register(addon)
+            except Exception:
+                pass
+        file_total = len(addon_urls) - skipped
+        if file_total:
+            print(f"    Loaded {file_total} addon(s) from addons.txt"
+                  f" ({skipped} skipped, covered by built-in)")
+        else:
+            print(f"    All {skipped} addon(s) from addons.txt covered by built-ins — skipped")
 
+    # 3. Apply the RD key to all addons
     _apply_api_key(manager, api_key)
     return manager
 
