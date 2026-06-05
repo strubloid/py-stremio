@@ -266,14 +266,16 @@ class TestFilterStreamsByLanguage:
         result = stream_downloads.filter_streams_by_language(streams)
         assert len(result) == 0
 
-    def test_filters_russian_ru_bracket(self, monkeypatch):
-        """'[RU]' marker should be caught."""
+    def test_filters_russian_ru_bracket_passes_without_aggressive_ru_pattern(self, monkeypatch):
+        """'[RU]' is no longer a reliable Russian marker — too many false positives
+        from release group names and abbreviations. Only 'rus', 'russian', 'rudub',
+        and cyrillic are used now."""
         monkeypatch.setattr(
             stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
         )
         streams = [self.make_stream("Show S01E01 1080p WEBRip [RU] AC3")]
         result = stream_downloads.filter_streams_by_language(streams)
-        assert len(result) == 0
+        assert len(result) == 1
 
     def test_filters_russian_rudub_marker(self, monkeypatch):
         """'RuDub' marker should be caught."""
@@ -359,13 +361,14 @@ class TestFilterStreamsByLanguage:
         assert len(result) == 0
 
     def test_filters_russian_even_when_multi_audio_is_marked(self, monkeypatch):
-        """Multi-audio releases are still blocked when they also say Russian/RU."""
+        """Multi-audio releases marked only with '[RU]' are no longer blocked — the
+        'ru' standalone pattern was too aggressive (release groups, abbreviations)."""
         monkeypatch.setattr(
             stream_downloads.settings, "PREFERRED_LANGUAGES", ["english"]
         )
         streams = [self.make_stream("Bob's Burgers S13E01 1080p Multi Audio [RU]")]
         result = stream_downloads.filter_streams_by_language(streams)
-        assert len(result) == 0
+        assert len(result) == 1  # [RU] alone no longer triggers Russian filter
 
     def test_eng_marker_counts_as_english_preference(self, monkeypatch):
         monkeypatch.setattr(

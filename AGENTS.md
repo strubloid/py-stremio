@@ -53,6 +53,13 @@ py-stremio/
 │       ├── stream_downloads.py        # Stream URL resolution, HTTP download with resume
 │       ├── real_debrid.py             # RealDebrid API: magnet → torrent → direct URL
 │       ├── report.py                  # Terminal + email report generation
+│       ├── error_logger.py             # Legacy error logger, now delegates to ErrorReporter
+│       ├── errors/                     # Error deduplication and reporting system
+│       │   ├── __init__.py             # Public API: report_error, print_error_summary
+│       │   ├── error_category.py       # ErrorCategory enum + normalize_error() classifier
+│       │   ├── error_entry.py          # ErrorEntry dataclass (one deduplicated error)
+│       │   ├── error_summary.py        # ErrorSummary dataclass (aggregated output)
+│       │   └── error_reporter.py       # ErrorReporter singleton + redact_url helpers
 │       └── addons/                    # Stremio addon abstractions
 │           ├── __init__.py
 │           ├── base.py                # BaseAddon, HttpAddon, UrlAddon ABCs
@@ -254,6 +261,9 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 | Modify report format | `report.py` |
 | Add new settings | `settings.py` |
 | Change episode detection | `utils.py` |
+| Add new error categories | `errors/error_category.py` (ErrorCategory enum, normalize_error) |
+| Modify error output format | `errors/error_reporter.py` (print_summary) |
+| Change URL redaction rules | `errors/error_reporter.py` (redact_url, _REDACT_PARAMS, _PATH_REDACTIONS) |
 | Add new provider | `provider.py` (legacy path) |
 | Modify progress UI | `application.py` (_progress_line, _make_progress_printer) |
 | Add bandwidth limits | `bandwidth.py` |
@@ -279,7 +289,62 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 - Legacy abstract provider path maintained but secondary
 - Email reports via SMTP (optional)
 
-## Known Limitations
+## Error Logging Rule
+
+The project must not print repeated full tracebacks for expected addon failures. Expected external failures such as 404, 400, 403, 429, 500, redirects, timeouts, invalid JSON, DNS failures, and invalid stream size must be grouped through `ErrorReporter`. Full tracebacks should only appear once per unique error type or when debug mode is enabled (`PY_STREMIO_DEBUG=true`). Sensitive tokens in URLs must always be redacted before logging.
+
+### How to report errors
+
+Instead of `print()` or `logging.error()`, use `report_error()`:
+
+```python
+from py_stremio.components.errors import report_error
+
+# Include addon name in context as `name(addon_name)`
+report_error(context="try_addon(torrentio)", exception=exc, url=addon_url)
+report_error(context="invalid_video(Torrentio)", exception=exc, url=stream_url)
+
+# At end of run, the grouped summary is printed automatically
+# from application.py — no manual print_error_summary() needed
+```
+
+### Error categories
+
+Defined in `ErrorCategory` enum (`errors/error_category.py`):
+
+| Category | Detects |
+|----------|---------|
+| HTTP_404_NOT_FOUND | httpx.HTTPStatusError with status 404 |
+| HTTP_400_BAD_REQUEST | httpx.HTTPStatusError with status 400 |
+| HTTP_403_FORBIDDEN | httpx.HTTPStatusError with status 403 |
+| HTTP_429_TOO_MANY_REQUESTS | httpx.HTTPStatusError with status 429 |
+| HTTP_500_INTERNAL_SERVER_ERROR | httpx.HTTPStatusError with status 500 |
+| HTTP_302_REDIRECT | httpx.HTTPStatusError with status 302 |
+| CONNECTION_DNS_ERROR | httpx.ConnectError with DNS message |
+| READ_TIMEOUT | httpx.TimeoutException |
+| JSON_DECODE_ERROR | json.JSONDecodeError |
+| INVALID_VIDEO_TOO_SMALL | InvalidVideoDownloadError (from stream_downloads) |
+| UNKNOWN_ERROR | Everything else |
+
+### URL redaction
+
+Query params and path segments containing these keys are masked with `***REDACTED***`:
+`apikey`, `api_key`, `token`, `realdebrid`, `rd`, `key`, `password`
+
+Example:
+```
+https://torrentio.strem.fun/realdebrid=abc123
+→ realdebrid=***REDACTED***
+
+https://torrentio.strem.fun/resolve/realdebrid/abc123/stream.mkv
+→ /realdebrid/***REDACTED***/stream.mkv
+```
+
+### Debug mode
+
+Set `PY_STREMIO_DEBUG=true` in your environment or call `ErrorReporter.set_debug(True)` to print full tracebacks for each unique error category.
+
+### Known Limitations
 
 - No anime-style episode naming support
 - No subtitle download support
