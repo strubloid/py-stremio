@@ -18,12 +18,10 @@ def test_download_modules_live_under_download_package():
     assert not Path("py_stremio/components/download_processing.py").exists()
 
     from py_stremio.components.download.discovery import find_movie_folders, find_season_folders
-    from py_stremio.components.download.manager import run_downloads
     from py_stremio.components.download.processing import process_movie_folder, process_season_folder
 
     assert callable(find_movie_folders)
     assert callable(find_season_folders)
-    assert callable(run_downloads)
     assert callable(process_movie_folder)
     assert callable(process_season_folder)
 
@@ -75,7 +73,6 @@ def test_flat_component_modules_live_under_domain_packages():
     from py_stremio.components.reports.report import ReportData
     from py_stremio.components.state.app_state import DownloadState
     from py_stremio.components.stremio.stremio_client import search_and_download
-    from py_stremio.components.stremio.stremio_exporter import export_addons_to_file
     from py_stremio.components.stremio.stremio_ids import build_stremio_id
     from py_stremio.components.stremio.stremio_metadata import get_series_metadata
     from py_stremio.components.stremio.stremio_url import normalize_manifest_url
@@ -98,7 +95,6 @@ def test_flat_component_modules_live_under_domain_packages():
     assert ReportData is not None
     assert DownloadState is not None
     assert callable(search_and_download)
-    assert callable(export_addons_to_file)
     assert callable(build_stremio_id)
     assert callable(get_series_metadata)
     assert callable(normalize_manifest_url)

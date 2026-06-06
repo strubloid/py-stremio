@@ -24,8 +24,6 @@ py-stremio/
 ├── py_stremio/                        # Package
 │   ├── __init__.py                    # Public exports (Settings, settings)
 │   ├── main.py                        # Entry: delegates to components.application
-│   ├── download.py                    # Entry: legacy config/state-driven downloads
-│   ├── export.py                      # Entry: export addons from Stremio Desktop
 │   └── components/                    # All logic lives here
 │       ├── __init__.py
 │       ├── application.py             # CLI orchestration, menu, pipeline, progress UI
@@ -131,8 +129,8 @@ Scanner.scan()
 - Partial download resume via .part files and Range headers
 - Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
 
-### 2. Legacy Path — used by `py-stremio-download` CLI
-`download.py` → `download_manager.py` → `series.py` / `movies.py` → `provider.py`
+### 2. Legacy Path (maintained)
+`download_manager.py` → `series.py` / `movies.py` → `provider.py`
 
 - Uses BaseProvider abstraction (RealDebridProvider, MockProvider, FallbackProvider)
 - Quality fallback via Downloader.plan_quality_fallback()
@@ -247,9 +245,7 @@ py-stremio --download    # or: py-stremio 3
 # With thread count and speed limit
 py-stremio --run 4 50   # 4 threads, 50% speed
 
-# Legacy paths
-py-stremio-download [root_folder]
-py-stremio-export [output_path]
+# Legacy paths (superseded by `py-stremio`, kept for reference)
 
 # Test
 pytest tests/ -v
@@ -271,7 +267,7 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 - **10 URL configurers** colocated with their addon families (in `addon.py` registry)
 - **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
 - **Custom addons**: create `addons.txt` in project root with one URL per line (URLs replace built-ins entirely)
-- **Export from Stremio Desktop**: `py-stremio-export` reads `~/.config/Stremio/UserData/storage.json`
+- **Addon Discovery**: `py-stremio --discover` scrapes addon sources, tests URLs, and merges working ones into `addons.txt` (replaces the old `py-stremio-export`)
 
 ## Important Files for Changes
 

@@ -45,8 +45,6 @@ py-stremio/
 ├── py_stremio/                        # Package
 │   ├── __init__.py                    # Public exports (Settings, settings)
 │   ├── main.py                        # Entry: delegates to components.application
-│   ├── download.py                    # Entry: legacy config/state-driven downloads
-│   ├── export.py                      # Entry: export addons from Stremio Desktop
 │   └── components/                    # All logic lives here
 │       ├── __init__.py
 │       ├── application.py             # CLI orchestration, menu, pipeline, progress UI
@@ -224,10 +222,10 @@ Scanner.scan()
 - Partial download resume via .part files and Range headers
 - Working addon URL tracking in config (servers list)
 
-### 2. Legacy Path — used by `py-stremio-download` CLI
+### 2. Legacy Path (maintained)
 
 ```
-download.py → download_manager.py → series.py / movies.py → provider.py
+download_manager.py → series.py / movies.py → provider.py
 ```
 
 - Uses BaseProvider abstraction (RealDebridProvider, MockProvider, FallbackProvider)
@@ -455,9 +453,7 @@ py-stremio 4 50            # Menu shortcut 4, 50% speed (threads from settings)
 # Validate addons
 py-stremio --validate      # or: py-stremio 5
 
-# Legacy paths
-py-stremio-download [root_folder]
-py-stremio-export [output_path]
+# Legacy paths (superseded by `py-stremio`, kept for reference)```
 ```
 
 ## Addon System
@@ -475,7 +471,7 @@ py-stremio-export [output_path]
   - `TorrentioAddonConfigurer`, `CometAddonConfigurer`, `HDHubAddonConfigurer`, `StremThruAddonConfigurer`, `BrazucaAddonConfigurer`, `GuindexAddonConfigurer`, `StremioAddonConfigurer`, `NyaaAddonConfigurer`, `YomiAddonConfigurer`, `IntellDebridSearchAddonConfigurer`
 - **Custom addons**: create `addons.txt` with one URL per line (replaces built-ins when present)
 - **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
-- **Export from Stremio Desktop**: `py-stremio-export` reads `~/.config/Stremio/UserData/storage.json`
+- **Addon Discovery**: `py-stremio --discover` scrapes addon sources, tests URLs, and merges working ones into `addons.txt` (replaces the old `py-stremio-export`)
 
 ## Important Files for Changes
 

@@ -394,7 +394,7 @@ class TestUrlAddonRDInjection:
         import json
         from urllib.parse import urlparse
 
-        from py_stremio.components.addons.types.strem_thru_addon import StremThruAddonConfigurer
+        from py_stremio.components.addons.types.comet_family.StremThruAddonConfigurer import StremThruAddonConfigurer
 
         result = StremThruAddonConfigurer().configure(
             "https://stremthru.13377001.xyz/stremio/torz",

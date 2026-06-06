@@ -20,8 +20,6 @@ dev = [
 ]
 
 [project.scripts]
-py-stremio-download = "py_stremio.download:main"
-py-stremio-export = "py_stremio.export:main"
 py-stremio = "py_stremio.main:run"
 
 [tool.pytest.ini_options]
