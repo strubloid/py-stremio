@@ -63,10 +63,25 @@ py-stremio/
 │       └── addons/                    # Stremio addon abstractions
 │           ├── __init__.py
 │           ├── base.py                # BaseAddon, HttpAddon, UrlAddon ABCs
-│           ├── builtin.py             # 9 built-in addons (Torrentio, MediaFusion, etc.)
-│           ├── factory.py             # AddonManager construction (builtins + addons.txt)
+│           ├── addon.py               # Addon URL configuration registry (10 configurers)
+│           ├── addon_search_service.py # Concurrent addon stream search
+│           ├── addon_validator.py     # Validate addon URLs from addons.txt
+│           ├── factory.py             # AddonManager construction (types/ + addons.txt)
 │           ├── manager.py             # AddonManager: search addons for streams
-│           └── models.py              # StreamInfo dataclass
+│           ├── models.py              # StreamInfo dataclass
+│           └── types/                 # One file per addon class, organized by category
+│               ├── __init__.py        # Re-exports all classes + configurers
+│               ├── addon_url_configurer.py  # Abstract URL configurer base
+│               ├── addon_registry.py  # AddonDef dataclass + dynamic class factory
+│               ├── builtin_addons.py  # Re-exports all addon classes by category
+│               ├── stremio.py         # Generic manifest URL handler
+│               ├── torrentio_family/   # 6 Torrentio variants + configurer
+│               ├── comet_family/       # 7 addons + 6 configurers + _comet_build.py
+│               ├── aggregators/        # 13 scrapers + configurer
+│               ├── anime/             # 7 anime addons + 2 configurers
+│               ├── iptv/              # 5 IPTV addons
+│               ├── regional/          # 9 regional addons
+│               └── misc/              # 4 miscellaneous addons
 └── tests/
     ├── test_application.py
     ├── test_bandwidth.py
@@ -165,7 +180,7 @@ Uses regex patterns in `utils.parse_episode_number()`:
 
 ```
 1. Known working addon URLs from config.servers
-2. Built-in addons (Torrentio, Torrentio-SortSeeders, MediaFusion, Anime-Kitsu, Brazuca-Torrents, ThePirateBay+, HDHub, Comet + Torrentio-PT if RD key present)
+2. Built-in addons (52 classes in types/, organized by category — Torrentio, Comet, MediaFusion, etc. + Torrentio-PT if RD key present)
 3. Custom addons from addons.txt (if file exists)
 ```
 
@@ -245,9 +260,17 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 
 ## Addon System
 
-- **Built-in addons**: 9 predefined in `components/addons/builtin.py`
-- **Custom addons**: create `addons.txt` in project root with one URL per line (URLs replace built-ins entirely)
+- **52 built-in addon classes** in `components/addons/types/`, each class in its own file organized by category folder:
+  - `torrentio_family/` (6 variants: Torrentio, SortSeeders, Portuguese, Spanish, Hindi, Lite)
+  - `comet_family/` (7: Comet, CometElfHosted, CometNet, HDHub, StremThru, BrazucaTorrents, Guindex)
+  - `aggregators/` (13: MediaFusion, KnightCrawler, EasyNews+, ThePirateBay+, Peerflix, Nucleus, etc.)
+  - `anime/` (7: Anime-Kitsu, Akuma, Animepahe, Animeo, OnePace, Hanime, Animes Season)
+  - `iptv/` (5: Skyflix, ArgentinaTV, GreekTV, XtreamPro, AIOStreaming)
+  - `regional/` (9: NoTorrent, LatinMovies, RicosStremio, FTV, FigaroCorso, Einthusan, etc.)
+  - `misc/` (4: WatchHub, YouTubePro, FShare, Consumet)
+- **10 URL configurers** colocated with their addon families (in `addon.py` registry)
 - **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
+- **Custom addons**: create `addons.txt` in project root with one URL per line (URLs replace built-ins entirely)
 - **Export from Stremio Desktop**: `py-stremio-export` reads `~/.config/Stremio/UserData/storage.json`
 
 ## Important Files for Changes
@@ -256,7 +279,7 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 |--------|-------|
 | Add new quality levels | `config_file.py` (QualitySettings), `stream_downloads.py` (select_quality_streams) |
 | Change folder structure | `scanner.py`, `download_discovery.py` |
-| Add new addons | `addons/builtin.py` (class) + `addons/factory.py` (registration) |
+| Add new addons | `types/<category>/<ClassName>.py` (class) + `types/addon_registry.py` (AddonDef) + `types/builtin_addons.py` (re-export) |
 | Modify addon search | `stremio_addon_search.py`, `addons/manager.py` |
 | Change download logic | `download_processing.py`, `stream_downloads.py` |
 | Change metadata lookup | `stremio_metadata.py` |

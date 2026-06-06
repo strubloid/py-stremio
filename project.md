@@ -85,10 +85,93 @@ py-stremio/
 │       └── addons/                    # Stremio addon abstractions
 │           ├── __init__.py
 │           ├── base.py                # BaseAddon, HttpAddon, UrlAddon ABCs
-│           ├── builtin.py             # 50 built-in addons (Torrentio family, Comet, etc.)
-│           ├── factory.py             # AddonManager construction (builtins + addons.txt)
+│           ├── addon.py               # Addon URL configuration registry (10 configurers)
+│           ├── addon_search_service.py # Concurrent addon stream search (10-at-a-time)
+│           ├── addon_validator.py     # Validate addon URLs from addons.txt
+│           ├── factory.py             # AddonManager construction (types/ + addons.txt)
 │           ├── manager.py             # AddonManager: concurrent search, working URL tracking
-│           └── models.py              # StreamInfo dataclass
+│           ├── models.py              # StreamInfo dataclass
+│           └── types/                 # One file per addon class, organized by category
+│               ├── __init__.py        # Re-exports all classes + configurers
+│               ├── addon_url_configurer.py  # Abstract URL configurer base
+│               ├── addon_registry.py  # AddonDef dataclass + dynamic class factory
+│               ├── builtin_addons.py  # Re-exports all addon classes by category
+│               ├── stremio.py         # Generic manifest URL handler (StremioAddonConfigurer)
+│               ├── torrentio_family/
+│               │   ├── __init__.py
+│               │   ├── TorrentioAddon.py
+│               │   ├── TorrentioSortSeedersAddon.py
+│               │   ├── TorrentioPortugueseAddon.py
+│               │   ├── TorrentioSpanishAddon.py
+│               │   ├── TorrentioHindiAddon.py
+│               │   ├── TorrentioLiteAddon.py
+│               │   └── TorrentioAddonConfigurer.py
+│               ├── comet_family/
+│               │   ├── __init__.py
+│               │   ├── CometAddon.py
+│               │   ├── CometElfHostedAddon.py
+│               │   ├── CometNetAddon.py
+│               │   ├── HDHubAddon.py
+│               │   ├── StremThruAddon.py
+│               │   ├── BrazucaTorrentsAddon.py
+│               │   ├── GuindexAddon.py
+│               │   ├── CometAddonConfigurer.py
+│               │   ├── HDHubAddonConfigurer.py
+│               │   ├── StremThruAddonConfigurer.py
+│               │   ├── BrazucaAddonConfigurer.py
+│               │   ├── GuindexAddonConfigurer.py
+│               │   └── _comet_build.py       # Shared URL builder helper
+│               ├── aggregators/
+│               │   ├── __init__.py
+│               │   ├── MediaFusionAddon.py
+│               │   ├── KnightCrawlerAddon.py
+│               │   ├── EasyNewsPlusAddon.py
+│               │   ├── PeerflixAddon.py
+│               │   ├── NucleusAddon.py
+│               │   ├── OrionAddon.py
+│               │   ├── DebridSearchAddon.py
+│               │   ├── StremifyAddon.py
+│               │   ├── JackettioAddon.py
+│               │   ├── AIOStreamsAddon.py
+│               │   ├── CineTorrentAddon.py
+│               │   ├── TorrinAddon.py
+│               │   ├── ThePirateBayPlusAddon.py
+│               │   └── IntellDebridSearchAddonConfigurer.py
+│               ├── anime/
+│               │   ├── __init__.py
+│               │   ├── AnimeKitsuAddon.py
+│               │   ├── AkumaAddon.py
+│               │   ├── AnimepaheAddon.py
+│               │   ├── AnimeoAddon.py
+│               │   ├── OnePaceAddon.py
+│               │   ├── HanimeAddon.py
+│               │   ├── AnimesSeasonAddon.py
+│               │   ├── NyaaAddonConfigurer.py
+│               │   └── YomiAddonConfigurer.py
+│               ├── iptv/
+│               │   ├── __init__.py
+│               │   ├── SkyflixAddon.py
+│               │   ├── ArgentinaTVAddon.py
+│               │   ├── GreekTVAddon.py
+│               │   ├── XtreamProAddon.py
+│               │   └── AIOStreamingAddon.py
+│               ├── regional/
+│               │   ├── __init__.py
+│               │   ├── NoTorrentAddon.py
+│               │   ├── LatinMoviesAddon.py
+│               │   ├── RicosStremioAddon.py
+│               │   ├── FTVStremioAddon.py
+│               │   ├── FigaroCorsoAddon.py
+│               │   ├── EinthusanAddon.py
+│               │   ├── VStremioAddon.py
+│               │   ├── DubbindoAddon.py
+│               │   └── MainelocalnewsAddon.py
+│               └── misc/
+│                   ├── __init__.py
+│                   ├── WatchHubAddon.py
+│                   ├── YouTubeProAddon.py
+│                   ├── FShareAddon.py
+│                   └── ConsumetAddon.py
 ├── tests/                             # 18 test files, 230+ tests
 │   ├── test_addon_validator.py
 │   ├── test_application.py
@@ -379,15 +462,17 @@ py-stremio-export [output_path]
 
 ## Addon System
 
-- **50 built-in addon classes** in `components/addons/builtin.py`, organized into:
-  - Torrentio family (6 variants: base, sort-seeders, Portuguese, Spanish, Hindi, Lite)
-  - Core torrent scrapers (MediaFusion, KnightCrawler, Comet, Peerflix, Nucleus, etc.)
-  - Brazilian/Portuguese (BrazucaTorrents, HDHub)
-  - Anime (Kitsu, Akuma, Animepahe, Animeo, OnePace, Hanime)
-  - Free hosters / no-debrid (WatchHub, Skyflix, AIOStreaming, ArgentinaTV, etc.)
-  - Regional (LatinMovies, RicosStremio, Kinopub, Dubbindo, etc.)
-  - Other backends (NoTorrent, StremThru, Guindex, YouTubePro, FShare, Consumet)
-  - RD-keyed variant (Torrentio-PT, registered only when `REAL_DEBRID_API_KEY` is set)
+- **52 built-in addon classes** in `components/addons/types/`, organized into category folders:
+  - `torrentio_family/` — 6 variants: base, SortSeeders, Portuguese, Spanish, Hindi, Lite
+  - `comet_family/` — 7 addons: Comet, CometElfHosted, CometNet, HDHub, StremThru, BrazucaTorrents, Guindex
+  - `aggregators/` — 13 scrapers: MediaFusion, KnightCrawler, EasyNews+, ThePirateBay+, Peerflix, Nucleus, Orion, DebridSearch, Stremify, Jackettio, AIOStreams, CineTorrent, Torrin
+  - `anime/` — 7 addons: Anime-Kitsu, Akuma, Animepahe, Animeo, OnePace, Hanime, Animes Season
+  - `iptv/` — 5 addons: Skyflix, ArgentinaTV, GreekTV, XtreamPro, AIOStreaming
+  - `regional/` — 9 addons: NoTorrent, LatinMovies, RicosStremio, FTV Stremio, FigaroCorso, Einthusan, VStremio, Dubbindo, Maine Local News
+  - `misc/` — 4 addons: WatchHub, YouTubePro, FShare, Consumet
+- **Each class in its own file** named after the class (e.g. `TorrentioAddon.py` → `class TorrentioAddon`)
+- **10 URL configurers** (in `addon.py` registry), colocated with their addon families:
+  - `TorrentioAddonConfigurer`, `CometAddonConfigurer`, `HDHubAddonConfigurer`, `StremThruAddonConfigurer`, `BrazucaAddonConfigurer`, `GuindexAddonConfigurer`, `StremioAddonConfigurer`, `NyaaAddonConfigurer`, `YomiAddonConfigurer`, `IntellDebridSearchAddonConfigurer`
 - **Custom addons**: create `addons.txt` with one URL per line (replaces built-ins when present)
 - **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
 - **Export from Stremio Desktop**: `py-stremio-export` reads `~/.config/Stremio/UserData/storage.json`
@@ -398,7 +483,7 @@ py-stremio-export [output_path]
 |--------|-------|
 | Add new quality levels | `config_file.py` (QualitySettings), `stream_downloads.py` (select_quality_streams) |
 | Change folder structure | `scanner.py`, `download_discovery.py` |
-| Add new addon classes | `addons/builtin.py` (class) + `addons/factory.py` (registration) |
+| Add new addon classes | `types/<category>/<ClassName>.py` (class) + `types/addon_registry.py` (AddonDef) + `types/builtin_addons.py` (re-export) |
 | Modify addon search | `stremio_addon_search.py`, `addons/manager.py` |
 | Change download logic | `download_processing.py`, `stream_downloads.py` |
 | Change metadata lookup | `stremio_metadata.py` |
