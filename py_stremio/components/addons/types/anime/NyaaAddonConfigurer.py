@@ -1,6 +1,6 @@
 """Nyaa scraper URL configuration."""
 
-from .addon_url_configurer import AddonUrlConfigurer
+from ..addon_url_configurer import AddonUrlConfigurer
 
 
 class NyaaAddonConfigurer(AddonUrlConfigurer):

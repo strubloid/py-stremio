@@ -3,7 +3,7 @@
 import re
 from urllib.parse import urlparse
 
-from .addon_url_configurer import AddonUrlConfigurer
+from ..addon_url_configurer import AddonUrlConfigurer
 
 
 class GuindexAddonConfigurer(AddonUrlConfigurer):

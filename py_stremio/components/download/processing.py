@@ -170,6 +170,7 @@ def process_season_folder(
 
     if not config.title:
         return {"skipped": True, "reason": "no title in config"}
+    title = config.title
 
     season = config.season if config.season is not None else 1
     if config.episode_count is None:
@@ -210,7 +211,7 @@ def process_season_folder(
         last_progress_at = time.monotonic()
         emit({
             "type": "episode_start",
-            "title": config.title,
+            "title": title,
             "season": season,
             "episode": episode_num,
             "current": index,
@@ -230,7 +231,7 @@ def process_season_folder(
             last_total_bytes = total_bytes
             emit({
                 "type": "bytes",
-                "title": config.title,
+                "title": title,
                 "season": season,
                 "episode": episode_num,
                 "current": index,
@@ -240,11 +241,11 @@ def process_season_folder(
                 "rate_bps": last_rate_bps,
             })
 
-        print(f"  Downloading {config.title} S{season:02d}E{episode_num:02d}")
+        print(f"  Downloading {title} S{season:02d}E{episode_num:02d}")
         with servers_lock:
             active_servers = list(servers)
         result = search_and_download(
-            title=config.title,
+            title=title,
             imdb_id=config.imdb_id,
             season=season,
             episode=episode_num,
@@ -257,7 +258,7 @@ def process_season_folder(
         )
         emit({
             "type": "episode_done",
-            "title": config.title,
+            "title": title,
             "season": season,
             "episode": episode_num,
             "current": index,

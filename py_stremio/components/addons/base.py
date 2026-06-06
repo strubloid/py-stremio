@@ -135,11 +135,11 @@ class HttpAddon(BaseAddon):
 # wrappers keep the old public imports working while moving the actual per-host
 # behavior out of this base abstraction.
 from .addon import URL_RD_INJECTORS, configure_addon_url, is_addon_url_enabled, register_rd_injector
-from .types.comet_addon import CometAddonConfigurer
-from .types.guindex_addon import GuindexAddonConfigurer
-from .types.hdhub_addon import HDHubAddonConfigurer
-from .types.strem_thru_addon import StremThruAddonConfigurer
-from .types.torrentio_addon import TorrentioAddonConfigurer
+from .types.comet_family.CometAddonConfigurer import CometAddonConfigurer
+from .types.comet_family.GuindexAddonConfigurer import GuindexAddonConfigurer
+from .types.comet_family.HDHubAddonConfigurer import HDHubAddonConfigurer
+from .types.comet_family.StremThruAddonConfigurer import StremThruAddonConfigurer
+from .types.torrentio_family.TorrentioAddonConfigurer import TorrentioAddonConfigurer
 
 
 def build_comet_config_url(base_url: str, api_key: str) -> str:
