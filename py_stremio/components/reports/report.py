@@ -6,6 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from typing import Any
 
 from py_stremio.components.configs.app_settings import settings
+from py_stremio.services.progress import build_table
 
 
 @dataclass
@@ -39,46 +40,46 @@ def _preview_items(items: list[Any], limit: int = 3) -> list[str]:
 
 
 def format_terminal_report(data: ReportData) -> str:
-    """Format a compact modern terminal report."""
+    """Format a compact modern terminal report with tables."""
     mode = "DRY RUN" if data.dry_run else "LIVE"
     status = "OK" if data.total_failed == 0 else "ATTENTION"
     lines = [
         "",
-        "╭─ Py-Stremio summary ─────────────────────────╮",
+        "╭─ Py-Stremio summary ─────────────────────────────╮",
         f"│ {mode:<8} · {data.total_folders} folders · {data.total_downloaded} downloaded · {data.total_failed} failed",
         f"│ {data.timestamp} · {status}",
-        "╰──────────────────────────────────────────────╯",
+        "╰──────────────────────────────────────────────────╯",
     ]
 
+    # Build per-folder table
+    rows: list[list[str]] = []
     for folder in data.folders:
         folder_type = folder.get("type", "folder")
         name = folder.get("name", "unknown")
+
         if folder.get("skipped"):
-            lines.append(f"  ◌ {folder_type:<6} {name:<18} skipped · {folder.get('reason', 'unknown')}")
+            skip_reason = folder.get("reason", "unknown")
+            rows.append([name, folder_type, "--", "◌", skip_reason])
             continue
 
         downloaded_count = _folder_count(folder, "downloaded")
         failed_count = _folder_count(folder, "failed")
-        if failed_count:
-            marker = "!"
-            summary = f"{downloaded_count} downloaded · {failed_count} failed"
-        elif downloaded_count:
-            marker = "✓"
-            summary = f"{downloaded_count} downloaded"
-        else:
-            marker = "·"
-            summary = "nothing to do"
-        lines.append(f"  {marker} {folder_type:<6} {name:<18} {summary}")
 
-        failed_items = folder.get("failed", [])
-        if isinstance(failed_items, list) and failed_items and failed_count != len(failed_items):
-            failed_items = []
-        if isinstance(failed_items, list) and failed_items and failed_count <= 3:
-            for item in _preview_items(failed_items, 3):
-                lines.append(f"      {item}")
-        elif isinstance(failed_items, list) and failed_items and failed_count > 3:
-            for item in _preview_items(failed_items, 3):
-                lines.append(f"      {item}")
+        dsp = str(downloaded_count) if downloaded_count else "0"
+        if failed_count:
+            fsp = str(failed_count)
+            rows.append([name, folder_type, dsp, "!", f"{failed_count} failed"])
+        elif downloaded_count:
+            rows.append([name, folder_type, dsp, "✓", ""])
+        else:
+            rows.append([name, folder_type, "0", "·", "nothing to do"])
+
+    if rows:
+        lines.append("")
+        lines.append(build_table(
+            ["Folder", "Type", "Downloaded", "", "Detail"],
+            rows,
+        ))
 
     return "\n".join(lines)
 

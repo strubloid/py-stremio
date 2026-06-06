@@ -128,6 +128,58 @@ def _progress_key(event: dict[str, Any]) -> tuple[Any, Any, Any]:
     return (event.get("title"), event.get("season"), event.get("episode"))
 
 
+def build_table(
+    headers: list[str],
+    rows: list[list[str]],
+    colors: list[str] | None = None,
+) -> str:
+    """Build a Unicode box-drawing table. Cols are auto-sized to content."""
+    if not headers:
+        return ""
+    col_count = len(headers)
+
+    # Normalise rows to col_count
+    _rows = []
+    for row in rows:
+        padded = list(row) + [""] * (col_count - len(row))
+        _rows.append(padded[:col_count])
+
+    widths = [len(h) for h in headers]
+    for row in _rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    pad = 2  # one space each side
+    col_widths = [w + pad for w in widths]
+
+    def _hline(left: str, mid: str, right: str) -> str:
+        return left + mid.join("─" * w for w in col_widths) + right
+
+    def _cell(row_idx: int | None, col_idx: int) -> str:
+        """Render one cell with optional color."""
+        if row_idx is not None and row_idx < len(_rows) and col_idx < len(_rows[row_idx]):
+            cell = _rows[row_idx][col_idx]
+        elif row_idx is None and col_idx < len(headers):
+            cell = headers[col_idx]
+        else:
+            cell = ""
+        text = f" {cell:<{widths[col_idx]}} "
+        if row_idx is not None and colors and col_idx < len(colors):
+            text = f"{colors[col_idx]}{text}{RESET}"
+        return text
+
+    parts = [_hline("╭", "┬", "╮")]
+    # Header row
+    parts.append("│" + "│".join(_cell(None, i) for i in range(col_count)) + "│")
+    parts.append(_hline("├", "┼", "┤"))
+    # Data rows
+    for ri in range(len(_rows)):
+        row = _rows[ri]
+        parts.append("│" + "│".join(_cell(ri, i) for i in range(col_count)) + "│")
+    parts.append(_hline("╰", "┴", "╯"))
+    return "\n".join(parts)
+
+
 def make_progress_printer(stream):
     """Return a progress renderer that keeps concurrent episodes on separate lines."""
     active_lines: dict[tuple[Any, Any, Any], str] = {}

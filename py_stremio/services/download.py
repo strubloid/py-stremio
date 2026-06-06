@@ -16,7 +16,7 @@ from py_stremio.components.library.media_file import detect_existing_season_epis
 from py_stremio.components.reports.output_writer import install_thread_stdout_filter, suppress_current_thread_output, restore_thread_stdout_filter
 from py_stremio.components.reports.report import ReportData, print_and_send_report
 from py_stremio.services.progress import (
-    ACCENT, GREEN, YELLOW, RED, DIM, RESET, make_progress_printer,
+    ACCENT, GREEN, YELLOW, RED, DIM, RESET, build_table, make_progress_printer,
 )
 
 
@@ -68,8 +68,9 @@ class DownloadService:
             suffix = f" S{folder.season_number:02d}" if folder.season_number is not None else ""
             return f"{display_name}{suffix}"
 
-        for line in self._series_completion_overviews(folders):
-            print(_c(line, ACCENT))
+        table = self._series_completion_overviews(folders)
+        if table:
+            print(table)
 
         for folder in folders:
             if folder.folder_type not in (FolderType.SERIES, FolderType.MOVIES):
@@ -191,8 +192,8 @@ class DownloadService:
         stable_id = config.imdb_id or title.casefold()
         return stable_id, title
 
-    def _series_completion_overviews(self, folders: list[ScannedFolder]) -> list[str]:
-        """Build one library/checking line per series, aggregated across seasons."""
+    def _series_completion_overviews(self, folders: list[ScannedFolder]) -> str:
+        """Build one library/checking table per series, aggregated across seasons."""
         series: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for folder in folders:
@@ -217,21 +218,31 @@ class DownloadService:
             item["downloaded"] += min(len(existing), config.episode_count)
             item["total"] += config.episode_count
 
-        lines = []
+        rows: list[list[str]] = []
         for stable_id in order:
             item = series[stable_id]
             title = item["title"]
             downloaded = item["downloaded"]
             total = item["total"]
             if total:
-                percent = int(round((downloaded / total) * 100))
-                status = "nothing new" if downloaded >= total else "checking"
-                lines.append(f"  • {title} - {percent}% ({downloaded}/{total}) - {status}")
+                if downloaded >= total:
+                    status = "✓"
+                else:
+                    percent = int(round((downloaded / total) * 100))
+                    status = f"→ {percent}%"
+                rows.append([title, f"{downloaded}/{total}", status])
             elif item["unavailable"]:
-                lines.append(f"  • {title} - not available yet")
+                rows.append([title, "--", "not available"])
             else:
-                lines.append(f"  • {title} - metadata pending")
-        return lines
+                rows.append([title, "--", "pending"])
+
+        if not rows:
+            return ""
+        return build_table(
+            ["Series", "Episodes", "Status"],
+            rows,
+            colors=[ACCENT],
+        )
 
 
 def _result_count(value: Any) -> int:

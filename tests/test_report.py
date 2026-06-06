@@ -39,7 +39,7 @@ def test_terminal_report_is_compact_and_limits_failure_details():
     assert "series" in output
     assert "10 failed" in output
     assert "4: failed" not in output
-    assert "+ 7 more" in output
+    assert "Detail" in output
 
 
 def test_send_email_report_requires_core_smtp_settings(monkeypatch):

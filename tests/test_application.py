@@ -299,8 +299,11 @@ def test_download_folders_lists_series_overview_instead_of_each_season(tmp_path,
     application.download_folders(folders=folders, max_workers=1)
 
     output = capsys.readouterr().out
-    assert "House of the Dragon - 100% (18/18) - nothing new" in output
-    assert "Poppa's House - 100% (18/18) - nothing new" in output
+    # Table now used instead of text lines
+    assert "House of the Dragon" in output
+    assert "Poppa's House" in output
+    assert "18/18" in output
+    assert "✓" in output
     assert "House Of The Dragon S01" not in output
     assert "House Of The Dragon S02" not in output
     assert "Poppas House S01" not in output
@@ -330,7 +333,9 @@ def test_download_folders_series_overview_shows_partial_download_percentage(tmp_
     application.download_folders(folders=folders, max_workers=1)
 
     output = capsys.readouterr().out
-    assert "Doctor Who (2023) - 25% (2/8) - checking" in output
+    assert "Doctor Who (2023)" in output
+    assert "2/8" in output
+    assert "→ 25%" in output
     assert "Doctor Who (2023) S01" not in output
 
 

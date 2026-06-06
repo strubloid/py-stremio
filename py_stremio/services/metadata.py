@@ -7,14 +7,8 @@ from py_stremio.components.library.library_scanner import Scanner, FolderType
 from py_stremio.components.library.media_file import infer_next_episode_download
 from py_stremio.components.stremio.stremio_client import get_series_imdb_id
 from py_stremio.components.stremio.stremio_metadata import get_series_metadata
+from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, RESET, build_table
 from py_stremio.utils.media import parse_season_from_folder
-
-
-ACCENT = "\033[96m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-RESET = "\033[0m"
 
 
 def _c(text: str, color: str) -> str:
@@ -32,24 +26,35 @@ class MetadataService:
         if folders is None:
             folders = self.scanner.scan()
         updated = 0
+        rows: list[list[str]] = []
 
         for folder in folders:
             if folder.folder_type != FolderType.SERIES:
                 continue
 
             try:
-                changed = self._update_folder_metadata(folder, quiet)
+                changed, status = self._update_folder_metadata(folder, quiet)
                 if changed:
                     updated += 1
+                if status:
+                    rows.append(status)
             except Exception as e:
                 print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
+
+        if not quiet and rows:
+            print()
+            print(build_table(
+                ["Series", "Season", "Episodes", "IMDb", "Status"],
+                rows,
+                colors=[ACCENT],
+            ))
 
         if not quiet:
             print(_c(f"  ✓ Metadata refresh complete ({updated} updated)", GREEN))
         return updated
 
-    def _update_folder_metadata(self, folder, quiet: bool) -> bool:
-        """Update a single folder's download-config.json. Returns True if changed."""
+    def _update_folder_metadata(self, folder, quiet: bool) -> tuple[bool, list[str] | None]:
+        """Update a single folder's download-config.json. Returns (changed, status_row)."""
         config_model, config_path = load_config(folder.path)
         config = {
             "type": config_model.type,
@@ -103,8 +108,11 @@ class MetadataService:
             config["season"] = season
             changed = True
 
-        if not quiet:
-            print(f"  🧠 {folder.path.parent.name} S{season:02d}")
+        # Build display status row (used in table if not quiet)
+        status_row: list[str] | None = None
+        folder_title = folder.path.parent.name.replace("-", " ").replace("_", " ").title()
+        canonical_title = config.get("title") or folder_title
+        season_label = f"S{season:02d}"
 
         metadata = get_series_metadata(title, season)
         if metadata:
@@ -113,9 +121,9 @@ class MetadataService:
                 config["imdb_id"] = imdb_id
                 config["type"] = "series"
                 changed = True
-            canonical_title = metadata.get("title")
-            if canonical_title and config.get("title") != canonical_title:
-                config["title"] = canonical_title
+            canonical_title = metadata.get("title") or canonical_title
+            if metadata.get("title") and config.get("title") != metadata.get("title"):
+                config["title"] = metadata.get("title")
                 changed = True
             season_exists = metadata.get("season_exists")
             episode_count = metadata.get("episode_count")
@@ -129,8 +137,7 @@ class MetadataService:
                 if config.get("available_episodes") != []:
                     config["available_episodes"] = []
                     changed = True
-                if not quiet:
-                    print(f"     ! {config.get('title')} S{season:02d} has no episodes in metadata; disabled")
+                status_row = [canonical_title, season_label, "--", "--", "disabled"]
             else:
                 if episode_count and config.get("episode_count") != episode_count:
                     config["episode_count"] = episode_count
@@ -141,16 +148,18 @@ class MetadataService:
                 if season_exists is True and config.get("enabled") is False:
                     config["enabled"] = True
                     changed = True
-                if not quiet:
-                    print(f"     ✓ {config.get('title')} · {config.get('imdb_id')} · {config.get('episode_count') or '?'} eps")
+                ep_display = str(episode_count) if episode_count else "?"
+                imdb_display = config.get("imdb_id") or "--"
+                status_row = [canonical_title, season_label, ep_display, imdb_display, "✓"]
         else:
             imdb_id = get_series_imdb_id(title, season)
             if imdb_id:
                 config["imdb_id"] = imdb_id
                 config["type"] = "series"
                 changed = True
-            elif not quiet:
-                print(f"     ! metadata not found for {title} S{season}")
+                status_row = [canonical_title, season_label, "--", imdb_id, "not found"]
+            else:
+                status_row = [canonical_title, season_label, "--", "--", "not found"]
 
         next_existing_episode = infer_next_episode_download(folder.path, config.get("episode_count"))
         if next_existing_episode and next_existing_episode > int(config.get("current_episode_download") or 1):
@@ -161,4 +170,4 @@ class MetadataService:
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
 
-        return changed
+        return changed, status_row
