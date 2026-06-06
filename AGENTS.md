@@ -23,10 +23,11 @@ py-stremio/
 ├── addons.txt                         # Custom addon URLs (optional)
 ├── py_stremio/                        # Package
 │   ├── __init__.py                    # Public exports (Settings, settings)
-│   ├── main.py                        # Entry: delegates to components.application
+│   ├── main.py                        # Entry: delegates to app.AppService
+│   ├── app.py                         # AppService — single orchestrator (run, run_menu, run_pipeline)
 │   └── components/                    # All logic lives here
 │       ├── __init__.py
-│       ├── application.py             # CLI orchestration, menu, pipeline, progress UI
+│       ├── application.py             # Compat shim re-exporting settings/services (kept for test backward compat)
 │       ├── settings.py                # Dataclass-based Settings from .env
 │       ├── scanner.py                 # Folder discovery (FolderType.SERIES / MOVIES)
 │       ├── config_file.py             # DownloadConfig + QualitySettings dataclasses
@@ -51,13 +52,13 @@ py-stremio/
 │       ├── stream_downloads.py        # Stream URL resolution, HTTP download with resume
 │       ├── real_debrid.py             # RealDebrid API: magnet → torrent → direct URL
 │       ├── report.py                  # Terminal + email report generation
-│       ├── error_logger.py             # Legacy error logger, now delegates to ErrorReporter
-│       ├── errors/                     # Error deduplication and reporting system
-│       │   ├── __init__.py             # Public API: report_error, print_error_summary
-│       │   ├── error_category.py       # ErrorCategory enum + normalize_error() classifier
-│       │   ├── error_entry.py          # ErrorEntry dataclass (one deduplicated error)
-│       │   ├── error_summary.py        # ErrorSummary dataclass (aggregated output)
-│       │   └── error_reporter.py       # ErrorReporter singleton + redact_url helpers
+│       ├── error_logger.py            # Legacy error logger, now delegates to ErrorReporter
+│       ├── errors/                    # Error deduplication and reporting system
+│       │   ├── __init__.py            # Public API: report_error, print_error_summary
+│       │   ├── error_category.py      # ErrorCategory enum + normalize_error() classifier
+│       │   ├── error_entry.py         # ErrorEntry dataclass (one deduplicated error)
+│       │   ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
+│       │   └── error_reporter.py      # ErrorReporter singleton + redact_url helpers
 │       └── addons/                    # Stremio addon abstractions
 │           ├── __init__.py
 │           ├── base.py                # BaseAddon, HttpAddon, UrlAddon ABCs
@@ -80,7 +81,13 @@ py-stremio/
 │               ├── iptv/              # 5 IPTV addons
 │               ├── regional/          # 9 regional addons
 │               └── misc/              # 4 miscellaneous addons
-└── tests/
+│   ├── services/                      # Orchestration services (called by AppService)
+│   │   ├── __init__.py
+│   │   ├── scanner.py                 # ScanService — folder scanning + auto-create seasons
+│   │   ├── metadata.py                # MetadataService — Cinemeta/IMDb enrichment
+│   │   ├── download.py                # DownloadService — download orchestration + reporting
+│   │   └── progress.py                # ProgressRenderer — progress bars, colors, terminal
+│   └── components/                    # All logic lives here (old structure, kept)
     ├── test_application.py
     ├── test_bandwidth.py
     ├── test_config_file.py
@@ -298,6 +305,8 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 - State tests handle file I/O with cleanup
 - Config tests verify default creation and loading
 - Download processing tests mock the Stremio client
+- **Monkeypatch caveat**: `from X import Y` in service modules creates a permanent local binding. When tests monkeypatch `X.Y`, the local binding in the service module is unaffected if the service was already imported by a prior test. Always also monkeypatch the local binding (`py_stremio.services.<name>.<function>`) in tests that need to mock functions imported via `from ... import` in service modules.
+- **Test status**: 288 tests, all passing (run `pytest tests/ -v`)
 
 ## Current Status
 
