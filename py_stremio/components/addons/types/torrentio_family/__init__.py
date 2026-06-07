@@ -6,6 +6,7 @@ from .TorrentioPortugueseAddon import TorrentioPortugueseAddon
 from .TorrentioSpanishAddon import TorrentioSpanishAddon
 from .TorrentioHindiAddon import TorrentioHindiAddon
 from .TorrentioLiteAddon import TorrentioLiteAddon
+from .TorrentsDBAddon import TorrentsDBAddon
 
 __all__ = [
     "TorrentioAddon",
@@ -14,4 +15,5 @@ __all__ = [
     "TorrentioSpanishAddon",
     "TorrentioHindiAddon",
     "TorrentioLiteAddon",
+    "TorrentsDBAddon",
 ]

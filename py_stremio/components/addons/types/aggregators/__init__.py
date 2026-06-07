@@ -13,6 +13,12 @@ from .AIOStreamsAddon import AIOStreamsAddon
 from .CineTorrentAddon import CineTorrentAddon
 from .TorrinAddon import TorrinAddon
 from .ThePirateBayPlusAddon import ThePirateBayPlusAddon
+from .StreamViXAddon import StreamViXAddon
+from .FlixStreamsAddon import FlixStreamsAddon
+from .YtztvioAddon import YtztvioAddon
+from .VidFastProAddon import VidFastProAddon
+from .MyCineAddon import MyCineAddon
+from .NebulaStreamsAddon import NebulaStreamsAddon
 
 __all__ = [
     "MediaFusionAddon",
@@ -28,4 +34,10 @@ __all__ = [
     "CineTorrentAddon",
     "TorrinAddon",
     "ThePirateBayPlusAddon",
+    "StreamViXAddon",
+    "FlixStreamsAddon",
+    "YtztvioAddon",
+    "VidFastProAddon",
+    "MyCineAddon",
+    "NebulaStreamsAddon",
 ]

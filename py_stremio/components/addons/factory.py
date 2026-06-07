@@ -11,6 +11,7 @@ from .types.builtin_addons import (
     AnimeoAddon,
     AnimepaheAddon,
     AnimesSeasonAddon,
+    AnimeStreamAddon,
     ArgentinaTVAddon,
     BrazucaTorrentsAddon,
     CineTorrentAddon,
@@ -24,16 +25,22 @@ from .types.builtin_addons import (
     EinthusanAddon,
     FShareAddon,
     FTVStremioAddon,
+    FenixFlixAddon,
     FigaroCorsoAddon,
+    FlixStreamsAddon,
     GreekTVAddon,
     GuindexAddon,
     HDHubAddon,
     HanimeAddon,
+    HiAnimeStreamsAddon,
     JackettioAddon,
     KnightCrawlerAddon,
     LatinMoviesAddon,
     MainelocalnewsAddon,
     MediaFusionAddon,
+    MicoLeaoDubladoAddon,
+    MyCineAddon,
+    NebulaStreamsAddon,
     NoTorrentAddon,
     NucleusAddon,
     OnePaceAddon,
@@ -43,6 +50,7 @@ from .types.builtin_addons import (
     SkyflixAddon,
     StremifyAddon,
     StremThruAddon,
+    StreamViXAddon,
     ThePirateBayPlusAddon,
     TorrentioAddon,
     TorrentioHindiAddon,
@@ -50,11 +58,16 @@ from .types.builtin_addons import (
     TorrentioPortugueseAddon,
     TorrentioSortSeedersAddon,
     TorrentioSpanishAddon,
+    TorrentsDBAddon,
     TorrinAddon,
+    VidFastProAddon,
     VStremioAddon,
     WatchHubAddon,
+    WatchioAddon,
     XtreamProAddon,
+    YaStreamAddon,
     YouTubeProAddon,
+    YtztvioAddon,
 )
 from .manager import AddonManager
 from .models import StreamInfo
@@ -103,6 +116,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(TorrentioSpanishAddon())
     manager.register(TorrentioHindiAddon())
     manager.register(TorrentioLiteAddon())
+    manager.register(TorrentsDBAddon())
 
     manager.register(MediaFusionAddon())
     manager.register(KnightCrawlerAddon())
@@ -120,6 +134,12 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(CineTorrentAddon())
     manager.register(TorrinAddon())
     manager.register(ThePirateBayPlusAddon())
+    manager.register(StreamViXAddon())
+    manager.register(FlixStreamsAddon())
+    manager.register(YtztvioAddon())
+    manager.register(VidFastProAddon())
+    manager.register(MyCineAddon())
+    manager.register(NebulaStreamsAddon())
 
     # ── Brazilian / Portuguese ────────────────────────────────────────────
     manager.register(BrazucaTorrentsAddon())
@@ -133,6 +153,9 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(OnePaceAddon())
     manager.register(HanimeAddon())
     manager.register(AnimesSeasonAddon())
+    manager.register(HiAnimeStreamsAddon())
+    manager.register(AnimeStreamAddon())
+    manager.register(YaStreamAddon())
 
     # ── Free hosters / no-debrid ──────────────────────────────────────────
     manager.register(WatchHubAddon())
@@ -141,6 +164,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(GreekTVAddon())
     manager.register(XtreamProAddon())
     manager.register(AIOStreamingAddon())
+    manager.register(WatchioAddon())
 
     # ── Regional ──────────────────────────────────────────────────────────
     manager.register(LatinMoviesAddon())
@@ -152,6 +176,8 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(VStremioAddon())
     manager.register(DubbindoAddon())
     manager.register(MainelocalnewsAddon())
+    manager.register(FenixFlixAddon())
+    manager.register(MicoLeaoDubladoAddon())
 
     # ── Other backends ────────────────────────────────────────────────────
     manager.register(NoTorrentAddon())

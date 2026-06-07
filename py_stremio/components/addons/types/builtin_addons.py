@@ -17,6 +17,7 @@ from .torrentio_family import (
     TorrentioSpanishAddon,
     TorrentioHindiAddon,
     TorrentioLiteAddon,
+    TorrentsDBAddon,
 )
 
 # ── Comet / HDHub / StremThru / Brazuca / Guindex ────────────────────────────
@@ -45,6 +46,12 @@ from .aggregators import (
     CineTorrentAddon,
     TorrinAddon,
     ThePirateBayPlusAddon,
+    StreamViXAddon,
+    FlixStreamsAddon,
+    YtztvioAddon,
+    VidFastProAddon,
+    MyCineAddon,
+    NebulaStreamsAddon,
 )
 
 # ── Anime ─────────────────────────────────────────────────────────────────────
@@ -56,6 +63,9 @@ from .anime import (
     OnePaceAddon,
     HanimeAddon,
     AnimesSeasonAddon,
+    HiAnimeStreamsAddon,
+    AnimeStreamAddon,
+    YaStreamAddon,
 )
 
 # ── IPTV / Live TV ────────────────────────────────────────────────────────────
@@ -65,6 +75,7 @@ from .iptv import (
     GreekTVAddon,
     XtreamProAddon,
     AIOStreamingAddon,
+    WatchioAddon,
 )
 
 # ── Regional / language-specific ─────────────────────────────────────────────
@@ -78,6 +89,8 @@ from .regional import (
     VStremioAddon,
     DubbindoAddon,
     MainelocalnewsAddon,
+    FenixFlixAddon,
+    MicoLeaoDubladoAddon,
 )
 
 # ── Miscellaneous ────────────────────────────────────────────────────────────
@@ -99,6 +112,7 @@ __all__ = [
     "TorrentioSpanishAddon",
     "TorrentioHindiAddon",
     "TorrentioLiteAddon",
+    "TorrentsDBAddon",
     # Comet / HDHub / StremThru / Brazuca / Guindex
     "CometAddon",
     "CometElfHostedAddon",
@@ -121,6 +135,12 @@ __all__ = [
     "CineTorrentAddon",
     "TorrinAddon",
     "ThePirateBayPlusAddon",
+    "StreamViXAddon",
+    "FlixStreamsAddon",
+    "YtztvioAddon",
+    "VidFastProAddon",
+    "MyCineAddon",
+    "NebulaStreamsAddon",
     # Anime
     "AnimeKitsuAddon",
     "AkumaAddon",
@@ -129,12 +149,16 @@ __all__ = [
     "OnePaceAddon",
     "HanimeAddon",
     "AnimesSeasonAddon",
+    "HiAnimeStreamsAddon",
+    "AnimeStreamAddon",
+    "YaStreamAddon",
     # IPTV
     "SkyflixAddon",
     "ArgentinaTVAddon",
     "GreekTVAddon",
     "XtreamProAddon",
     "AIOStreamingAddon",
+    "WatchioAddon",
     # Regional
     "NoTorrentAddon",
     "LatinMoviesAddon",
@@ -145,6 +169,8 @@ __all__ = [
     "VStremioAddon",
     "DubbindoAddon",
     "MainelocalnewsAddon",
+    "FenixFlixAddon",
+    "MicoLeaoDubladoAddon",
     # Misc
     "WatchHubAddon",
     "YouTubeProAddon",

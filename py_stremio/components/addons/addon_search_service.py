@@ -1,9 +1,12 @@
 """Addon search and stream parsing helpers."""
+import threading
 from typing import Any
 
 import httpx
 
+from py_stremio.components.addons.base import BaseAddon
 from py_stremio.components.addons.models import StreamInfo
+from py_stremio.components.addons.manager import SEARCH_CONCURRENCY
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
 
 
@@ -126,3 +129,91 @@ def search_all_addons_for_streams(
         [*working_streams, *remaining_streams],
         unique_manifest_urls([*working_urls, *remaining_urls]),
     )
+
+
+# ── Pre-flight addon discovery ────────────────────────────────────────────────
+
+def preflight_discover_working_addons(
+    type_: str,
+    stremio_id: str,
+    *,
+    timeout_per_addon: int = 8,
+) -> list[str]:
+    """Query ALL configured addons for one representative ID and return
+    only the URLs of addons that returned usable streams.
+
+    This is a one-time cost per season/movie — subsequent episode searches
+    should only query addons that passed this preflight check, dramatically
+    reducing per-episode latency.
+
+    Returns a list of normalized addon URLs that returned at least one stream.
+    """
+    import concurrent.futures
+    import sys
+
+    import py_stremio.components.addons as addons
+
+    manager = addons.create_addon_manager()
+    if not manager.addons:
+        return []
+
+    total = len(manager.addons)
+    print(f"\n  🔍 Pre-flight: scanning {total} addons for {type_} {stremio_id}...")
+
+    alive: list[str] = []
+    result_lock = threading.Lock()
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=SEARCH_CONCURRENCY
+    ) as executor:
+
+        def _try_one(addon: BaseAddon) -> tuple[str, bool]:
+            try:
+                streams = addon.get_streams(type_, stremio_id)
+                live = bool(streams)
+            except Exception:
+                live = False
+            try:
+                url = addon.get_url(None)
+            except TypeError:
+                url = addon.get_url()
+            return normalize_manifest_url(url), live
+
+        futures = {
+            executor.submit(_try_one, addon): addon
+            for addon in manager.addons
+        }
+
+        done_count = 0
+        for future in concurrent.futures.as_completed(futures):
+            done_count += 1
+            addon = futures[future]
+            try:
+                url, live = future.result(timeout=timeout_per_addon + 5)
+            except Exception:
+                url, live = None, False
+
+            if url and live:
+                with result_lock:
+                    if url not in alive:
+                        alive.append(url)
+
+            # Light progress indicator
+            char = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[done_count % 10]
+            status = f"{char} Pre-flight ({done_count}/{total})"
+            if len(alive) == 1:
+                status += " — 1 working addon found"
+            elif alive:
+                status += f" — {len(alive)} working addons found"
+            sys.stdout.write(f"\r    {status}")
+            sys.stdout.flush()
+
+    print()
+    if alive:
+        print(f"  ✅ Pre-flight complete: {len(alive)} addons confirmed for this content")
+        for a in alive:
+            print(f"     └─ {a}")
+    else:
+        print(f"  ⚠️  Pre-flight: no addons returned streams — will search all per-episode")
+
+    return alive

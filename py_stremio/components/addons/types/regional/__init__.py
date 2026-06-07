@@ -9,6 +9,8 @@ from .EinthusanAddon import EinthusanAddon
 from .VStremioAddon import VStremioAddon
 from .DubbindoAddon import DubbindoAddon
 from .MainelocalnewsAddon import MainelocalnewsAddon
+from .FenixFlixAddon import FenixFlixAddon
+from .MicoLeaoDubladoAddon import MicoLeaoDubladoAddon
 
 __all__ = [
     "NoTorrentAddon",
@@ -20,4 +22,6 @@ __all__ = [
     "VStremioAddon",
     "DubbindoAddon",
     "MainelocalnewsAddon",
+    "FenixFlixAddon",
+    "MicoLeaoDubladoAddon",
 ]

@@ -13,6 +13,8 @@ from py_stremio.components.state.app_state import load_state, save_state
 from py_stremio.components.stremio.stremio_client import search_and_download
 from py_stremio.components.download.stream_download import build_media_filename
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
+from py_stremio.components.addons.addon_search_service import preflight_discover_working_addons
+from py_stremio.components.stremio.stremio_ids import build_stremio_id
 
 
 def scan_folder_for_episodes(folder_path: Path) -> list[dict]:
@@ -189,10 +191,31 @@ def process_season_folder(
     elif start_episode <= final_episode and config.available_episodes is None:
         _set_current_episode(config, config_path, final_episode + 1)
 
+    # ── Pre-flight addon discovery ──────────────────────────────────────────
+    # If the server cache is empty, scan ALL addons once using the first
+    # missing episode to discover which addons actually have content for this
+    # show.  Subsequent episode downloads will only query these confirmed
+    # working addons instead of the full ~65-addon list every time.
+    servers = unique_manifest_urls(config.servers)
+    if missing and not servers and config.imdb_id:
+        print(f"\n  {'='*50}")
+        print(f"  Pre-flight: discovering working addons for {title}")
+        print(f"  {'='*50}")
+        first_episode = missing[0]
+        stremio_id = build_stremio_id(config.imdb_id, title, season, first_episode)
+        discovered = preflight_discover_working_addons("series", stremio_id)
+        if discovered:
+            servers = discovered
+            _save_verified_server_urls(config, config_path, servers)
+            print(f"  Using {len(discovered)} pre-confirmed addons for this season\n")
+        else:
+            print(f"  Pre-flight found no working addons — will search all per-episode\n")
+    elif not servers and missing:
+        print(f"  No server cache and no IMDB ID — will search all addons per-episode\n")
+
     downloaded = 0
     skipped = 0
     failed = 0
-    servers = unique_manifest_urls(config.servers)
     verified_servers: list[str] = []
     servers_lock = threading.Lock()
     progress_lock = threading.Lock()
@@ -392,6 +415,22 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
     title = config.search_group or config.title or folder_path.name
     servers = unique_manifest_urls(config.servers)
     preferred_languages = _preferred_languages(config)
+
+    # Pre-flight addon discovery for movies
+    if not servers and config.imdb_id:
+        stremio_id = build_stremio_id(config.imdb_id, title, None, None)
+        print(f"\n  {'='*50}")
+        print(f"  Pre-flight: discovering working addons for movie {title}")
+        print(f"  {'='*50}")
+        discovered = preflight_discover_working_addons("movie", stremio_id)
+        if discovered:
+            servers = discovered
+            _save_verified_server_urls(config, config_path, servers)
+            print(f"  Using {len(discovered)} pre-confirmed addons for this movie\n")
+        else:
+            print(f"  Pre-flight found no working addons — will search all\n")
+    elif not servers:
+        print(f"  No server cache and no IMDB ID — will search all addons\n")
 
     print(f"  Searching for movie: {title}")
     result = search_and_download(

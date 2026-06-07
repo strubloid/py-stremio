@@ -5,6 +5,7 @@ from .ArgentinaTVAddon import ArgentinaTVAddon
 from .GreekTVAddon import GreekTVAddon
 from .XtreamProAddon import XtreamProAddon
 from .AIOStreamingAddon import AIOStreamingAddon
+from .WatchioAddon import WatchioAddon
 
 __all__ = [
     "SkyflixAddon",
@@ -12,4 +13,5 @@ __all__ = [
     "GreekTVAddon",
     "XtreamProAddon",
     "AIOStreamingAddon",
+    "WatchioAddon",
 ]

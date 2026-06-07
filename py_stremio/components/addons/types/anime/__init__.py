@@ -7,6 +7,9 @@ from .AnimeoAddon import AnimeoAddon
 from .OnePaceAddon import OnePaceAddon
 from .HanimeAddon import HanimeAddon
 from .AnimesSeasonAddon import AnimesSeasonAddon
+from .HiAnimeStreamsAddon import HiAnimeStreamsAddon
+from .AnimeStreamAddon import AnimeStreamAddon
+from .YaStreamAddon import YaStreamAddon
 
 __all__ = [
     "AnimeKitsuAddon",
@@ -16,4 +19,7 @@ __all__ = [
     "OnePaceAddon",
     "HanimeAddon",
     "AnimesSeasonAddon",
+    "HiAnimeStreamsAddon",
+    "AnimeStreamAddon",
+    "YaStreamAddon",
 ]

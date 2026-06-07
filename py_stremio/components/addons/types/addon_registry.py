@@ -21,6 +21,7 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "TorrentioSpanishAddon",
     "TorrentioHindiAddon",
     "TorrentioLiteAddon",
+    "TorrentsDBAddon",
     # comet_family.py
     "CometAddon",
     "CometElfHostedAddon",
@@ -43,6 +44,12 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "CineTorrentAddon",
     "TorrinAddon",
     "ThePirateBayPlusAddon",
+    "StreamViXAddon",
+    "FlixStreamsAddon",
+    "YtztvioAddon",
+    "VidFastProAddon",
+    "MyCineAddon",
+    "NebulaStreamsAddon",
     # anime.py
     "AnimeKitsuAddon",
     "AkumaAddon",
@@ -51,12 +58,16 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "OnePaceAddon",
     "HanimeAddon",
     "AnimesSeasonAddon",
+    "HiAnimeStreamsAddon",
+    "AnimeStreamAddon",
+    "YaStreamAddon",
     # iptv.py
     "SkyflixAddon",
     "ArgentinaTVAddon",
     "GreekTVAddon",
     "XtreamProAddon",
     "AIOStreamingAddon",
+    "WatchioAddon",
     # regional.py
     "NoTorrentAddon",
     "LatinMoviesAddon",
@@ -67,6 +78,8 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "VStremioAddon",
     "DubbindoAddon",
     "MainelocalnewsAddon",
+    "FenixFlixAddon",
+    "MicoLeaoDubladoAddon",
     # misc.py
     "WatchHubAddon",
     "YouTubeProAddon",
