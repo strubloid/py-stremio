@@ -36,8 +36,8 @@ class MetadataService:
                 changed, status = self._update_folder_metadata(folder, quiet)
                 if changed:
                     updated += 1
-                if status:
-                    rows.append(status)
+                    if status:
+                        rows.append(status)
             except Exception as e:
                 print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
 
@@ -128,25 +128,18 @@ class MetadataService:
             season_exists = metadata.get("season_exists")
             episode_count = metadata.get("episode_count")
             if season_exists is False:
-                if config.get("enabled") is not False:
-                    config["enabled"] = False
-                    changed = True
-                if config.get("episode_count") is not None:
-                    config["episode_count"] = None
-                    changed = True
-                if config.get("available_episodes") != []:
-                    config["available_episodes"] = []
-                    changed = True
-                status_row = [canonical_title, season_label, "--", "--", "disabled"]
+                # Don't touch enabled/episode_count/available_episodes — those are
+                # user preferences and manual overrides. The data source
+                # (Cinemeta / IMDb TSV) sometimes doesn't list seasons for
+                # long-running anime (e.g. One Piece), so disabling the config
+                # would be destructive.
+                status_row = [canonical_title, season_label, "--", "--", "not found"]
             else:
                 if episode_count and config.get("episode_count") != episode_count:
                     config["episode_count"] = episode_count
                     changed = True
                 if "available_episodes" in metadata and config.get("available_episodes") != metadata.get("available_episodes"):
                     config["available_episodes"] = metadata.get("available_episodes")
-                    changed = True
-                if season_exists is True and config.get("enabled") is False:
-                    config["enabled"] = True
                     changed = True
                 ep_display = str(episode_count) if episode_count else "?"
                 imdb_display = config.get("imdb_id") or "--"

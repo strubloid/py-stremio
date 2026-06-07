@@ -49,6 +49,43 @@ def _save_verified_server_urls(config, config_path: Path, urls: list[str] | None
     return servers
 
 
+def _update_disabled_servers(
+    state,
+    config,
+    config_path: Path,
+    folder_path: Path,
+) -> list[str]:
+    """Scan all state entries for missing files and persist their servers as disabled.
+
+    When a file was downloaded but the user manually deleted it, that means
+    the server delivered wrong content (e.g. South Park instead of One Piece).
+    That server is added to config.disabled_servers so it is never queried
+    again for this series folder.
+    """
+    new_disabled: list[str] = []
+    for filename, record in state.items.items():
+        if not record.addon_url:  # server not recorded
+            continue
+        server_url = record.addon_url
+        file_path = folder_path / filename
+        if not file_path.exists():
+            new_disabled.append(server_url)
+
+    if not new_disabled:
+        return unique_manifest_urls(config.disabled_servers)
+
+    current = set(unique_manifest_urls(config.disabled_servers))
+    updated = set(unique_manifest_urls(new_disabled))
+    if not updated - current:
+        return unique_manifest_urls(config.disabled_servers)
+
+    combined = unique_manifest_urls(new_disabled + config.disabled_servers)
+    config.disabled_servers = combined
+    save_config(config_path, config)
+    print(f"    Disabled {len(combined)} server(s) that previously delivered wrong content")
+    return combined
+
+
 def _verified_urls_from_result(result: dict) -> list[str]:
     """Return addon URLs worth saving after a successful download.
 
@@ -170,6 +207,12 @@ def process_season_folder(
     if not config.enabled:
         return {"skipped": True, "reason": "disabled"}
 
+    # ── Disabled-server cleanup ────────────────────────────────────────
+    # Scan all state entries for files that were downloaded but are now
+    # missing (user deleted = wrong content). Disable those servers so they
+    # are never queried again for this folder.
+    _update_disabled_servers(state, config, config_path, folder_path)
+
     if not config.title:
         return {"skipped": True, "reason": "no title in config"}
     title = config.title
@@ -197,6 +240,12 @@ def process_season_folder(
     # show.  Subsequent episode downloads will only query these confirmed
     # working addons instead of the full ~65-addon list every time.
     servers = unique_manifest_urls(config.servers)
+    disabled = set(unique_manifest_urls(config.disabled_servers))
+    if disabled:
+        filtered = [s for s in servers if s not in disabled]
+        if len(filtered) < len(servers):
+            print(f"    Excluded {len(servers) - len(filtered)} disabled server(s) that delivered wrong content")
+            servers = filtered
     if missing and not servers and config.imdb_id:
         print(f"\n  {'='*50}")
         print(f"  Pre-flight: discovering working addons for {title}")
@@ -265,8 +314,26 @@ def process_season_folder(
             })
 
         print(f"  Downloading {title} S{season:02d}E{episode_num:02d}")
+        # If this episode was previously downloaded but the file is missing
+        # (user deleted it = wrong content), exclude the server that provided it
+        generated_filename = _generated_episode_filename(folder_path, config, season, episode_num)
+        legacy_key = f"episode_{episode_num}.mkv"
+        bad_servers: list[str] = []
+        for state_key in (generated_filename, legacy_key):
+            if state.is_downloaded(state_key):
+                previous_url = state.get_addon_url(state_key)
+                if previous_url:
+                    bad_servers.append(previous_url)
+        # Persist bad servers to disabled_servers so they never get re-queried
+        if bad_servers:
+            new_disabled = unique_manifest_urls(bad_servers + config.disabled_servers)
+            if new_disabled != unique_manifest_urls(config.disabled_servers):
+                config.disabled_servers = new_disabled
+                save_config(config_path, config)
         with servers_lock:
-            active_servers = list(servers)
+            active_servers = [s for s in servers if s not in bad_servers]
+        if bad_servers:
+            print(f"    ⚠ Previous server(s) delivered wrong content — excluded from retry")
         result = search_and_download(
             title=title,
             imdb_id=config.imdb_id,
@@ -309,7 +376,8 @@ def process_season_folder(
         nonlocal downloaded, failed, servers, verified_servers
         if result.get("success"):
             filename = Path(result.get("filename", f"episode_{episode_num}.mkv")).name
-            state.add_download(filename, result.get("quality", quality), "stremio")
+            addon_url = result.get("successful_url") or ""
+            state.add_download(filename, result.get("quality", quality), "stremio", addon_url)
             downloaded += 1
             successful_urls = _verified_urls_from_result(result)
             for successful_url in successful_urls:
@@ -402,6 +470,9 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
     if not config.enabled:
         return {"skipped": True, "reason": "disabled"}
 
+    # ── Disabled-server cleanup ────────────────────────────────────────
+    _update_disabled_servers(state, config, config_path, folder_path)
+
     video_files = iter_video_files(folder_path)
     quality = _preferred_quality(config)
 
@@ -414,6 +485,12 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
 
     title = config.search_group or config.title or folder_path.name
     servers = unique_manifest_urls(config.servers)
+    disabled = set(unique_manifest_urls(config.disabled_servers))
+    if disabled:
+        filtered = [s for s in servers if s not in disabled]
+        if len(filtered) < len(servers):
+            print(f"    Excluded {len(servers) - len(filtered)} disabled server(s) that delivered wrong content")
+            servers = filtered
     preferred_languages = _preferred_languages(config)
 
     # Pre-flight addon discovery for movies
@@ -458,7 +535,8 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
         successful_urls = _verified_urls_from_result(result)
         _save_verified_server_urls(config, config_path, successful_urls)
         filename = Path(result.get("filename", f"{title}.mkv")).name
-        state.add_download(filename, result.get("quality", quality), "stremio")
+        addon_url = result.get("successful_url") or ""
+        state.add_download(filename, result.get("quality", quality), "stremio", addon_url)
         save_state(folder_path, state)
         return {"downloaded": 1, "skipped": 0}
 

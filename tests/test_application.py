@@ -97,7 +97,10 @@ def test_metadata_refresh_creates_config_at_next_episode_when_absolute_numbered_
     assert config["current_episode_download"] == 15
 
 
-def test_metadata_refresh_disables_series_season_when_metadata_has_no_episodes(tmp_path, monkeypatch):
+def test_metadata_refresh_leaves_config_alone_when_season_unknown_to_imdb(tmp_path, monkeypatch):
+    """When metadata can't find a season (e.g. One Piece S22 in IMDb), the
+    metadata service should NOT disable the config or clear episode_count.
+    Those are user preferences and manual overrides."""
     season_folder = tmp_path / "series" / "Poppa's House" / "s02"
     season_folder.mkdir(parents=True)
     (tmp_path / "movies").mkdir()
@@ -123,10 +126,13 @@ def test_metadata_refresh_disables_series_season_when_metadata_has_no_episodes(t
 
     with open(season_folder / "download-config.json") as f:
         config = json.load(f)
-    assert config["enabled"] is False
+    # enabled should stay True — metadata service must not manage this flag
+    assert config["enabled"] is True
     assert config["imdb_id"] == "tt26678932"
     assert config["season"] == 2
-    assert config["episode_count"] is None
+    # episode_count wasn't in the metadata and the metadata service
+    # no longer clears user-set values
+    assert config.get("episode_count") is None
 
 
 def test_metadata_refresh_updates_existing_episode_list_when_config_already_has_episode_count(tmp_path, monkeypatch):

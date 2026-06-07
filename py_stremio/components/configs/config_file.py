@@ -38,6 +38,7 @@ class DownloadConfig:
     download_all_related: bool = True
     working_addons: list[str] = field(default_factory=list)
     servers: list[str] = field(default_factory=list)
+    disabled_servers: list[str] = field(default_factory=list)
 
 
 def create_series_config(folder_path: Path) -> DownloadConfig:

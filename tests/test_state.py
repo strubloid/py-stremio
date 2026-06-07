@@ -19,6 +19,16 @@ class TestDownloadRecord:
         assert record.quality == "1080p"
         assert record.provider == "mock"
         assert record.attempts == 1
+        assert record.addon_url == ""
+
+    def test_record_with_addon_url(self):
+        record = DownloadRecord(
+            filename="test.mkv",
+            quality="1080p",
+            provider="stremio",
+            addon_url="https://torrentio.strem.fun",
+        )
+        assert record.addon_url == "https://torrentio.strem.fun"
 
 
 class TestDownloadState:
@@ -33,9 +43,15 @@ class TestDownloadState:
         return DownloadState(folder_path=temp_folder)
 
     def test_add_download(self, state):
-        state.add_download("test.mkv", "1080p", "mock")
+        state.add_download("test.mkv", "1080p", "mock", "https://addon.example")
         assert state.is_downloaded("test.mkv")
         assert state.total_downloaded == 1
+        assert state.get_addon_url("test.mkv") == "https://addon.example"
+
+    def test_add_download_without_addon_url(self, state):
+        state.add_download("test.mkv", "1080p", "mock")
+        assert state.is_downloaded("test.mkv")
+        assert state.get_addon_url("test.mkv") == ""
 
     def test_is_downloaded_false(self, state):
         assert not state.is_downloaded("nonexistent.mkv")
@@ -43,6 +59,9 @@ class TestDownloadState:
     def test_mark_failed(self, state):
         state.mark_failed("test.mkv", "Connection error", 1)
         assert state.was_attempted("test.mkv") == 1
+
+    def test_get_addon_url_missing_file(self, state):
+        assert state.get_addon_url("nonexistent.mkv") == ""
 
 
 class TestStatePersistence:
@@ -54,12 +73,13 @@ class TestStatePersistence:
 
     def test_save_and_load_state(self, temp_folder):
         state = DownloadState(folder_path=temp_folder)
-        state.add_download("test.mkv", "1080p", "mock")
+        state.add_download("test.mkv", "1080p", "mock", "https://torrentio.strem.fun")
         state.mark_failed("fail.mkv", "Error", 2)
         save_state(temp_folder, state)
 
         loaded = load_state(temp_folder)
         assert loaded.is_downloaded("test.mkv")
+        assert loaded.get_addon_url("test.mkv") == "https://torrentio.strem.fun"
         assert loaded.was_attempted("fail.mkv") == 2
         assert loaded.total_downloaded == 1
 
@@ -67,3 +87,13 @@ class TestStatePersistence:
         state = load_state(temp_folder)
         assert state.total_downloaded == 0
         assert len(state.items) == 0
+
+    def test_save_and_load_state_without_addon_url(self, temp_folder):
+        """Backward compatibility: state without addon_url should load fine."""
+        state = DownloadState(folder_path=temp_folder)
+        state.add_download("old.mkv", "720p", "mock")
+        save_state(temp_folder, state)
+
+        loaded = load_state(temp_folder)
+        assert loaded.is_downloaded("old.mkv")
+        assert loaded.get_addon_url("old.mkv") == ""

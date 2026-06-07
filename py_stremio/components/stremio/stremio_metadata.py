@@ -206,16 +206,10 @@ def get_series_metadata(title: str, season: int) -> dict | None:
 
         meta = response.json().get("meta", {})
         videos = meta.get("videos", [])
-        imdb_max_season = get_imdb_max_season(imdb_id)
-        if imdb_max_season is not None and season > imdb_max_season:
-            return {
-                "imdb_id": meta.get("imdb_id") or imdb_id,
-                "title": meta.get("name") or search_meta.get("name") or title,
-                "episode_count": None,
-                "available_episodes": [],
-                "season_exists": False,
-            }
 
+        # IMDb title.episode dataset can lag for long-running anime (e.g. One Piece
+        # only shows 1 season there). Don't short-circuit on it — let Cinemeta's
+        # episode-level video data have the final say.
         season_episodes = sorted({
             _episode_number(video)
             for video in videos

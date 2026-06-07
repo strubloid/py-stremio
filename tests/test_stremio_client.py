@@ -103,7 +103,7 @@ def test_search_and_download_returns_successful_stream_addon_url(monkeypatch, tm
         StreamInfo(
             name="Comet 1080p",
             url="https://dl.test/episode.mp4",
-            title="Bob.S13E13",
+            title="Bob's.Burgers.S13E13",
             addon_name="Comet",
             addon_url="https://comet.feels.legal",
         ),
@@ -133,8 +133,8 @@ def test_search_and_download_returns_successful_stream_addon_url(monkeypatch, tm
 
 def test_search_and_download_marks_all_invalid_video_streams_permanent(monkeypatch, tmp_path):
     streams = [
-        StreamInfo(name="Comet 1080p", url="https://dl.test/error1.mp4", title="Bob.S13E13"),
-        StreamInfo(name="Torrentio 720p", url="https://dl.test/error2.mp4", title="Bob.S13E13"),
+        StreamInfo(name="Comet 1080p", url="https://dl.test/error1.mp4", title="Bob's.Burgers.S13E13"),
+        StreamInfo(name="Torrentio 720p", url="https://dl.test/error2.mp4", title="Bob's.Burgers.S13E13"),
     ]
 
     monkeypatch.setattr(stremio_client, "_resolve_imdb_id", lambda title, imdb_id, season: "tt123")
@@ -167,14 +167,14 @@ def test_search_and_download_falls_back_to_remaining_addons_when_cached_server_f
     cached_stream = StreamInfo(
         name="Cached 1080p",
         url="https://cached.test/error.mp4",
-        title="Bob.S13E13",
+        title="Bob's.Burgers.S13E13",
         addon_name="CachedAddon",
         addon_url="https://cached-addon",
     )
     fallback_stream = StreamInfo(
         name="Fallback 1080p",
         url="https://fallback.test/episode.mp4",
-        title="Bob.S13E13",
+        title="Bob's.Burgers.S13E13",
         addon_name="FallbackAddon",
         addon_url="https://fallback-addon",
     )

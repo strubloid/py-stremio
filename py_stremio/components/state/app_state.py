@@ -11,6 +11,7 @@ class DownloadRecord:
     filename: str
     quality: str
     provider: str
+    addon_url: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     attempts: int = 1
 
@@ -23,13 +24,19 @@ class DownloadState:
     total_downloaded: int = 0
     failed_items: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    def add_download(self, filename: str, quality: str, provider: str):
+    def add_download(self, filename: str, quality: str, provider: str, addon_url: str = ""):
         self.items[filename] = DownloadRecord(
             filename=filename,
             quality=quality,
             provider=provider,
+            addon_url=addon_url,
         )
         self.total_downloaded += 1
+
+    def get_addon_url(self, filename: str) -> str:
+        if filename in self.items:
+            return self.items[filename].addon_url
+        return ""
 
     def mark_failed(self, item_key: str, error: str, attempt: int):
         self.failed_items[item_key] = {

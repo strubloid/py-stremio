@@ -152,17 +152,37 @@ def _filter_streams_by_title(
     title: str | None = None,
 ) -> list:
     """Filter streams that don't match the expected show title.
-    
-    Streams whose release name doesn't contain the show title are warned
-    but NOT removed — this avoids false negatives from abbreviated names.
-    A warning is printed so the user can spot the issue."""
-    filtered = []
+
+    Streams whose release name doesn't contain the show title are removed
+    so they are never tried while legitimate title-matched streams exist.
+
+    When NO streams match the title, the addon returned content for a
+    different show — return empty so the caller tries a different addon
+    rather than downloading wrong content (e.g. South Park when
+    searching for One Piece).
+    """
+    if not title:
+        return streams
+
+    matched = []
+    unmatched = []
     for stream in streams:
-        if not _matches_show_title(stream, title):
+        if _matches_show_title(stream, title):
+            matched.append(stream)
+        else:
             short = (stream.title or stream.name or "")[:80].replace("\n", " ")
             print(f"    ⚠ Stream title doesn't match \"{title}\": {short}")
-        filtered.append(stream)
-    return filtered
+            unmatched.append(stream)
+
+    if not matched:
+        if unmatched:
+            print(f"    → No title-matched streams ({len(unmatched)} return from addon "
+                  f"belongs to a different show) — skipping addon")
+        return []  # Don't download content from a different show
+
+    if unmatched:
+        print(f"    → {len(matched)} title-matched, {len(unmatched)} non-matching (dropped)")
+    return matched
 
 
 def _filter_streams_by_target_episode(

@@ -1,4 +1,5 @@
 """Tests for compact report formatting."""
+import re
 from py_stremio.components.reports import report as report_module
 from py_stremio.components.reports.report import (
     ReportData,
@@ -6,6 +7,11 @@ from py_stremio.components.reports.report import (
     print_and_send_report,
     send_email_report,
 )
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences for text-level assertions."""
+    return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
 def _report_data() -> ReportData:
@@ -29,10 +35,9 @@ def _report_data() -> ReportData:
     )
 
 
-def test_terminal_report_is_compact_and_limits_failure_details():
+def test_terminal_report_is_compact_and_shows_summary():
     report = _report_data()
-
-    output = format_terminal_report(report)
+    output = _strip_ansi(format_terminal_report(report))
 
     assert "Py-Stremio" in output
     assert "18 failed" in output
@@ -40,6 +45,7 @@ def test_terminal_report_is_compact_and_limits_failure_details():
     assert "10 failed" in output
     assert "4: failed" not in output
     assert "Detail" in output
+    assert "Summary" in output
 
 
 def test_send_email_report_requires_core_smtp_settings(monkeypatch):
@@ -99,5 +105,6 @@ def test_print_and_send_report_sends_email(monkeypatch, capsys):
     data = _report_data()
     print_and_send_report(data)
 
-    assert "Py-Stremio" in capsys.readouterr().out
+    output = _strip_ansi(capsys.readouterr().out)
+    assert "Py-Stremio" in output
     assert calls == [data]
