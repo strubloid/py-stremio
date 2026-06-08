@@ -116,20 +116,25 @@ def format_terminal_report(data: ReportData) -> str:
     status_icon = _c("✓", GREEN) if data.total_failed == 0 else _c("✗", RED)
     status_label = "OK" if data.total_failed == 0 else "FAILURES"
 
+    # ── Summary header (dynamic width) ──────────────────────────────────
+    header_content = (
+        f"  {mode:<5} · {data.timestamp}  "
+        f"{_c(str(data.total_folders), ACCENT)} folders  "
+        f"{_c(str(data.total_downloaded), GREEN)} new  "
+        f"{_c(str(data.total_failed), RED if data.total_failed else DIM)} failed  "
+        f"{status_icon} {status_label}"
+    )
+    summary_width = max(len(data.timestamp) + 22, 40)
+    pad = 2
+    total_width = summary_width + pad * 2
+
     lines = [
         "",
         _c("  ╭─ Py-Stremio Summary ", ACCENT)
-        + _c("─" * 45, DIM)
+        + _c("─" * (total_width - 21), DIM)
         + _c("╮", ACCENT),
-        _c(
-            f"  │  {mode:<5} · {data.timestamp}  "
-            f"{_c(str(data.total_folders), ACCENT)} folders  "
-            f"{_c(str(data.total_downloaded), GREEN)} new  "
-            f"{_c(str(data.total_failed), RED if data.total_failed else DIM)} failed  "
-            f"{status_icon} {status_label}",
-            ACCENT,
-        ),
-        _c("  ╰" + "─" * 58 + "╯", ACCENT),
+        _c(f"  │ {header_content:<{summary_width}} │", ACCENT),
+        _c("  ╰" + "─" * total_width + "╯", ACCENT),
     ]
 
     # Group entries by series (for series type) / stand-alone for movies
@@ -149,21 +154,21 @@ def format_terminal_report(data: ReportData) -> str:
 
     # Build per-folder rows
     table_rows: list[list[str]] = []
-    first_group = True
+    separators_after: set[int] = set()
 
+    row_idx = 0
     for series_name, entries in series_groups.items():
-        if not first_group:
-            table_rows.append([_c("─" * 20, DIM), _c("─" * 8, DIM), _c("──", DIM), _c("─" * 16, DIM), _c("─" * 8, DIM)])
-        first_group = False
-
         for i, entry in enumerate(entries):
             folder_name = entry.get("name", "?")
             dl_count = _folder_count(entry, "downloaded")
             detail = _detail_label(entry)
-            type_label = _c("series", DIM) if i == 0 else ""
+            type_label = _c("series", DIM)
 
-            # Show series name only on first row of the group
-            name_label = _c(series_name, ACCENT) if i == 0 else ""
+            # Series name on first row (accent), dimmed on sub-rows
+            if i == 0:
+                name_label = _c(series_name, ACCENT)
+            else:
+                name_label = _c(series_name, DIM)
 
             table_rows.append([
                 name_label,
@@ -172,6 +177,11 @@ def format_terminal_report(data: ReportData) -> str:
                 detail,
                 type_label,
             ])
+            row_idx += 1
+
+        # Add separator after this group (if more groups follow)
+        if row_idx < sum(len(e) for e in series_groups.values()):
+            separators_after.add(row_idx - 1)
 
     for entry in movie_entries:
         name = entry.get("name", "?")
@@ -191,6 +201,7 @@ def format_terminal_report(data: ReportData) -> str:
             ["Series / Movie", "Folder", "DL'd", "Detail", "Type"],
             table_rows,
             colors=[ACCENT, GREEN, GREEN, GREEN, DIM],
+            separators_after=separators_after,
         ))
 
     # Compact per-series summary

@@ -64,9 +64,9 @@ def _update_disabled_servers(
     """
     new_disabled: list[str] = []
     for filename, record in state.items.items():
-        if not record.addon_url:  # server not recorded
+        if not record.server and not record.addon_url:  # server not recorded
             continue
-        server_url = record.addon_url
+        server_url = record.server or record.addon_url
         file_path = folder_path / filename
         if not file_path.exists():
             new_disabled.append(server_url)
@@ -321,7 +321,7 @@ def process_season_folder(
         bad_servers: list[str] = []
         for state_key in (generated_filename, legacy_key):
             if state.is_downloaded(state_key):
-                previous_url = state.get_addon_url(state_key)
+                previous_url = state.get_server(state_key)
                 if previous_url:
                     bad_servers.append(previous_url)
         # Persist bad servers to disabled_servers so they never get re-queried
@@ -376,8 +376,9 @@ def process_season_folder(
         nonlocal downloaded, failed, servers, verified_servers
         if result.get("success"):
             filename = Path(result.get("filename", f"episode_{episode_num}.mkv")).name
-            addon_url = result.get("successful_url") or ""
-            state.add_download(filename, result.get("quality", quality), "stremio", addon_url)
+            server = result.get("successful_url") or ""
+            state.add_download(filename, result.get("quality", quality), "stremio", server=server)
+            save_state(folder_path, state)  # persist immediately after each download
             downloaded += 1
             successful_urls = _verified_urls_from_result(result)
             for successful_url in successful_urls:
@@ -535,8 +536,8 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
         successful_urls = _verified_urls_from_result(result)
         _save_verified_server_urls(config, config_path, successful_urls)
         filename = Path(result.get("filename", f"{title}.mkv")).name
-        addon_url = result.get("successful_url") or ""
-        state.add_download(filename, result.get("quality", quality), "stremio", addon_url)
+        server = result.get("successful_url") or ""
+        state.add_download(filename, result.get("quality", quality), "stremio", server=server)
         save_state(folder_path, state)
         return {"downloaded": 1, "skipped": 0}
 

@@ -12,6 +12,7 @@ class DownloadRecord:
     quality: str
     provider: str
     addon_url: str = ""
+    server: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     attempts: int = 1
 
@@ -24,12 +25,25 @@ class DownloadState:
     total_downloaded: int = 0
     failed_items: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    def add_download(self, filename: str, quality: str, provider: str, addon_url: str = ""):
+    def add_download(self, filename: str, quality: str, provider: str,
+                     addon_url: str = "", server: str = "") -> None:
+        """Record a successful download.
+
+        `server` is the addon URL that actually served the stream (the same
+        data that used to live in `addon_url`).  Both fields are kept for
+        backward compatibility so old state files continue to work.
+        """
+        if server and not addon_url:
+            addon_url = server
+        elif addon_url and not server:
+            server = addon_url
         self.items[filename] = DownloadRecord(
             filename=filename,
             quality=quality,
             provider=provider,
             addon_url=addon_url,
+            server=server,
+            timestamp=datetime.now().isoformat(),
         )
         self.total_downloaded += 1
 
@@ -37,6 +51,13 @@ class DownloadState:
         if filename in self.items:
             return self.items[filename].addon_url
         return ""
+
+    def get_server(self, filename: str) -> str:
+        """Return the addon URL that served this file, or fallback to addon_url."""
+        if filename not in self.items:
+            return ""
+        record = self.items[filename]
+        return record.server or record.addon_url
 
     def mark_failed(self, item_key: str, error: str, attempt: int):
         self.failed_items[item_key] = {
@@ -63,6 +84,10 @@ def load_state(folder_path: Path) -> DownloadState:
         data = json.load(f)
     items = {}
     for filename, record_data in data.get("items", {}).items():
+        # Backward compatibility: old states only have addon_url.
+        # Populate server from addon_url if server is missing.
+        if "server" not in record_data and record_data.get("addon_url"):
+            record_data["server"] = record_data["addon_url"]
         items[filename] = DownloadRecord(**record_data)
     return DownloadState(
         folder_path=folder_path,

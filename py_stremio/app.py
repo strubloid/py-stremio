@@ -71,33 +71,28 @@ class AppService:
             speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else None
             max_workers = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
 
-        if "--scan" in args or action == "2":
+        if "--scan" in args or "--metadata" in args or "--config" in args or action == "2":
             self._banner()
-            self.scanner.run()
+            print(_c("\n📚 Update library", ACCENT))
+            folders = self.scanner.run()
+            self.metadata.run(folders=folders, quiet=False)
             print_error_summary()
             return
 
-        if "--metadata" in args or "--config" in args or action == "3":
-            self._banner()
-            print(_c("\n🧠 Metadata", ACCENT))
-            self.metadata.run(quiet=False)
-            print_error_summary()
-            return
-
-        if "--download" in args or action == "4":
+        if "--download" in args or action == "3":
             self._banner()
             self.downloader.run(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
             print_error_summary()
             return
 
-        if "--discover" in args or "--find-addons" in args or action == "5":
+        if "--discover" in args or "--find-addons" in args or action == "4":
             self._banner()
             print(_c("\n🔍 Addon Discovery", ACCENT))
             discover_new_addons()
             print_error_summary()
             return
 
-        if "--validate" in args or "--validate-addons" in args or action == "6":
+        if "--validate" in args or "--validate-addons" in args or action == "5":
             validate_and_update()
             print_error_summary()
             return
@@ -127,12 +122,12 @@ class AppService:
         """Run the standard scan → metadata → validate addons → optional download pipeline."""
         self._banner()
 
-        # 1. Scan folders
+        # 1. Scan folders (pass to metadata step to avoid re-scan)
         folders = self.scanner.run()
 
         # 2. Enrich metadata
         print(_c("\n🧠 Metadata", ACCENT))
-        self.metadata.run(quiet=False)
+        self.metadata.run(folders=folders, quiet=False)
 
         # 3. Validate addon URLs
         print(_c("\n🛠  Validate addon URLs", ACCENT))
@@ -152,37 +147,35 @@ class AppService:
         """Interactive terminal menu for py-stremio."""
         self._banner()
         self._menu()
-        choice = input(_c("Select 1-7 › ", ACCENT)).strip()
+        choice = input(_c("Select 1-6 › ", ACCENT)).strip()
 
         if choice == "1" or choice == "":
             max_workers = self._ask_download_threads()
             folders = self.scanner.run()
             print(_c("\n🧠 Metadata", ACCENT))
-            self.metadata.run(quiet=False)
+            self.metadata.run(folders=folders, quiet=False)
             self.downloader.run(folders, quiet=True, max_workers=max_workers)
 
         elif choice == "2":
-            self.scanner.run()
+            print(_c("\n📚 Update library", ACCENT))
+            folders = self.scanner.run()
+            self.metadata.run(folders=folders, quiet=False)
 
         elif choice == "3":
-            print(_c("\n🧠 Metadata", ACCENT))
-            self.metadata.run(quiet=False)
-
-        elif choice == "4":
             self.downloader.run(quiet=True, max_workers=self._ask_download_threads())
 
-        elif choice == "5":
+        elif choice == "4":
             print(_c("\n🔍 Addon Discovery", ACCENT))
             discover_new_addons()
 
-        elif choice == "6":
+        elif choice == "5":
             validate_and_update()
 
-        elif choice == "7":
+        elif choice == "6":
             print("Bye.")
 
         else:
-            print(_c("Unknown option. Choose 1-7.", RED))
+            print(_c("Unknown option. Choose 1-6.", RED))
 
     # ------------------------------------------------------------------
     # UI helpers
@@ -201,12 +194,11 @@ class AppService:
         print()
         print(_c("Choose a step", ACCENT))
         print("  1  ✨  Run: scan → metadata → download")
-        print("  2  🔎  Scan library")
-        print("  3  🧠  Refresh configs + metadata")
-        print("  4  ⬇   Download missing episodes/movies")
-        print("  5  🔍  Discover new addon URLs")
-        print("  6  🛠  Validate addon URLs")
-        print("  7  🚪  Exit")
+        print("  2  📚  Update library (configs)")
+        print("  3  ⬇   Download missing episodes/movies")
+        print("  4  🔍  Discover new addon URLs")
+        print("  5  🛠  Validate addon URLs")
+        print("  6  🚪  Exit")
 
     def _ask_download_threads(self) -> int:
         default = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))

@@ -1,5 +1,6 @@
 """MetadataService — enrich series folders with Cinemeta/IMDb metadata."""
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.configs.config_file import load_config
@@ -15,6 +16,9 @@ def _c(text: str, color: str) -> str:
     return f"{color}{text}{RESET}"
 
 
+_METADATA_WORKERS = 4
+
+
 class MetadataService:
     """Fetch and update IMDb IDs, episode counts, and titles for series folders."""
 
@@ -28,18 +32,34 @@ class MetadataService:
         updated = 0
         rows: list[list[str]] = []
 
-        for folder in folders:
-            if folder.folder_type != FolderType.SERIES:
-                continue
+        series_folders = [f for f in folders if f.folder_type == FolderType.SERIES]
 
-            try:
-                changed, status = self._update_folder_metadata(folder, quiet)
-                if changed:
-                    updated += 1
-                    if status:
-                        rows.append(status)
-            except Exception as e:
-                print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
+        if len(series_folders) > 1:
+            with ThreadPoolExecutor(max_workers=min(_METADATA_WORKERS, len(series_folders))) as executor:
+                future_map = {
+                    executor.submit(self._update_folder_metadata, folder, quiet): folder
+                    for folder in series_folders
+                }
+                for future in as_completed(future_map):
+                    folder = future_map[future]
+                    try:
+                        changed, status = future.result()
+                        if changed:
+                            updated += 1
+                            if status:
+                                rows.append(status)
+                    except Exception as e:
+                        print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
+        else:
+            for folder in series_folders:
+                try:
+                    changed, status = self._update_folder_metadata(folder, quiet)
+                    if changed:
+                        updated += 1
+                        if status:
+                            rows.append(status)
+                except Exception as e:
+                    print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
 
         if not quiet and rows:
             print()

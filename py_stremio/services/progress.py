@@ -1,9 +1,15 @@
 """Progress bar rendering for concurrent downloads."""
+import re
 import shutil
 import sys
 import threading
 import time
 from typing import Any
+
+
+def _display_len(text: str) -> int:
+    """Return visible character length, ignoring ANSI escape sequences."""
+    return len(re.sub(r"\033\[[0-9;]*m", "", text))
 
 
 def _c(text: str, color: str) -> str:
@@ -132,8 +138,13 @@ def build_table(
     headers: list[str],
     rows: list[list[str]],
     colors: list[str] | None = None,
+    separators_after: set[int] | None = None,
 ) -> str:
-    """Build a Unicode box-drawing table. Cols are auto-sized to content."""
+    """Build a Unicode box-drawing table. Cols are auto-sized to content.
+
+    `separators_after` is a set of row indices (0-based) after which a
+    horizontal rule (`├─┼─┤`) will be drawn -- useful for grouping rows.
+    """
     if not headers:
         return ""
     col_count = len(headers)
@@ -144,10 +155,10 @@ def build_table(
         padded = list(row) + [""] * (col_count - len(row))
         _rows.append(padded[:col_count])
 
-    widths = [len(h) for h in headers]
+    widths = [_display_len(h) for h in headers]
     for row in _rows:
         for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(cell))
+            widths[i] = max(widths[i], _display_len(cell))
 
     pad = 2  # one space each side
     col_widths = [w + pad for w in widths]
@@ -176,6 +187,8 @@ def build_table(
     for ri in range(len(_rows)):
         row = _rows[ri]
         parts.append("│" + "│".join(_cell(ri, i) for i in range(col_count)) + "│")
+        if separators_after and ri in separators_after:
+            parts.append(_hline("├", "┼", "┤"))
     parts.append(_hline("╰", "┴", "╯"))
     return "\n".join(parts)
 

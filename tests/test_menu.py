@@ -2,7 +2,7 @@
 from py_stremio.components import application
 
 
-def test_menu_choice_two_scans_without_downloading(monkeypatch, capsys):
+def test_menu_choice_two_updates_library(monkeypatch, capsys):
     calls = []
 
     monkeypatch.setattr("builtins.input", lambda _: "2")
@@ -10,14 +10,18 @@ def test_menu_choice_two_scans_without_downloading(monkeypatch, capsys):
         "py_stremio.services.scanner.ScanService.run",
         lambda self: calls.append("scan") or [],
     )
+    monkeypatch.setattr(
+        "py_stremio.services.metadata.MetadataService.run",
+        lambda self, quiet=False, **kwargs: calls.append("metadata"),
+    )
 
     application.run_menu()
 
-    assert calls == ["scan"]
+    assert calls == ["scan", "metadata"]
     output = capsys.readouterr().out
     assert "Py-Stremio" in output
     assert "2" in output
-    assert "Scan library" in output
+    assert "Update library" in output
 
 
 def test_menu_choice_one_runs_ordered_scan_metadata_download(monkeypatch):
@@ -32,7 +36,7 @@ def test_menu_choice_one_runs_ordered_scan_metadata_download(monkeypatch):
     )
     monkeypatch.setattr(
         "py_stremio.services.metadata.MetadataService.run",
-        lambda self, quiet=False: calls.append("metadata"),
+        lambda self, quiet=False, **kwargs: calls.append("metadata"),
     )
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
