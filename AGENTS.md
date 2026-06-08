@@ -21,89 +21,121 @@ py-stremio/
 ├── project.md                         # Technical documentation
 ├── AGENTS.md                          # This file - agent context
 ├── addons.txt                         # Custom addon URLs (optional)
-├── py_stremio/                        # Package
-│   ├── __init__.py                    # Public exports (Settings, settings)
-│   ├── main.py                        # Entry: delegates to app.AppService
+├── py_stremio/                        # Package root
+│   ├── __init__.py                    # Public exports
+│   ├── main.py                        # CLI entry point
 │   ├── app.py                         # AppService — single orchestrator (run, run_menu, run_pipeline)
-│   └── components/                    # All logic lives here
-│       ├── __init__.py
-│       ├── application.py             # Compat shim re-exporting settings/services (kept for test backward compat)
-│       ├── settings.py                # Dataclass-based Settings from .env
-│       ├── scanner.py                 # Folder discovery (FolderType.SERIES / MOVIES)
-│       ├── config_file.py             # DownloadConfig + QualitySettings dataclasses
-│       ├── state.py                   # DownloadState (.download-state.json) management
-│       ├── media_files.py             # Video file detection, episode parsing helpers
-│       ├── utils.py                   # sanitize_filename, parse_episode_number, parse_season_from_folder
-│       ├── output.py                  # Thread-aware stdout filtering for parallel downloads
-│       ├── bandwidth.py               # BandwidthLimiter with per-second accounting window
-│       ├── download_processing.py     # Core logic: process_season_folder / process_movie_folder
-│       ├── download_manager.py        # CLI for legacy config/state-driven download path
-│       ├── download_discovery.py      # find_season_folders / find_movie_folders
-│       ├── downloader.py              # Legacy Downloader class with quality fallback
-│       ├── provider.py                # BaseProvider, RealDebrid, Mock, Fallback providers
-│       ├── series.py                  # Legacy series processing (uses old downloader)
-│       ├── movies.py                  # Legacy movie processing (uses old downloader)
-│       ├── stremio_client.py          # Facade: search_and_download (main download path)
-│       ├── stremio_addon_search.py    # Query addons for streams, search_all_addons
-│       ├── stremio_metadata.py        # Cinemeta metadata lookups, IMDb season dataset
-│       ├── stremio_ids.py             # Build Stremio identifiers from IMDB/title
-│       ├── stremio_urls.py            # Normalize / deduplicate manifest URLs
-│       ├── stremio_exporter.py        # Export addons from Stremio Desktop storage
-│       ├── stream_downloads.py        # Stream URL resolution, HTTP download with resume
-│       ├── real_debrid.py             # RealDebrid API: magnet → torrent → direct URL
-│       ├── report.py                  # Terminal + email report generation
-│       ├── error_logger.py            # Legacy error logger, now delegates to ErrorReporter
-│       ├── errors/                    # Error deduplication and reporting system
-│       │   ├── __init__.py            # Public API: report_error, print_error_summary
-│       │   ├── error_category.py      # ErrorCategory enum + normalize_error() classifier
-│       │   ├── error_entry.py         # ErrorEntry dataclass (one deduplicated error)
-│       │   ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
-│       │   └── error_reporter.py      # ErrorReporter singleton + redact_url helpers
-│       └── addons/                    # Stremio addon abstractions
-│           ├── __init__.py
-│           ├── base.py                # BaseAddon, HttpAddon, UrlAddon ABCs
-│           ├── addon.py               # Addon URL configuration registry (10 configurers)
-│           ├── addon_search_service.py # Concurrent addon stream search
-│           ├── addon_validator.py     # Validate addon URLs from addons.txt
-│           ├── factory.py             # AddonManager construction (types/ + addons.txt)
-│           ├── manager.py             # AddonManager: search addons for streams
-│           ├── models.py              # StreamInfo dataclass
-│           └── types/                 # One file per addon class, organized by category
-│               ├── __init__.py        # Re-exports all classes + configurers
-│               ├── addon_url_configurer.py  # Abstract URL configurer base
-│               ├── addon_registry.py  # AddonDef dataclass + dynamic class factory
-│               ├── builtin_addons.py  # Re-exports all addon classes by category
-│               ├── stremio.py         # Generic manifest URL handler
-│               ├── torrentio_family/   # 6 Torrentio variants + configurer
-│               ├── comet_family/       # 7 addons + 6 configurers + _comet_build.py
-│               ├── aggregators/        # 13 scrapers + configurer
-│               ├── anime/             # 7 anime addons + 2 configurers
-│               ├── iptv/              # 5 IPTV addons
-│               ├── regional/          # 9 regional addons
-│               └── misc/              # 4 miscellaneous addons
-│   ├── services/                      # Orchestration services (called by AppService)
+│   ├── services/                      # High-level orchestration services
 │   │   ├── __init__.py
 │   │   ├── scanner.py                 # ScanService — folder scanning + auto-create seasons
 │   │   ├── metadata.py                # MetadataService — Cinemeta/IMDb enrichment
 │   │   ├── download.py                # DownloadService — download orchestration + reporting
 │   │   └── progress.py                # ProgressRenderer — progress bars, colors, terminal
-│   └── components/                    # All logic lives here (old structure, kept)
+│   ├── utils/                         # Shared utilities
+│   │   ├── __init__.py
+│   │   ├── media.py                   # sanitize_filename, parse_episode_number, parse_season_from_folder
+│   │   ├── atomic_write.py            # Atomic file write operations
+│   │   └── cancellation.py            # Graceful shutdown handling
+│   └── components/                    # Domain-specific components
+│       ├── __init__.py
+│       ├── application.py             # Compat shim (backward compat for tests)
+│       ├── configs/                   # Configuration management
+│       │   ├── __init__.py
+│       │   ├── app_settings.py        # Settings dataclass from .env
+│       │   └── config_file.py         # DownloadConfig + QualitySettings
+│       ├── state/                     # State persistence
+│       │   ├── __init__.py
+│       │   └── app_state.py           # DownloadState (.download-state.json) management
+│       ├── library/                   # Media library scanning
+│       │   ├── __init__.py
+│       │   ├── library_scanner.py     # Scanner, FolderType, ScannedFolder
+│       │   ├── media_file.py          # Video file detection, episode parsing
+│       │   ├── series.py              # Legacy series processing
+│       │   └── movie.py               # Legacy movie processing
+│       ├── stremio/                   # Stremio API integration
+│       │   ├── __init__.py
+│       │   ├── stremio_client.py      # Facade: search_and_download
+│       │   ├── stremio_metadata.py    # Cinemeta metadata + IMDb season dataset
+│       │   ├── stremio_ids.py         # Build Stremio identifiers from IMDB/title
+│       │   └── stremio_url.py         # Normalize / deduplicate manifest URLs
+│       ├── download/                  # Download execution
+│       │   ├── __init__.py
+│       │   ├── processing.py          # Core logic: process_season_folder / process_movie_folder
+│       │   ├── stream_download.py     # Stream URL resolution, HTTP download with resume
+│       │   ├── bandwidth_service.py   # BandwidthLimiter with per-second accounting
+│       │   ├── discovery.py           # find_season_folders / find_movie_folders
+│       │   ├── downloader.py          # Legacy Downloader class with quality fallback
+│       │   └── provider.py            # BaseProvider, RealDebrid, Mock, Fallback providers
+│       ├── debrid/                    # Debrid service integration
+│       │   ├── __init__.py
+│       │   └── real_debrid_client.py  # RealDebrid API: magnet → torrent → direct URL
+│       ├── addons/                    # Stremio addon abstractions
+│       │   ├── __init__.py
+│       │   ├── base.py                # BaseAddon, HttpAddon, UrlAddon ABCs
+│       │   ├── addon.py               # Addon URL configuration registry (11 configurers)
+│       │   ├── addon_search_service.py # Concurrent addon stream search (preflight scan)
+│       │   ├── addon_validator.py     # Validate addon URLs from addons.txt
+│       │   ├── factory.py             # AddonManager construction (types/ + addons.txt)
+│       │   ├── manager.py             # AddonManager: search addons for streams
+│       │   ├── models.py              # StreamInfo dataclass
+│       │   └── types/                 # 64 addon classes, organized by category
+│       │       ├── __init__.py
+│       │       ├── addon_url_configurer.py  # Abstract URL configurer base
+│       │       ├── addon_registry.py  # AddonDef dataclass + dynamic class factory
+│       │       ├── builtin_addons.py  # Re-exports all addon classes by category
+│       │       ├── stremio.py         # Generic manifest URL handler (StremioAddonConfigurer)
+│       │       ├── torrentio_family/  # 7 Torrentio variants + configurer
+│       │       ├── comet_family/      # 7 addons + 6 configurers + _comet_build.py
+│       │       ├── aggregators/       # 19 scrapers + configurer
+│       │       ├── anime/             # 10 anime addons + 2 configurers
+│       │       ├── iptv/              # 6 IPTV addons
+│       │       ├── regional/          # 11 regional addons
+│       │       └── misc/              # 4 miscellaneous addons
+│       ├── collect/                   # Addon discovery/collection
+│       │   ├── __init__.py
+│       │   ├── discovery.py           # Main addon discovery orchestrator
+│       │   ├── sources.py             # Addon source scrapers
+│       │   ├── tester.py              # URL validation and testing
+│       │   └── merger.py              # Merge discovered addons with addons.txt
+│       ├── reports/                   # Reporting
+│       │   ├── __init__.py
+│       │   ├── report.py              # Terminal + email report generation
+│       │   └── output_writer.py       # Thread-aware stdout filtering
+│       └── errors/                    # Error deduplication and reporting
+│           ├── __init__.py            # Public API: report_error, print_error_summary
+│           ├── error_category.py      # ErrorCategory enum + normalize_error() classifier
+│           ├── error_entry.py         # ErrorEntry dataclass (one deduplicated error)
+│           ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
+│           ├── error_reporter.py      # ErrorReporter singleton + redact_url helpers
+│           └── error_logger.py        # Legacy error logger (backward compat)
+└── tests/                             # 27 test files, 317 tests
+    ├── test_addon_enabled.py
+    ├── test_addon_type_configurers.py
+    ├── test_addon_validator.py
+    ├── test_addons_stremio_file.py
     ├── test_application.py
+    ├── test_atomic_persistence.py
     ├── test_bandwidth.py
+    ├── test_collect_sources.py
     ├── test_config_file.py
     ├── test_download_processing.py
+    ├── test_error_reporting.py
     ├── test_media_files.py
     ├── test_menu.py
     ├── test_movies.py
+    ├── test_new_addons.py
     ├── test_progress_ui.py
     ├── test_quality_fallback.py
+    ├── test_refactor_paths.py
     ├── test_report.py
+    ├── test_root_addons_stremio.py
     ├── test_scanner.py
     ├── test_series.py
     ├── test_state.py
+    ├── test_stream_downloads.py
     ├── test_stremio_client.py
     ├── test_stremio_metadata.py
-    └── test_stream_downloads.py
+    └── test_stremio_urls.py
 ```
 
 ## Architecture — Two Processing Paths
@@ -111,23 +143,32 @@ py-stremio/
 The codebase has **two parallel processing paths**:
 
 ### 1. Modern Path (primary) — used by `py-stremio` CLI
-`main.py` → `application.py` → `download_processing.py`
+`main.py` → `app.py` (AppService) → `services/` → `components/`
 
 ```
-Scanner.scan()
-  → update_config_imdb_ids()   # Fetch Cinemeta/IMDb metadata
-  → download_folders()         # Process each folder
-    → process_season_folder()  # or process_movie_folder()
-      → load_config() / load_state()
-      → _missing_episodes()    # Determine what needs downloading
-      → search_and_download()  # Stremio addon stream search + HTTP download
-        → resolve IMDB ID via Cinemeta
-        → search_all_addons_for_streams()
-        → select_quality_streams()
-        → resolve_stream_download_url()
-        → download_stream_to_file()
-        → RealDebrid fallback if direct download fails
-      → save_state()
+AppService.run_pipeline()
+  → ScanService.run()
+    → Scanner.scan()          # library/library_scanner.py
+    → auto-create current-year season folders
+  → MetadataService.run()
+    → update_config_imdb_ids() # stremio/stremio_metadata.py
+    → repair_series_season_config()
+    → infer_next_episode_download()
+  → DownloadService.run()
+    → download_folders()       # download/processing.py
+      → process_season_folder() / process_movie_folder()
+        → load_config() / load_state()
+        → _missing_episodes()
+        → preflight_discover_working_addons() # addons/addon_search_service.py
+        → search_and_download() # stremio/stremio_client.py
+          → resolve IMDB ID via Cinemeta
+          → search_all_addons_for_streams()
+          → select_quality_streams()
+          → resolve_stream_download_url()
+          → download_stream_to_file() # download/stream_download.py
+          → RealDebrid fallback if direct download fails
+        → save_state()
+        → _remember_working_urls()
 ```
 
 - Queries Stremio addons directly (Torrentio, MediaFusion, ThePirateBay+, etc.)
@@ -137,7 +178,7 @@ Scanner.scan()
 - Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
 
 ### 2. Legacy Path (maintained)
-`download_manager.py` → `series.py` / `movies.py` → `provider.py`
+`download_manager.py` → `library/series.py` / `library/movies.py` → `download/provider.py`
 
 - Uses BaseProvider abstraction (RealDebridProvider, MockProvider, FallbackProvider)
 - Quality fallback via Downloader.plan_quality_fallback()
@@ -166,7 +207,7 @@ Uses regex patterns in `utils.parse_episode_number()`:
 
 ### Auto-Season Creation
 
-`_create_current_year_season_folders()` in `application.py`:
+`_create_current_year_season_folders()` in `services/scanner.py`:
 - Scans series with existing seasons
 - Checks Cinemeta + IMDb TSV dataset for current-year episodes
 - Creates season folders for new years automatically
@@ -184,9 +225,12 @@ Uses regex patterns in `utils.parse_episode_number()`:
 ### Addon Discovery Order
 
 ```
-1. Known working addon URLs from config.servers
-2. Built-in addons (52 classes in types/, organized by category — Torrentio, Comet, MediaFusion, etc. + Torrentio-PT if RD key present)
-3. Custom addons from addons.txt (if file exists)
+1. Preflight scan: when config.servers is empty and IMDB ID exists, run preflight_discover_working_addons()
+   - Queries ALL addons concurrently (10 at a time)
+   - Caches working URLs to config.servers after first successful download
+2. Known working addon URLs from config.servers (per-folder verified cache)
+3. Built-in addons (64 classes in types/, organized by category — Torrentio, Comet, MediaFusion, etc.)
+4. Custom addons from addons.txt (if file exists)
 ```
 
 ### Provider Selection (Legacy Path Only)
@@ -263,40 +307,43 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 
 ## Addon System
 
-- **52 built-in addon classes** in `components/addons/types/`, each class in its own file organized by category folder:
-  - `torrentio_family/` (6 variants: Torrentio, SortSeeders, Portuguese, Spanish, Hindi, Lite)
+- **64 built-in addon classes** in `components/addons/types/`, each class in its own file organized by category folder:
+  - `torrentio_family/` (7 variants: Torrentio, SortSeeders, Portuguese, Spanish, Hindi, Lite, TorrentsDB)
   - `comet_family/` (7: Comet, CometElfHosted, CometNet, HDHub, StremThru, BrazucaTorrents, Guindex)
-  - `aggregators/` (13: MediaFusion, KnightCrawler, EasyNews+, ThePirateBay+, Peerflix, Nucleus, etc.)
-  - `anime/` (7: Anime-Kitsu, Akuma, Animepahe, Animeo, OnePace, Hanime, Animes Season)
-  - `iptv/` (5: Skyflix, ArgentinaTV, GreekTV, XtreamPro, AIOStreaming)
-  - `regional/` (9: NoTorrent, LatinMovies, RicosStremio, FTV, FigaroCorso, Einthusan, etc.)
+  - `aggregators/` (19: MediaFusion, KnightCrawler, EasyNews+, ThePirateBay+, Peerflix, Nucleus, Orion, DebridSearch, Stremify, Jackettio, AIOStreams, CineTorrent, Torrin, FlixStreams, MyCine, NebulaStreams, StreamViX, VidFastPro, Ytztvio)
+  - `anime/` (10: Anime-Kitsu, Akuma, Animepahe, Animeo, OnePace, Hanime, Animes Season, AnimeStream, HiAnimeStreams, YaStream)
+  - `iptv/` (6: Skyflix, ArgentinaTV, GreekTV, XtreamPro, AIOStreaming, Watchio)
+  - `regional/` (11: NoTorrent, LatinMovies, RicosStremio, FTV, FigaroCorso, Einthusan, VStremio, Dubbindo, MaineLocalNews, FenixFlix, MicoLeaoDublado)
   - `misc/` (4: WatchHub, YouTubePro, FShare, Consumet)
-- **10 URL configurers** colocated with their addon families (in `addon.py` registry)
+- **11 URL configurers** colocated with their addon families (in `addon.py` registry)
 - **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
-- **Custom addons**: create `addons.txt` in project root with one URL per line (URLs replace built-ins entirely)
-- **Addon Discovery**: `py-stremio --discover` scrapes addon sources, tests URLs, and merges working ones into `addons.txt` (replaces the old `py-stremio-export`)
+- **Custom addons**: create `addons.txt` in project root with one URL per line (URLs augment built-ins)
+- **Addon Discovery**: `py-stremio --discover` scrapes addon sources, tests URLs, and merges working ones into `addons.txt`
+- **Preflight scan**: `preflight_discover_working_addons()` queries all addons concurrently on first run per folder to populate working server cache
 
 ## Important Files for Changes
 
 | Change | Files |
 |--------|-------|
-| Add new quality levels | `config_file.py` (QualitySettings), `stream_downloads.py` (select_quality_streams) |
-| Change folder structure | `scanner.py`, `download_discovery.py` |
+| Add new quality levels | `configs/config_file.py` (QualitySettings), `download/stream_download.py` (select_quality_streams) |
+| Change folder structure | `library/library_scanner.py`, `download/discovery.py` |
 | Add new addons | `types/<category>/<ClassName>.py` (class) + `types/addon_registry.py` (AddonDef) + `types/builtin_addons.py` (re-export) |
-| Modify addon search | `stremio_addon_search.py`, `addons/manager.py` |
-| Change download logic | `download_processing.py`, `stream_downloads.py` |
-| Change metadata lookup | `stremio_metadata.py` |
-| Modify state format | `state.py` |
-| Modify config format | `config_file.py` |
-| Modify report format | `report.py` |
-| Add new settings | `settings.py` |
-| Change episode detection | `utils.py` |
+| Modify addon search | `addons/addon_search_service.py`, `addons/manager.py` |
+| Change download logic | `download/processing.py`, `download/stream_download.py` |
+| Change metadata lookup | `stremio/stremio_metadata.py` |
+| Modify state format | `state/app_state.py` |
+| Modify config format | `configs/config_file.py` |
+| Modify report format | `reports/report.py` |
+| Add new settings | `configs/app_settings.py` |
+| Change episode detection | `utils/media.py`, `library/media_file.py` |
 | Add new error categories | `errors/error_category.py` (ErrorCategory enum, normalize_error) |
 | Modify error output format | `errors/error_reporter.py` (print_summary) |
 | Change URL redaction rules | `errors/error_reporter.py` (redact_url, _REDACT_PARAMS, _PATH_REDACTIONS) |
-| Add new provider | `provider.py` (legacy path) |
-| Modify progress UI | `application.py` (_progress_line, _make_progress_printer) |
-| Add bandwidth limits | `bandwidth.py` |
+| Add new provider | `download/provider.py` (legacy path) |
+| Modify progress UI | `services/progress.py` (_progress_line, _make_progress_printer) |
+| Add bandwidth limits | `download/bandwidth_service.py` |
+| Add addon discovery sources | `collect/sources.py` |
+| Modify addon URL merging | `collect/merger.py` |
 
 ## Testing Notes
 
@@ -306,7 +353,7 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 - Config tests verify default creation and loading
 - Download processing tests mock the Stremio client
 - **Monkeypatch caveat**: `from X import Y` in service modules creates a permanent local binding. When tests monkeypatch `X.Y`, the local binding in the service module is unaffected if the service was already imported by a prior test. Always also monkeypatch the local binding (`py_stremio.services.<name>.<function>`) in tests that need to mock functions imported via `from ... import` in service modules.
-- **Test status**: 288 tests, all passing (run `pytest tests/ -v`)
+- **Test status**: 317 tests across 27 files, all passing (run `pytest tests/ -v`)
 
 ## Current Status
 
