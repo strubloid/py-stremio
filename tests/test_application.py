@@ -377,3 +377,61 @@ def test_download_folders_starts_next_season_when_thread_capacity_exists(tmp_pat
     assert [kwargs["max_workers"] for kwargs in seen_kwargs] == [2, 2]
     assert seen_kwargs[0]["worker_semaphore"] is seen_kwargs[1]["worker_semaphore"]
     assert seen_kwargs[0]["worker_semaphore"] is not None
+
+
+def test_download_folders_ctrl_c_cancels_pending_workers_without_waiting(tmp_path, monkeypatch):
+    from py_stremio.services.download import DownloadService
+
+    folders = [
+        ScannedFolder(tmp_path / "series" / "Show" / "s01", FolderType.SERIES, tmp_path / "series", 1),
+        ScannedFolder(tmp_path / "series" / "Show" / "s02", FolderType.SERIES, tmp_path / "series", 2),
+    ]
+    shutdown_calls = []
+    cancelled = []
+
+    class FakeFuture:
+        def __init__(self, folder):
+            self.folder = folder
+
+        def result(self):
+            return self.folder, {"downloaded": [], "failed": [], "skipped": 0}
+
+        def cancel(self):
+            cancelled.append(self.folder.path.name)
+            return True
+
+    class FakeExecutor:
+        def __init__(self, max_workers):
+            self.max_workers = max_workers
+            self.futures = []
+
+        def submit(self, func, folder):
+            future = FakeFuture(folder)
+            self.futures.append(future)
+            return future
+
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            shutdown_calls.append((wait, cancel_futures))
+
+    executors = []
+
+    def fake_executor(max_workers):
+        executor = FakeExecutor(max_workers)
+        executors.append(executor)
+        return executor
+
+    def interrupting_as_completed(futures):
+        raise KeyboardInterrupt()
+        yield from ()
+
+    monkeypatch.setattr("py_stremio.services.download.ThreadPoolExecutor", fake_executor)
+    monkeypatch.setattr("py_stremio.services.download.as_completed", interrupting_as_completed)
+    monkeypatch.setattr("py_stremio.services.download.print_and_send_report", lambda report: None)
+
+    try:
+        DownloadService().run(folders, max_workers=2)
+    except KeyboardInterrupt:
+        pass
+
+    assert shutdown_calls == [(False, True)]
+    assert sorted(cancelled) == ["s01", "s02"]

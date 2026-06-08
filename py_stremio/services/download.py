@@ -18,6 +18,7 @@ from py_stremio.components.reports.report import ReportData, print_and_send_repo
 from py_stremio.services.progress import (
     ACCENT, GREEN, YELLOW, RED, DIM, RESET, build_table, make_progress_printer,
 )
+from py_stremio.utils.cancellation import clear_shutdown, request_shutdown, shutdown_executor_now, shutdown_requested
 
 
 def _c(text: str, color: str) -> str:
@@ -38,6 +39,7 @@ class DownloadService:
         speed_percent: int | None = None,
     ) -> ReportData:
         """Download missing items for folders and return a report."""
+        clear_shutdown()
         if folders is None:
             folders = self.scanner.scan()
 
@@ -131,30 +133,44 @@ class DownloadService:
                 "failed_count": failed_count,
             })
 
-        if max_workers > 1 and len(runnable) > 1:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(process_folder, folder) for folder in runnable]
-                for future in as_completed(futures):
-                    folder, result = future.result()
+        try:
+            if max_workers > 1 and len(runnable) > 1:
+                executor = ThreadPoolExecutor(max_workers=max_workers)
+                futures = []
+                try:
+                    futures = [executor.submit(process_folder, folder) for folder in runnable]
+                    for future in as_completed(futures):
+                        if shutdown_requested():
+                            break
+                        folder, result = future.result()
+                        record_result(folder, result)
+                except KeyboardInterrupt:
+                    request_shutdown()
+                    shutdown_executor_now(executor, futures)
+                    raise
+                else:
+                    executor.shutdown(wait=True)
+            else:
+                for folder in runnable:
+                    if shutdown_requested():
+                        break
+                    folder, result = process_folder(folder)
                     record_result(folder, result)
-        else:
-            for folder in runnable:
-                folder, result = process_folder(folder)
-                record_result(folder, result)
 
-        report = ReportData(
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            total_folders=len(folders),
-            processed_folders=processed,
-            skipped_folders=skipped,
-            total_downloaded=total_downloaded,
-            total_failed=total_failed,
-            folders=report_folders,
-            dry_run=settings.DRY_RUN,
-        )
-        print_and_send_report(report)
-        restore_thread_stdout_filter(restore_stdout)
-        return report
+            report = ReportData(
+                timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                total_folders=len(folders),
+                processed_folders=processed,
+                skipped_folders=skipped,
+                total_downloaded=total_downloaded,
+                total_failed=total_failed,
+                folders=report_folders,
+                dry_run=settings.DRY_RUN,
+            )
+            print_and_send_report(report)
+            return report
+        finally:
+            restore_thread_stdout_filter(restore_stdout)
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -4,6 +4,7 @@ import threading
 
 from .base import BaseAddon, UrlAddon
 from .models import StreamInfo
+from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
 
 SEARCH_CONCURRENCY = 10  # max parallel addon queries
 
@@ -64,12 +65,16 @@ class AddonManager:
         all_streams: list[StreamInfo] = []
         result_lock = threading.Lock()
 
-        with ThreadPoolExecutor(max_workers=SEARCH_CONCURRENCY) as executor:
+        executor = ThreadPoolExecutor(max_workers=SEARCH_CONCURRENCY)
+        futures = {}
+        try:
             futures = {
                 executor.submit(self._try_addon, addon, type_, id_): addon
                 for addon in self.addons
             }
             for future in as_completed(futures):
+                if shutdown_requested():
+                    break
                 done_count += 1
                 char = next(spinner)
                 sys.stdout.write(f"\r    {char} Searching addons ({done_count}/{total})")
@@ -95,6 +100,12 @@ class AddonManager:
                         all_streams.extend(streams)
                         if addon_url and addon_url not in working_addon_urls:
                             working_addon_urls.append(addon_url)
+        except KeyboardInterrupt:
+            request_shutdown()
+            shutdown_executor_now(executor, futures.keys())
+            raise
+        else:
+            executor.shutdown(wait=True)
 
         # Clear spinner line
         print()

@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from py_stremio.utils.atomic_write import atomic_write_text
+
 SECTIONS = {
     "TORRENT / DEBRID": [],
     "FREE HOSTERS / DIRECT STREAMS": [],
@@ -226,9 +228,8 @@ def merge_new_addons(
     new_lines.append(f"# Total commented (dead): {dead_count}")
     new_lines.append(f"# Grand total lines: {len(new_lines)}")
 
-    # Write
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(new_lines) + "\n")
+    # Write atomically so addon discovery cannot leave addons.txt truncated.
+    atomic_write_text(path, "\n".join(new_lines) + "\n")
 
     if verbose:
         print(

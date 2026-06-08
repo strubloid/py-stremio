@@ -15,6 +15,8 @@ import httpx
 
 from .base import UrlAddon
 from py_stremio.components.configs.app_settings import settings
+from py_stremio.utils.atomic_write import atomic_write_text
+from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
 
 # ── Test target ──────────────────────────────────────────────────────────
 # Game of Thrones S01E01 — almost universally available across addons
@@ -156,12 +158,16 @@ def validate_all_addons(
 
     print(f"    Testing {total} addon URLs...", end="", flush=True)
 
-    with ThreadPoolExecutor(max_workers=VALIDATION_CONCURRENCY) as executor:
+    executor = ThreadPoolExecutor(max_workers=VALIDATION_CONCURRENCY)
+    futures = {}
+    try:
         futures = {
             executor.submit(check_addon_url, url, api_key): (lineno, url, orig_line)
             for url, lineno, orig_line in candidates
         }
         for future in as_completed(futures):
+            if shutdown_requested():
+                break
             done_count += 1
             char = next(spinner)
             sys.stdout.write(f"\r    {char} Testing addons ({done_count}/{total})")
@@ -183,6 +189,12 @@ def validate_all_addons(
                 working.append(url)
             else:
                 failed.append(url)
+    except KeyboardInterrupt:
+        request_shutdown()
+        shutdown_executor_now(executor, futures.keys())
+        raise
+    else:
+        executor.shutdown(wait=True)
 
     # Clear the spinner line
     print()
@@ -229,8 +241,7 @@ def update_addons_file(
             new_lines.append(line)
 
     if changes:
-        with open(filepath, "w") as f:
-            f.writelines(new_lines)
+        atomic_write_text(filepath, "".join(new_lines))
 
     return changes
 

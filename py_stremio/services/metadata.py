@@ -1,5 +1,4 @@
 """MetadataService — enrich series folders with Cinemeta/IMDb metadata."""
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from py_stremio.components.configs.app_settings import settings
@@ -10,6 +9,8 @@ from py_stremio.components.stremio.stremio_client import get_series_imdb_id
 from py_stremio.components.stremio.stremio_metadata import get_series_metadata
 from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, RESET, build_table
 from py_stremio.utils.media import parse_season_from_folder
+from py_stremio.utils.atomic_write import atomic_write_json
+from py_stremio.utils.cancellation import clear_shutdown, request_shutdown, shutdown_executor_now, shutdown_requested
 
 
 def _c(text: str, color: str) -> str:
@@ -27,6 +28,7 @@ class MetadataService:
 
     def run(self, folders: list | None = None, quiet: bool = False) -> int:
         """Update metadata for all series folders. Returns number of configs updated."""
+        clear_shutdown()
         if folders is None:
             folders = self.scanner.scan()
         updated = 0
@@ -35,12 +37,16 @@ class MetadataService:
         series_folders = [f for f in folders if f.folder_type == FolderType.SERIES]
 
         if len(series_folders) > 1:
-            with ThreadPoolExecutor(max_workers=min(_METADATA_WORKERS, len(series_folders))) as executor:
+            executor = ThreadPoolExecutor(max_workers=min(_METADATA_WORKERS, len(series_folders)))
+            future_map = {}
+            try:
                 future_map = {
                     executor.submit(self._update_folder_metadata, folder, quiet): folder
                     for folder in series_folders
                 }
                 for future in as_completed(future_map):
+                    if shutdown_requested():
+                        break
                     folder = future_map[future]
                     try:
                         changed, status = future.result()
@@ -50,8 +56,16 @@ class MetadataService:
                                 rows.append(status)
                     except Exception as e:
                         print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
+            except KeyboardInterrupt:
+                request_shutdown()
+                shutdown_executor_now(executor, future_map.keys())
+                raise
+            else:
+                executor.shutdown(wait=True)
         else:
             for folder in series_folders:
+                if shutdown_requested():
+                    break
                 try:
                     changed, status = self._update_folder_metadata(folder, quiet)
                     if changed:
@@ -180,7 +194,6 @@ class MetadataService:
             changed = True
 
         if changed:
-            with open(config_path, "w") as f:
-                json.dump(config, f, indent=2)
+            atomic_write_json(config_path, config, indent=2)
 
         return changed, status_row

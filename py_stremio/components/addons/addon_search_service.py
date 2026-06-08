@@ -8,6 +8,7 @@ from py_stremio.components.addons.base import BaseAddon
 from py_stremio.components.addons.models import StreamInfo
 from py_stremio.components.addons.manager import SEARCH_CONCURRENCY
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
+from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
 
 
 def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[StreamInfo]:
@@ -163,9 +164,11 @@ def preflight_discover_working_addons(
     alive: list[str] = []
     result_lock = threading.Lock()
 
-    with concurrent.futures.ThreadPoolExecutor(
+    executor = concurrent.futures.ThreadPoolExecutor(
         max_workers=SEARCH_CONCURRENCY
-    ) as executor:
+    )
+    futures = {}
+    try:
 
         def _try_one(addon: BaseAddon) -> tuple[str, bool]:
             try:
@@ -186,6 +189,8 @@ def preflight_discover_working_addons(
 
         done_count = 0
         for future in concurrent.futures.as_completed(futures):
+            if shutdown_requested():
+                break
             done_count += 1
             addon = futures[future]
             try:
@@ -207,6 +212,12 @@ def preflight_discover_working_addons(
                 status += f" — {len(alive)} working addons found"
             sys.stdout.write(f"\r    {status}")
             sys.stdout.flush()
+    except KeyboardInterrupt:
+        request_shutdown()
+        shutdown_executor_now(executor, futures.keys())
+        raise
+    else:
+        executor.shutdown(wait=True)
 
     print()
     if alive:

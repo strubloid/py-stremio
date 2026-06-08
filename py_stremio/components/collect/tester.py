@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
+
 _HDR = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) "
@@ -81,10 +83,16 @@ def test_urls(
     dead: list[str] = []
 
     for i in range(0, len(urls), 20):
+        if shutdown_requested():
+            break
         chunk = urls[i : i + 20]
-        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        ex = ThreadPoolExecutor(max_workers=max_workers)
+        fut_map = {}
+        try:
             fut_map = {ex.submit(_test_single_url, u): u for u in chunk}
             for f in as_completed(fut_map):
+                if shutdown_requested():
+                    break
                 url = fut_map[f]
                 try:
                     ok, name = f.result(timeout=10)
@@ -94,6 +102,12 @@ def test_urls(
                         dead.append(url)
                 except Exception:
                     dead.append(url)
+        except KeyboardInterrupt:
+            request_shutdown()
+            shutdown_executor_now(ex, fut_map.keys())
+            raise
+        else:
+            ex.shutdown(wait=True)
 
         if verbose and len(urls) >= 15:
             pct = min(100, (i + 20) * 100 // len(urls))

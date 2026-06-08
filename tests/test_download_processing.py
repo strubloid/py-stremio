@@ -3,12 +3,26 @@ import json
 from types import SimpleNamespace
 
 from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings, save_config
-from py_stremio.components.download.processing import process_season_folder
+from py_stremio.components.download.processing import process_season_folder, _set_current_episode
 from py_stremio.components.reports.output_writer import install_thread_stdout_filter, restore_thread_stdout_filter
 
 
 def _download_settings():
     return SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=0)
+
+
+def test_set_current_episode_skips_disk_write_when_value_unchanged(tmp_path, monkeypatch):
+    config = DownloadConfig(type="series", current_episode_download=3)
+    calls = []
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.save_config",
+        lambda config_path, saved_config: calls.append((config_path, saved_config.current_episode_download)),
+    )
+
+    _set_current_episode(config, tmp_path / "download-config.json", 3)
+
+    assert calls == []
 
 
 def test_process_season_folder_downloads_all_missing_episodes_by_default(tmp_path, monkeypatch):

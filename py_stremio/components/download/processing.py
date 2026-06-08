@@ -11,6 +11,7 @@ from py_stremio.components.reports.output_writer import suppress_current_thread_
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.state.app_state import load_state, save_state
 from py_stremio.components.stremio.stremio_client import search_and_download
+from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
 from py_stremio.components.download.stream_download import build_media_filename
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
 from py_stremio.components.addons.addon_search_service import preflight_discover_working_addons
@@ -112,7 +113,10 @@ def _preferred_languages(config) -> list[str] | None:
 
 
 def _set_current_episode(config, config_path: Path, episode: int) -> None:
-    config.current_episode_download = max(1, episode)
+    next_episode = max(1, episode)
+    if config.current_episode_download == next_episode:
+        return
+    config.current_episode_download = next_episode
     save_config(config_path, config)
 
 
@@ -267,6 +271,7 @@ def process_season_folder(
     failed = 0
     verified_servers: list[str] = []
     servers_lock = threading.Lock()
+    config_lock = threading.Lock()
     progress_lock = threading.Lock()
     total_missing = len(missing)
 
@@ -326,10 +331,11 @@ def process_season_folder(
                     bad_servers.append(previous_url)
         # Persist bad servers to disabled_servers so they never get re-queried
         if bad_servers:
-            new_disabled = unique_manifest_urls(bad_servers + config.disabled_servers)
-            if new_disabled != unique_manifest_urls(config.disabled_servers):
-                config.disabled_servers = new_disabled
-                save_config(config_path, config)
+            with config_lock:
+                new_disabled = unique_manifest_urls(bad_servers + config.disabled_servers)
+                if new_disabled != unique_manifest_urls(config.disabled_servers):
+                    config.disabled_servers = new_disabled
+                    save_config(config_path, config)
         with servers_lock:
             active_servers = [s for s in servers if s not in bad_servers]
         if bad_servers:
@@ -404,17 +410,22 @@ def process_season_folder(
     if max_workers > 1 and total_missing > 1:
         # Parallel with retry rounds — try failed episodes again in subsequent rounds
         for round_num in range(max_attempts):
-            if not queue:
+            if shutdown_requested() or not queue:
                 break
             round_items = list(queue)
             queue.clear()
             print(f"  Round {round_num + 1}: {len(round_items)} episodes")
-            with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
-                futures = {
-                    executor.submit(_download_episode_with_slot, idx, ep_num): ep_num
+            executor = ThreadPoolExecutor(max_workers=max(1, max_workers))
+            futures = []
+            try:
+                futures = [
+                    executor.submit(_download_episode_with_slot, idx, ep_num)
                     for idx, ep_num in enumerate(round_items, start=1)
-                }
-                for future in as_completed(futures):
+                ]
+                future_map = {future: ep_num for future, ep_num in zip(futures, round_items)}
+                for future in as_completed(future_map):
+                    if shutdown_requested():
+                        break
                     item = future.result()
                     if item["result"].get("success"):
                         apply_result(item["episode"], item["result"], completed_successes)
@@ -422,12 +433,18 @@ def process_season_folder(
                         apply_result(item["episode"], item["result"])
                     else:
                         queue.append(item["episode"])
+            except KeyboardInterrupt:
+                request_shutdown()
+                shutdown_executor_now(executor, futures)
+                raise
+            else:
+                executor.shutdown(wait=True)
             if queue:
                 print(f"  -> {len(queue)} episodes deferred to next round")
     else:
         # Sequential with retry rounds
         for round_num in range(max_attempts):
-            if not queue:
+            if shutdown_requested() or not queue:
                 break
             round_items = list(queue)
             queue.clear()

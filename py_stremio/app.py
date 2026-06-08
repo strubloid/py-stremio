@@ -19,6 +19,7 @@ from py_stremio.services.download import DownloadService
 from py_stremio.services.metadata import MetadataService
 from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, RESET
 from py_stremio.services.scanner import ScanService
+from py_stremio.utils.cancellation import clear_shutdown, request_shutdown
 
 
 def _c(text: str, color: str) -> str:
@@ -59,6 +60,13 @@ class AppService:
         Interactive terminals show a menu. Non-interactive runs keep the historical
         scan → metadata → download behavior so tests/scripts do not block on input.
         """
+        clear_shutdown()
+        try:
+            return self._run(interactive=interactive)
+        except KeyboardInterrupt:
+            self._interrupted()
+
+    def _run(self, interactive: bool | None = None) -> None:
         raw_args = sys.argv[1:]
         args = set(raw_args)
         positional = [arg for arg in raw_args if not arg.startswith("--")]
@@ -120,17 +128,32 @@ class AppService:
         speed_percent: int | None = None,
     ) -> None:
         """Run the standard scan → metadata → validate addons → optional download pipeline."""
+        clear_shutdown()
+        try:
+            self._run_pipeline(download=download, quiet=quiet, max_workers=max_workers, speed_percent=speed_percent)
+        except KeyboardInterrupt:
+            self._interrupted()
+
+    def _run_pipeline(
+        self,
+        download: bool = True,
+        quiet: bool = True,
+        max_workers: int = 1,
+        speed_percent: int | None = None,
+    ) -> None:
         self._banner()
 
         # 1. Scan folders (pass to metadata step to avoid re-scan)
+        self._phase("\n🔎 Scan", "checking folders and current-year seasons...")
         folders = self.scanner.run()
+        self._phase("", f"found {len(folders)} managed folder(s)")
 
         # 2. Enrich metadata
-        print(_c("\n🧠 Metadata", ACCENT))
+        self._phase("\n🧠 Metadata", "refreshing configs...")
         self.metadata.run(folders=folders, quiet=False)
 
         # 3. Validate addon URLs
-        print(_c("\n🛠  Validate addon URLs", ACCENT))
+        self._phase("\n🛠  Validate addon URLs", "testing addons before download...")
         validate_and_update()
 
         # 4. Download missing items
@@ -145,15 +168,25 @@ class AppService:
 
     def run_menu(self) -> None:
         """Interactive terminal menu for py-stremio."""
+        clear_shutdown()
+        try:
+            self._run_menu()
+        except KeyboardInterrupt:
+            self._interrupted()
+
+    def _run_menu(self) -> None:
         self._banner()
         self._menu()
         choice = input(_c("Select 1-6 › ", ACCENT)).strip()
 
         if choice == "1" or choice == "":
             max_workers = self._ask_download_threads()
+            self._phase("\n🔎 Scan", "checking folders and current-year seasons...")
             folders = self.scanner.run()
-            print(_c("\n🧠 Metadata", ACCENT))
+            self._phase("", f"found {len(folders)} managed folder(s)")
+            self._phase("\n🧠 Metadata", "refreshing configs...")
             self.metadata.run(folders=folders, quiet=False)
+            self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s)...")
             self.downloader.run(folders, quiet=True, max_workers=max_workers)
 
         elif choice == "2":
@@ -199,6 +232,16 @@ class AppService:
         print("  4  🔍  Discover new addon URLs")
         print("  5  🛠  Validate addon URLs")
         print("  6  🚪  Exit")
+
+    def _phase(self, title: str, detail: str | None = None) -> None:
+        if title:
+            print(_c(title, ACCENT), flush=True)
+        if detail:
+            print(f"  {detail}", flush=True)
+
+    def _interrupted(self) -> None:
+        request_shutdown()
+        print(_c("\nInterrupted — shutting down workers and exiting.", YELLOW), flush=True)
 
     def _ask_download_threads(self) -> int:
         default = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))

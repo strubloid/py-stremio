@@ -5,6 +5,8 @@ from datetime import datetime
 import json
 from typing import Any
 
+from py_stremio.utils.atomic_write import atomic_write_json
+
 
 @dataclass
 class DownloadRecord:
@@ -107,5 +109,4 @@ def save_state(folder_path: Path, state: DownloadState) -> None:
         "total_downloaded": state.total_downloaded,
         "failed_items": state.failed_items,
     }
-    with open(state_path, "w") as f:
-        json.dump(data, f, indent=2)
+    atomic_write_json(state_path, data, indent=2)

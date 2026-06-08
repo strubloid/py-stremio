@@ -48,6 +48,56 @@ def test_menu_choice_one_runs_ordered_scan_metadata_download(monkeypatch):
     assert calls == ["scan", "metadata", ("download", folders, True, 3)]
 
 
+def test_menu_choice_one_prints_scan_status_before_blocking_scan(monkeypatch, capsys):
+    answers = iter(["1", "3"])
+    folders = []
+
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    def fake_scan(self):
+        output_before_scan = capsys.readouterr().out
+        assert "Scan" in output_before_scan
+        assert "checking folders" in output_before_scan.lower()
+        return folders
+
+    monkeypatch.setattr("py_stremio.services.scanner.ScanService.run", fake_scan)
+    monkeypatch.setattr(
+        "py_stremio.services.metadata.MetadataService.run",
+        lambda self, quiet=False, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1: None,
+    )
+
+    application.run_menu()
+
+
+def test_run_pipeline_prints_scan_status_before_blocking_scan(monkeypatch, capsys):
+    from py_stremio.app import AppService
+
+    folders = []
+
+    def fake_scan(self):
+        output_before_scan = capsys.readouterr().out
+        assert "Scan" in output_before_scan
+        assert "checking folders" in output_before_scan.lower()
+        return folders
+
+    monkeypatch.setattr("py_stremio.services.scanner.ScanService.run", fake_scan)
+    monkeypatch.setattr(
+        "py_stremio.services.metadata.MetadataService.run",
+        lambda self, quiet=False, **kwargs: None,
+    )
+    monkeypatch.setattr("py_stremio.app.validate_and_update", lambda: None)
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: None,
+    )
+
+    AppService().run_pipeline(download=True, quiet=True, max_workers=2)
+
+
 def test_cron_positional_run_all_and_speed_limit(monkeypatch):
     calls = []
 
@@ -60,3 +110,18 @@ def test_cron_positional_run_all_and_speed_limit(monkeypatch):
     application.run(interactive=False)
 
     assert calls == [(True, True, 1, 50)]
+
+
+def test_run_pipeline_ctrl_c_exits_cleanly(monkeypatch, capsys):
+    from py_stremio.app import AppService
+
+    monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.run",
+        lambda self: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    AppService().run_pipeline(download=True, quiet=True, max_workers=2)
+
+    output = capsys.readouterr().out
+    assert "Interrupted" in output
+    assert "shutting down" in output.lower()

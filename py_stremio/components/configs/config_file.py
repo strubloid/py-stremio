@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 
 from py_stremio.utils.media import parse_season_from_folder
+from py_stremio.utils.atomic_write import atomic_write_json
 
 
 @dataclass
@@ -130,5 +131,4 @@ def save_config(config_path: Path, config: DownloadConfig) -> None:
         data["quality"] = data["quality"]
     else:
         data["quality"] = asdict(data["quality"]) if data.get("quality") else None
-    with open(config_path, "w") as f:
-        json.dump(data, f, indent=2)
+    atomic_write_json(config_path, data, indent=2)
