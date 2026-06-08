@@ -1,5 +1,6 @@
 """MetadataService — enrich series folders with Cinemeta/IMDb metadata."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.configs.config_file import load_config
@@ -26,7 +27,7 @@ class MetadataService:
     def __init__(self):
         self.scanner = Scanner()
 
-    def run(self, folders: list | None = None, quiet: bool = False) -> int:
+    def run(self, folders: list | None = None, quiet: bool = False, use_cache: bool = False) -> int:
         """Update metadata for all series folders. Returns number of configs updated."""
         clear_shutdown()
         if folders is None:
@@ -41,7 +42,7 @@ class MetadataService:
             future_map = {}
             try:
                 future_map = {
-                    executor.submit(self._update_folder_metadata, folder, quiet): folder
+                    executor.submit(self._update_folder_metadata, folder, quiet, use_cache=use_cache): folder
                     for folder in series_folders
                 }
                 for future in as_completed(future_map):
@@ -67,7 +68,7 @@ class MetadataService:
                 if shutdown_requested():
                     break
                 try:
-                    changed, status = self._update_folder_metadata(folder, quiet)
+                    changed, status = self._update_folder_metadata(folder, quiet, use_cache=use_cache)
                     if changed:
                         updated += 1
                         if status:
@@ -87,7 +88,7 @@ class MetadataService:
             print(_c(f"  ✓ Metadata refresh complete ({updated} updated)", GREEN))
         return updated
 
-    def _update_folder_metadata(self, folder, quiet: bool) -> tuple[bool, list[str] | None]:
+    def _update_folder_metadata(self, folder, quiet: bool, use_cache: bool = False) -> tuple[bool, list[str] | None]:
         """Update a single folder's download-config.json. Returns (changed, status_row)."""
         config_model, config_path = load_config(folder.path)
         config = {
@@ -113,6 +114,8 @@ class MetadataService:
             "download_all_related": config_model.download_all_related,
             "working_addons": config_model.working_addons,
             "servers": config_model.servers,
+            "disabled_servers": config_model.disabled_servers,
+            "metadata_last_checked": config_model.metadata_last_checked,
         }
 
         changed = False
@@ -148,7 +151,15 @@ class MetadataService:
         canonical_title = config.get("title") or folder_title
         season_label = f"S{season:02d}"
 
+        if use_cache and self._metadata_cache_fresh(config):
+            if changed:
+                atomic_write_json(config_path, config, indent=2)
+            ep_display = str(config.get("episode_count") or "?")
+            imdb_display = config.get("imdb_id") or "--"
+            return changed, [canonical_title, season_label, ep_display, imdb_display, "cached"]
+
         metadata = get_series_metadata(title, season)
+        checked_at = datetime.now(timezone.utc).isoformat()
         if metadata:
             imdb_id = metadata.get("imdb_id")
             if imdb_id:
@@ -188,6 +199,9 @@ class MetadataService:
             else:
                 status_row = [canonical_title, season_label, "--", "--", "not found"]
 
+        config["metadata_last_checked"] = checked_at
+        changed = True
+
         next_existing_episode = infer_next_episode_download(folder.path, config.get("episode_count"))
         if next_existing_episode and next_existing_episode > int(config.get("current_episode_download") or 1):
             config["current_episode_download"] = next_existing_episode
@@ -197,3 +211,19 @@ class MetadataService:
             atomic_write_json(config_path, config, indent=2)
 
         return changed, status_row
+
+    def _metadata_cache_fresh(self, config: dict) -> bool:
+        """Return True when cached metadata is complete and recent enough for full runs."""
+        if not config.get("title") or not config.get("imdb_id") or config.get("season") is None:
+            return False
+        checked_text = config.get("metadata_last_checked")
+        if not checked_text:
+            return False
+        try:
+            checked_at = datetime.fromisoformat(str(checked_text).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.replace(tzinfo=timezone.utc)
+        cache_hours = max(0, int(getattr(settings, "METADATA_CACHE_HOURS", 24)))
+        return datetime.now(timezone.utc) - checked_at < timedelta(hours=cache_hours)

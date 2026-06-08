@@ -24,19 +24,15 @@ def test_menu_choice_two_updates_library(monkeypatch, capsys):
     assert "Update library" in output
 
 
-def test_menu_choice_one_runs_ordered_scan_metadata_download(monkeypatch):
+def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch):
     calls = []
     folders = [object()]
     answers = iter(["1", "3"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
-        "py_stremio.services.scanner.ScanService.run",
-        lambda self: calls.append("scan") or folders,
-    )
-    monkeypatch.setattr(
-        "py_stremio.services.metadata.MetadataService.run",
-        lambda self, quiet=False, **kwargs: calls.append("metadata"),
+        "py_stremio.services.scanner.ScanService.run_with_metadata",
+        lambda self, metadata, quiet=False: calls.append(("library-sync", metadata, quiet)) or folders,
     )
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
@@ -45,26 +41,25 @@ def test_menu_choice_one_runs_ordered_scan_metadata_download(monkeypatch):
 
     application.run_menu()
 
-    assert calls == ["scan", "metadata", ("download", folders, True, 3)]
+    assert calls[0][0] == "library-sync"
+    assert calls[0][2] is False
+    assert calls[1] == ("download", folders, True, 3)
 
 
-def test_menu_choice_one_prints_scan_status_before_blocking_scan(monkeypatch, capsys):
+def test_menu_choice_one_prints_library_sync_status_before_blocking_work(monkeypatch, capsys):
     answers = iter(["1", "3"])
     folders = []
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
-    def fake_scan(self):
-        output_before_scan = capsys.readouterr().out
-        assert "Scan" in output_before_scan
-        assert "checking folders" in output_before_scan.lower()
+    def fake_sync(self, metadata, quiet=False):
+        output_before_sync = capsys.readouterr().out
+        assert "Library sync" in output_before_sync
+        assert "scan" in output_before_sync.lower()
+        assert "metadata" in output_before_sync.lower()
         return folders
 
-    monkeypatch.setattr("py_stremio.services.scanner.ScanService.run", fake_scan)
-    monkeypatch.setattr(
-        "py_stremio.services.metadata.MetadataService.run",
-        lambda self, quiet=False, **kwargs: None,
-    )
+    monkeypatch.setattr("py_stremio.services.scanner.ScanService.run_with_metadata", fake_sync)
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
         lambda self, folders=None, quiet=True, max_workers=1: None,
@@ -72,23 +67,19 @@ def test_menu_choice_one_prints_scan_status_before_blocking_scan(monkeypatch, ca
 
     application.run_menu()
 
-
-def test_run_pipeline_prints_scan_status_before_blocking_scan(monkeypatch, capsys):
+def test_run_pipeline_uses_combined_library_sync(monkeypatch, capsys):
     from py_stremio.app import AppService
 
     folders = []
 
-    def fake_scan(self):
-        output_before_scan = capsys.readouterr().out
-        assert "Scan" in output_before_scan
-        assert "checking folders" in output_before_scan.lower()
+    def fake_sync(self, metadata, quiet=False):
+        output_before_sync = capsys.readouterr().out
+        assert "Library sync" in output_before_sync
+        assert "scan" in output_before_sync.lower()
+        assert "metadata" in output_before_sync.lower()
         return folders
 
-    monkeypatch.setattr("py_stremio.services.scanner.ScanService.run", fake_scan)
-    monkeypatch.setattr(
-        "py_stremio.services.metadata.MetadataService.run",
-        lambda self, quiet=False, **kwargs: None,
-    )
+    monkeypatch.setattr("py_stremio.services.scanner.ScanService.run_with_metadata", fake_sync)
     monkeypatch.setattr("py_stremio.app.validate_and_update", lambda: None)
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
@@ -116,8 +107,8 @@ def test_run_pipeline_ctrl_c_exits_cleanly(monkeypatch, capsys):
     from py_stremio.app import AppService
 
     monkeypatch.setattr(
-        "py_stremio.services.scanner.ScanService.run",
-        lambda self: (_ for _ in ()).throw(KeyboardInterrupt()),
+        "py_stremio.services.scanner.ScanService.run_with_metadata",
+        lambda self, metadata, quiet=False: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
 
     AppService().run_pipeline(download=True, quiet=True, max_workers=2)

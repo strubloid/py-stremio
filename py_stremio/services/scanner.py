@@ -1,5 +1,6 @@
 """ScanService — folder scanning and auto-create missing seasons."""
 from datetime import datetime
+from typing import Any
 
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.library.library_scanner import Scanner, FolderType, ScannedFolder
@@ -17,6 +18,19 @@ class ScanService:
         self.scanner.ensure_folders()
         self._create_current_year_season_folders(self.scanner)
         return self.scanner.scan()
+
+    def run_with_metadata(self, metadata: Any, quiet: bool = False) -> list[ScannedFolder]:
+        """Run the combined library-sync path used by the full run.
+
+        The interactive "run all" flow should feel like one library preparation
+        step instead of a silent scan followed by a second metadata phase.  Keep
+        the standalone scan/update actions separate, but for full runs update
+        metadata as soon as the scan result is available and return that same
+        folder list to the downloader.
+        """
+        folders = self.run()
+        metadata.run(folders=folders, quiet=quiet, use_cache=True)
+        return folders
 
     def scan_only(self) -> list[ScannedFolder]:
         """Just scan existing folders without auto-creating seasons."""

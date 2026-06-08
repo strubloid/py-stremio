@@ -508,6 +508,7 @@ py-stremio --validate      # or: py-stremio 5
 | LIMIT_EPISODES | 0 | Max episodes per run (0=unlimited) |
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min size for valid completed file |
 | DOWNLOAD_THREADS | 1 | Parallel download workers |
+| METADATA_CACHE_HOURS | 24 | Full-run metadata cache TTL; option 2 / `--metadata` forces refresh |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
 | INTERNET_MAX_SPEED_MBPS | 100 | Max Mbps for bandwidth calculation |
 | DRY_RUN | false | Test mode — no actual downloads |

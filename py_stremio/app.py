@@ -143,20 +143,16 @@ class AppService:
     ) -> None:
         self._banner()
 
-        # 1. Scan folders (pass to metadata step to avoid re-scan)
-        self._phase("\n🔎 Scan", "checking folders and current-year seasons...")
-        folders = self.scanner.run()
+        # 1. Combined library sync for full runs: scan + metadata together.
+        self._phase("\n🔎 Library sync", "scanning folders and refreshing metadata...")
+        folders = self.scanner.run_with_metadata(self.metadata, quiet=False)
         self._phase("", f"found {len(folders)} managed folder(s)")
 
-        # 2. Enrich metadata
-        self._phase("\n🧠 Metadata", "refreshing configs...")
-        self.metadata.run(folders=folders, quiet=False)
-
-        # 3. Validate addon URLs
+        # 2. Validate addon URLs
         self._phase("\n🛠  Validate addon URLs", "testing addons before download...")
         validate_and_update()
 
-        # 4. Download missing items
+        # 3. Download missing items
         if download:
             self.downloader.run(folders, quiet=quiet, max_workers=max_workers, speed_percent=speed_percent)
 
@@ -181,11 +177,9 @@ class AppService:
 
         if choice == "1" or choice == "":
             max_workers = self._ask_download_threads()
-            self._phase("\n🔎 Scan", "checking folders and current-year seasons...")
-            folders = self.scanner.run()
+            self._phase("\n🔎 Library sync", "scanning folders and refreshing metadata...")
+            folders = self.scanner.run_with_metadata(self.metadata, quiet=False)
             self._phase("", f"found {len(folders)} managed folder(s)")
-            self._phase("\n🧠 Metadata", "refreshing configs...")
-            self.metadata.run(folders=folders, quiet=False)
             self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s)...")
             self.downloader.run(folders, quiet=True, max_workers=max_workers)
 

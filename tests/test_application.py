@@ -62,7 +62,10 @@ def test_run_creates_metadata_rich_series_config_when_config_was_deleted(tmp_pat
         "download_all_related": True,
         "working_addons": [],
         "servers": [],
+        "disabled_servers": [],
+        "metadata_last_checked": config["metadata_last_checked"],
     }
+    assert config["metadata_last_checked"]
 
 
 def test_metadata_refresh_creates_config_at_next_episode_when_absolute_numbered_season_exists(tmp_path, monkeypatch):
@@ -176,6 +179,84 @@ def test_metadata_refresh_updates_existing_episode_list_when_config_already_has_
         config = json.load(f)
     assert config["episode_count"] == 2
     assert config["available_episodes"] == [1, 2]
+
+
+def test_full_run_metadata_uses_fresh_cache_without_network_lookup(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
+    from py_stremio.services.metadata import MetadataService
+
+    season_folder = tmp_path / "series" / "Rick and Morty" / "s01"
+    season_folder.mkdir(parents=True)
+    save_config(
+        season_folder / "download-config.json",
+        DownloadConfig(
+            type="series",
+            title="Rick and Morty",
+            imdb_id="tt2861424",
+            season=1,
+            episode_count=11,
+            available_episodes=list(range(1, 12)),
+            languages=["english"],
+            metadata_last_checked=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    folder = ScannedFolder(season_folder, FolderType.SERIES, season_folder.parent, season_number=1)
+
+    def fail_network_lookup(title, season):
+        raise AssertionError("fresh metadata cache should skip Cinemeta lookup")
+
+    monkeypatch.setattr("py_stremio.services.metadata.get_series_metadata", fail_network_lookup)
+
+    updated = MetadataService().run(folders=[folder], quiet=True, use_cache=True)
+
+    assert updated == 0
+
+
+def test_metadata_refresh_forces_network_even_when_cache_is_fresh(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
+    from py_stremio.services.metadata import MetadataService
+
+    season_folder = tmp_path / "series" / "Rick and Morty" / "s01"
+    season_folder.mkdir(parents=True)
+    save_config(
+        season_folder / "download-config.json",
+        DownloadConfig(
+            type="series",
+            title="Rick and Morty",
+            imdb_id="tt2861424",
+            season=1,
+            episode_count=11,
+            available_episodes=list(range(1, 12)),
+            languages=["english"],
+            metadata_last_checked=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    folder = ScannedFolder(season_folder, FolderType.SERIES, season_folder.parent, season_number=1)
+    calls = []
+
+    def mock_meta(title, season):
+        calls.append((title, season))
+        return {
+            "imdb_id": "tt2861424",
+            "title": "Rick and Morty",
+            "episode_count": 12,
+            "available_episodes": list(range(1, 13)),
+            "season_exists": True,
+        }
+
+    monkeypatch.setattr("py_stremio.services.metadata.get_series_metadata", mock_meta)
+
+    updated = MetadataService().run(folders=[folder], quiet=True, use_cache=False)
+
+    assert updated == 1
+    assert calls == [("Rick and Morty", 1)]
+    with open(season_folder / "download-config.json") as f:
+        config = json.load(f)
+    assert config["episode_count"] == 12
 
 
 def test_scan_library_creates_current_year_next_season_folder(tmp_path, monkeypatch, capsys):
@@ -381,6 +462,7 @@ def test_download_folders_starts_next_season_when_thread_capacity_exists(tmp_pat
 
 def test_download_folders_ctrl_c_cancels_pending_workers_without_waiting(tmp_path, monkeypatch):
     from py_stremio.services.download import DownloadService
+    from py_stremio.utils.cancellation import clear_shutdown
 
     folders = [
         ScannedFolder(tmp_path / "series" / "Show" / "s01", FolderType.SERIES, tmp_path / "series", 1),
@@ -432,6 +514,8 @@ def test_download_folders_ctrl_c_cancels_pending_workers_without_waiting(tmp_pat
         DownloadService().run(folders, max_workers=2)
     except KeyboardInterrupt:
         pass
+    finally:
+        clear_shutdown()
 
     assert shutdown_calls == [(False, True)]
     assert sorted(cancelled) == ["s01", "s02"]
