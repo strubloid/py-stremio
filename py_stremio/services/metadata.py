@@ -216,6 +216,8 @@ class MetadataService:
         """Return True when cached metadata is complete and recent enough for full runs."""
         if not config.get("title") or not config.get("imdb_id") or config.get("season") is None:
             return False
+        if not config.get("episode_count"):
+            return False
         checked_text = config.get("metadata_last_checked")
         if not checked_text:
             return False

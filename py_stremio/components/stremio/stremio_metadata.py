@@ -124,7 +124,7 @@ def get_current_year_series_seasons(title: str, year: int) -> list[dict]:
             return []
 
         meta_url = f"https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
-        response = httpx.get(meta_url, timeout=15)
+        response = httpx.get(meta_url, timeout=15, follow_redirects=True)
         if response.status_code != 200:
             return []
         meta = response.json().get("meta", {})
@@ -182,47 +182,63 @@ def get_series_imdb_id(title: str, season: int) -> str | None:
     return None
 
 
+def _series_metadata_from_search_meta(search_meta: dict, title: str, season: int) -> dict | None:
+    """Fetch episode metadata for one Cinemeta search result."""
+    imdb_id = search_meta.get("imdb_id") or search_meta.get("id")
+    if not imdb_id:
+        return None
+
+    meta_url = f"https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
+    response = httpx.get(meta_url, timeout=15, follow_redirects=True)
+    if response.status_code != 200:
+        return {
+            "imdb_id": imdb_id,
+            "title": search_meta.get("name") or title,
+            "episode_count": None,
+            "available_episodes": [],
+            "season_exists": None,
+        }
+
+    meta = response.json().get("meta", {})
+    videos = meta.get("videos", [])
+
+    # IMDb title.episode dataset can lag for long-running anime (e.g. One Piece
+    # only shows 1 season there). Don't short-circuit on it — let Cinemeta's
+    # episode-level video data have the final say.
+    season_episodes = sorted({
+        _episode_number(video)
+        for video in videos
+        if video.get("season") == season and _episode_number(video) > 0 and _is_available_episode(video)
+    })
+    episode_count = max(season_episodes) if season_episodes else None
+    return {
+        "imdb_id": meta.get("imdb_id") or imdb_id,
+        "title": meta.get("name") or search_meta.get("name") or title,
+        "episode_count": episode_count,
+        "available_episodes": season_episodes,
+        "season_exists": bool(season_episodes),
+    }
+
+
 def get_series_metadata(title: str, season: int) -> dict | None:
     """Return IMDB ID, canonical title, and available episode count for a season."""
     try:
-        search_meta = _best_series_match(title)
-        if not search_meta:
+        metas = _search_series(title)
+        if not metas:
             return None
 
-        imdb_id = search_meta.get("imdb_id") or search_meta.get("id")
-        if not imdb_id:
-            return None
-
-        meta_url = f"https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
-        response = httpx.get(meta_url, timeout=15)
-        if response.status_code != 200:
-            return {
-                "imdb_id": imdb_id,
-                "title": search_meta.get("name") or title,
-                "episode_count": None,
-                "available_episodes": [],
-                "season_exists": None,
-            }
-
-        meta = response.json().get("meta", {})
-        videos = meta.get("videos", [])
-
-        # IMDb title.episode dataset can lag for long-running anime (e.g. One Piece
-        # only shows 1 season there). Don't short-circuit on it — let Cinemeta's
-        # episode-level video data have the final say.
-        season_episodes = sorted({
-            _episode_number(video)
-            for video in videos
-            if video.get("season") == season and _episode_number(video) > 0 and _is_available_episode(video)
-        })
-        episode_count = max(season_episodes) if season_episodes else None
-        return {
-            "imdb_id": meta.get("imdb_id") or imdb_id,
-            "title": meta.get("name") or search_meta.get("name") or title,
-            "episode_count": episode_count,
-            "available_episodes": season_episodes,
-            "season_exists": bool(season_episodes),
-        }
+        exact = [m for m in metas if m.get("name", "").lower() == title.lower()]
+        ordered_metas = exact + [m for m in metas if m not in exact]
+        first_result: dict | None = None
+        for search_meta in ordered_metas:
+            result = _series_metadata_from_search_meta(search_meta, title, season)
+            if result is None:
+                continue
+            if first_result is None:
+                first_result = result
+            if result.get("season_exists"):
+                return result
+        return first_result
     except Exception as e:
         print(f"  Series metadata lookup error: {e}")
         return None

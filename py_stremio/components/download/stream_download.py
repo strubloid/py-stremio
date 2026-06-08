@@ -176,9 +176,12 @@ def _filter_streams_by_title(
 
     if not matched:
         if unmatched:
-            print(f"    → No title-matched streams ({len(unmatched)} return from addon "
-                  f"belongs to a different show) — skipping addon")
-        return []  # Don't download content from a different show
+            print(f"    → No title-matched streams ({len(unmatched)} streams from addon "
+                  f"don't match \"{title}\")")
+            print(f"    → Falling back to title-unmatched streams — if wrong content is "
+                  f"downloaded, delete the file to auto-disable this addon")
+            return unmatched  # fallback: still try, user deletes wrong content = disabled_servers
+        return []
 
     if unmatched:
         print(f"    → {len(matched)} title-matched, {len(unmatched)} non-matching (dropped)")

@@ -28,8 +28,38 @@ class FakeContentResponse(FakeResponse):
         self.content = content
 
 
+def test_get_series_metadata_follows_cinemeta_meta_redirects(monkeypatch):
+    calls = []
+
+    def fake_get(url, timeout, **kwargs):
+        calls.append((url, kwargs))
+        if "/catalog/" in url:
+            return FakeResponse({"metas": [{"imdb_id": "tt0149460", "name": "Futurama"}]})
+        return FakeResponse(
+            {
+                "meta": {
+                    "imdb_id": "tt0149460",
+                    "name": "Futurama",
+                    "videos": [
+                        {"season": 5, "episode": 1},
+                        {"season": 5, "episode": 16},
+                    ],
+                }
+            }
+        )
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+
+    metadata = get_series_metadata("Futurama", 5)
+
+    assert metadata is not None
+    assert metadata["episode_count"] == 16
+    meta_call = [call for call in calls if "/meta/series/" in call[0]][0]
+    assert meta_call[1].get("follow_redirects") is True
+
+
 def test_get_series_metadata_returns_imdb_title_and_episode_count(monkeypatch):
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         if "/catalog/" in url:
             return FakeResponse({"metas": [{"imdb_id": "tt11198330", "name": "House of the Dragon"}]})
         return FakeResponse(
@@ -61,7 +91,7 @@ def test_get_series_metadata_returns_imdb_title_and_episode_count(monkeypatch):
 
 
 def test_get_series_metadata_marks_missing_season_when_series_exists_but_season_has_no_episodes(monkeypatch):
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         if "/catalog/" in url:
             return FakeResponse({"metas": [{"imdb_id": "tt26678932", "name": "Poppa's House"}]})
         return FakeResponse(
@@ -90,6 +120,45 @@ def test_get_series_metadata_marks_missing_season_when_series_exists_but_season_
     }
 
 
+def test_get_series_metadata_falls_back_to_search_result_with_episode_data(monkeypatch):
+    def fake_get(url, timeout, **kwargs):
+        if "/catalog/" in url:
+            return FakeResponse(
+                {
+                    "metas": [
+                        {"imdb_id": "tt0993818", "name": "Jury Duty"},
+                        {"imdb_id": "tt22074164", "name": "Jury Duty Presents"},
+                    ]
+                }
+            )
+        if "tt0993818" in url:
+            return FakeResponse({"meta": {"imdb_id": "tt0993818", "name": "Jury Duty", "videos": []}})
+        return FakeResponse(
+            {
+                "meta": {
+                    "imdb_id": "tt22074164",
+                    "name": "Jury Duty Presents",
+                    "videos": [
+                        {"season": 1, "episode": 1},
+                        {"season": 1, "episode": 8},
+                    ],
+                }
+            }
+        )
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+
+    metadata = get_series_metadata("Jury Duty", 1)
+
+    assert metadata == {
+        "imdb_id": "tt22074164",
+        "title": "Jury Duty Presents",
+        "episode_count": 8,
+        "available_episodes": [1, 8],
+        "season_exists": True,
+    }
+
+
 def test_get_imdb_max_season_reads_highest_season_from_imdb_dataset(monkeypatch):
     from py_stremio.components.stremio.stremio_metadata import _load_imdb_max_seasons, get_imdb_max_season
 
@@ -115,7 +184,7 @@ def test_get_imdb_max_season_reads_highest_season_from_imdb_dataset(monkeypatch)
 def test_get_current_year_series_seasons_returns_only_seasons_with_current_year_releases(monkeypatch):
     from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         if "/catalog/" in url:
             return FakeResponse({"metas": [{"imdb_id": "tt2861424", "name": "Rick and Morty"}]})
         return FakeResponse(
@@ -150,7 +219,7 @@ def test_get_current_year_series_seasons_returns_only_seasons_with_current_year_
 def test_get_current_year_series_seasons_filters_cinemeta_placeholder_season(monkeypatch):
     from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         if "/catalog/" in url:
             return FakeResponse({"metas": [{"imdb_id": "tt14986406", "name": "Bleach: Thousand-Year Blood War"}]})
         return FakeResponse(
@@ -183,7 +252,7 @@ def test_get_current_year_series_seasons_filters_cinemeta_placeholder_season(mon
 def test_get_current_year_series_seasons_filters_unreleased_tba_season(monkeypatch):
     from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         if "/catalog/" in url:
             return FakeResponse({"metas": [{"imdb_id": "tt11198330", "name": "House of the Dragon"}]})
         return FakeResponse(
@@ -212,7 +281,7 @@ def test_get_current_year_series_seasons_filters_unreleased_tba_season(monkeypat
 
 
 def test_get_series_metadata_marks_season_missing_when_only_placeholder_episodes_exist(monkeypatch):
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         if "/catalog/" in url:
             return FakeResponse({"metas": [{"imdb_id": "tt14986406", "name": "Bleach: Thousand-Year Blood War"}]})
         return FakeResponse(
@@ -242,7 +311,7 @@ def test_get_series_metadata_marks_season_missing_when_only_placeholder_episodes
 
 
 def test_get_series_metadata_marks_unreleased_tba_season_missing(monkeypatch):
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         if "/catalog/" in url:
             return FakeResponse({"metas": [{"imdb_id": "tt11198330", "name": "House of the Dragon"}]})
         return FakeResponse(

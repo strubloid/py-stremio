@@ -214,6 +214,52 @@ def test_full_run_metadata_uses_fresh_cache_without_network_lookup(tmp_path, mon
     assert updated == 0
 
 
+def test_full_run_metadata_refreshes_incomplete_cached_config(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
+    from py_stremio.services.metadata import MetadataService
+
+    season_folder = tmp_path / "series" / "Futurama" / "s05"
+    season_folder.mkdir(parents=True)
+    save_config(
+        season_folder / "download-config.json",
+        DownloadConfig(
+            type="series",
+            title="Futurama",
+            imdb_id="tt0149460",
+            season=5,
+            episode_count=None,
+            available_episodes=None,
+            languages=["english"],
+            metadata_last_checked=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    folder = ScannedFolder(season_folder, FolderType.SERIES, season_folder.parent, season_number=5)
+    calls = []
+
+    def mock_meta(title, season):
+        calls.append((title, season))
+        return {
+            "imdb_id": "tt0149460",
+            "title": "Futurama",
+            "episode_count": 16,
+            "available_episodes": list(range(1, 17)),
+            "season_exists": True,
+        }
+
+    monkeypatch.setattr("py_stremio.services.metadata.get_series_metadata", mock_meta)
+
+    updated = MetadataService().run(folders=[folder], quiet=True, use_cache=True)
+
+    assert updated == 1
+    assert calls == [("Futurama", 5)]
+    with open(season_folder / "download-config.json") as f:
+        config = json.load(f)
+    assert config["episode_count"] == 16
+    assert config["available_episodes"] == list(range(1, 17))
+
+
 def test_metadata_refresh_forces_network_even_when_cache_is_fresh(tmp_path, monkeypatch):
     from datetime import datetime, timezone
 

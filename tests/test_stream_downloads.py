@@ -543,11 +543,11 @@ class TestFilterStreamsByTitle:
         assert result[0] == show
 
     def test_returns_empty_when_none_match_title(self):
-        """When NO streams match the show title, return empty — addon gave wrong show."""
+        """When NO streams match the show title, fallback to unmatched streams."""
         s1 = FakeStreamInfo(title="OP.S23E04.1080p.mkv")
         s2 = FakeStreamInfo(title="Wano.Arc.1080p.mkv")
         result = stream_download._filter_streams_by_title([s1, s2], "One Piece")
-        assert len(result) == 0
+        assert len(result) == 2  # falls back to unmatched instead of returning empty
 
     def test_keeps_all_when_title_is_none(self):
         """When no title is provided, all streams pass through."""

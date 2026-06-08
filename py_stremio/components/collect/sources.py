@@ -10,6 +10,8 @@ from collections.abc import Generator
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from py_stremio.components.configs.app_settings import settings
+
 # ── HTTP helpers ──────────────────────────────────────────────────────────
 
 _HDR = {
@@ -34,8 +36,6 @@ def _fetch(url: str, timeout: int = 10) -> tuple[int | None, bytes | None]:
 
 
 # ── Source config ─────────────────────────────────────────────────────────
-
-RD_KEY = "ECOOSN5PPAZNHUYPEY3XY7CTZQVEQWYZEB4XJ34F6AUPCFBPWTAQ"
 
 SORTS = ["seeders", "size", "quality"]
 
@@ -105,11 +105,14 @@ def gen_torrentio_variants() -> set[str]:
     urls: set[str] = set()
     base = "https://torrentio.strem.fun"
 
-    # 4 core Torrentio entries: base, lite, sort=seeders, RD
+    # Core Torrentio entries: base, lite, sort=seeders, plus RD only when
+    # configured from the user's environment. Never embed a static RD key in
+    # source or addons.txt.
     urls.add(f"{base}/")
     urls.add(f"{base}/lite/")
     urls.add(f"{base}/sort=seeders/")
-    urls.add(f"{base}/realdebrid={RD_KEY}/")
+    if settings.REAL_DEBRID_API_KEY:
+        urls.add(f"{base}/realdebrid={settings.REAL_DEBRID_API_KEY}/")
 
     return urls
 
