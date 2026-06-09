@@ -1,43 +1,51 @@
 """Aggregator addon classes."""
 
-from .MediaFusionAddon import MediaFusionAddon
-from .KnightCrawlerAddon import KnightCrawlerAddon
+from .CinescrapeAddon import CinescrapeAddon
 from .EasyNewsPlusAddon import EasyNewsPlusAddon
-from .PeerflixAddon import PeerflixAddon
+from .JackettioAddon import JackettioAddon
+from .KnightCrawlerAddon import KnightCrawlerAddon
+from .KodAddon import KodAddon
+from .MediaFusionAddon import MediaFusionAddon
+from .MyCineAddon import MyCineAddon
+from .NebulaStreamsAddon import NebulaStreamsAddon
 from .NucleusAddon import NucleusAddon
 from .OrionAddon import OrionAddon
 from .DebridSearchAddon import DebridSearchAddon
+from .PeerflixAddon import PeerflixAddon
 from .StremifyAddon import StremifyAddon
-from .JackettioAddon import JackettioAddon
+from .StreamViXAddon import StreamViXAddon
+from .SupremeAddon import SupremeAddon
+from .ThePirateBayPlusAddon import ThePirateBayPlusAddon
+from .TillAddon import TillAddon
+from .TorrinAddon import TorrinAddon
 from .AIOStreamsAddon import AIOStreamsAddon
 from .CineTorrentAddon import CineTorrentAddon
-from .TorrinAddon import TorrinAddon
-from .ThePirateBayPlusAddon import ThePirateBayPlusAddon
-from .StreamViXAddon import StreamViXAddon
 from .FlixStreamsAddon import FlixStreamsAddon
-from .YtztvioAddon import YtztvioAddon
 from .VidFastProAddon import VidFastProAddon
-from .MyCineAddon import MyCineAddon
-from .NebulaStreamsAddon import NebulaStreamsAddon
+from .YtztvioAddon import YtztvioAddon
 
 __all__ = [
-    "MediaFusionAddon",
-    "KnightCrawlerAddon",
-    "EasyNewsPlusAddon",
-    "PeerflixAddon",
-    "NucleusAddon",
-    "OrionAddon",
-    "DebridSearchAddon",
-    "StremifyAddon",
-    "JackettioAddon",
     "AIOStreamsAddon",
     "CineTorrentAddon",
-    "TorrinAddon",
-    "ThePirateBayPlusAddon",
-    "StreamViXAddon",
+    "CinescrapeAddon",
+    "DebridSearchAddon",
+    "EasyNewsPlusAddon",
     "FlixStreamsAddon",
-    "YtztvioAddon",
-    "VidFastProAddon",
+    "JackettioAddon",
+    "KnightCrawlerAddon",
+    "KodAddon",
+    "MediaFusionAddon",
     "MyCineAddon",
     "NebulaStreamsAddon",
+    "NucleusAddon",
+    "OrionAddon",
+    "PeerflixAddon",
+    "StremifyAddon",
+    "StreamViXAddon",
+    "SupremeAddon",
+    "ThePirateBayPlusAddon",
+    "TillAddon",
+    "TorrinAddon",
+    "VidFastProAddon",
+    "YtztvioAddon",
 ]

@@ -1,27 +1,29 @@
 """Regional addon classes."""
 
-from .NoTorrentAddon import NoTorrentAddon
-from .LatinMoviesAddon import LatinMoviesAddon
-from .RicosStremioAddon import RicosStremioAddon
-from .FTVStremioAddon import FTVStremioAddon
-from .FigaroCorsoAddon import FigaroCorsoAddon
-from .EinthusanAddon import EinthusanAddon
-from .VStremioAddon import VStremioAddon
 from .DubbindoAddon import DubbindoAddon
-from .MainelocalnewsAddon import MainelocalnewsAddon
+from .EinthusanAddon import EinthusanAddon
 from .FenixFlixAddon import FenixFlixAddon
+from .FigaroCorsoAddon import FigaroCorsoAddon
+from .FrenchioAddon import FrenchioAddon
+from .FTVStremioAddon import FTVStremioAddon
+from .LatinMoviesAddon import LatinMoviesAddon
+from .MainelocalnewsAddon import MainelocalnewsAddon
 from .MicoLeaoDubladoAddon import MicoLeaoDubladoAddon
+from .NoTorrentAddon import NoTorrentAddon
+from .RicosStremioAddon import RicosStremioAddon
+from .VStremioAddon import VStremioAddon
 
 __all__ = [
-    "NoTorrentAddon",
-    "LatinMoviesAddon",
-    "RicosStremioAddon",
-    "FTVStremioAddon",
-    "FigaroCorsoAddon",
-    "EinthusanAddon",
-    "VStremioAddon",
     "DubbindoAddon",
-    "MainelocalnewsAddon",
+    "EinthusanAddon",
     "FenixFlixAddon",
+    "FigaroCorsoAddon",
+    "FrenchioAddon",
+    "FTVStremioAddon",
+    "LatinMoviesAddon",
+    "MainelocalnewsAddon",
     "MicoLeaoDubladoAddon",
+    "NoTorrentAddon",
+    "RicosStremioAddon",
+    "VStremioAddon",
 ]

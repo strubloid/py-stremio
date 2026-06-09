@@ -7,7 +7,7 @@ from py_stremio.components.configs.config_file import load_config
 from py_stremio.components.library.library_scanner import Scanner, FolderType
 from py_stremio.components.library.media_file import infer_next_episode_download
 from py_stremio.components.stremio.stremio_client import get_series_imdb_id
-from py_stremio.components.stremio.stremio_metadata import get_series_metadata
+from py_stremio.components.stremio.stremio_metadata import get_imdb_id, get_series_metadata
 from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, RESET, build_table
 from py_stremio.utils.media import parse_season_from_folder
 from py_stremio.utils.atomic_write import atomic_write_json
@@ -28,7 +28,7 @@ class MetadataService:
         self.scanner = Scanner()
 
     def run(self, folders: list | None = None, quiet: bool = False, use_cache: bool = False) -> int:
-        """Update metadata for all series folders. Returns number of configs updated."""
+        """Update metadata for all series and movie folders. Returns number of configs updated."""
         clear_shutdown()
         if folders is None:
             folders = self.scanner.scan()
@@ -36,7 +36,9 @@ class MetadataService:
         rows: list[list[str]] = []
 
         series_folders = [f for f in folders if f.folder_type == FolderType.SERIES]
+        movie_folders = [f for f in folders if f.folder_type == FolderType.MOVIES]
 
+        # ── Series metadata ────────────────────────────────────────────────
         if len(series_folders) > 1:
             executor = ThreadPoolExecutor(max_workers=min(_METADATA_WORKERS, len(series_folders)))
             future_map = {}
@@ -75,6 +77,17 @@ class MetadataService:
                             rows.append(status)
                 except Exception as e:
                     print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
+
+        # ── Movie metadata ──────────────────────────────────────────────────
+        for folder in movie_folders:
+            if shutdown_requested():
+                break
+            try:
+                changed = self._update_movie_metadata(folder, use_cache=use_cache)
+                if changed:
+                    updated += 1
+            except Exception as e:
+                print(f"  ! Error updating movie {folder.path / 'download-config.json'}: {e}")
 
         if not quiet and rows:
             print()
@@ -211,6 +224,92 @@ class MetadataService:
             atomic_write_json(config_path, config, indent=2)
 
         return changed, status_row
+
+    def _update_movie_metadata(self, folder, use_cache: bool = False) -> bool:
+        """Update a single movie folder's download-config.json with IMDb ID and title.
+
+        Returns True if the config was changed.
+        """
+        config_model, config_path = load_config(folder.path)
+        config = {
+            "type": config_model.type,
+            "quality": {
+                "preferred": config_model.quality.preferred,
+                "fallbacks": config_model.quality.fallbacks,
+                "allow_higher": config_model.quality.allow_higher,
+                "allow_lower": config_model.quality.allow_lower,
+            } if config_model.quality else None,
+            "languages": config_model.languages,
+            "language": config_model.language,
+            "subtitles": config_model.subtitles,
+            "provider": config_model.provider,
+            "enabled": config_model.enabled,
+            "title": config_model.title,
+            "imdb_id": config_model.imdb_id,
+            "season": config_model.season,
+            "episode_count": config_model.episode_count,
+            "available_episodes": config_model.available_episodes,
+            "current_episode_download": config_model.current_episode_download,
+            "search_group": config_model.search_group,
+            "download_all_related": config_model.download_all_related,
+            "working_addons": config_model.working_addons,
+            "servers": config_model.servers,
+            "disabled_servers": config_model.disabled_servers,
+            "metadata_last_checked": config_model.metadata_last_checked,
+        }
+
+        # Inject preferred languages from settings if config doesn't have them
+        changed = False
+        if settings.PREFERRED_LANGUAGES and not config.get("languages"):
+            config["languages"] = list(settings.PREFERRED_LANGUAGES)
+            changed = True
+
+        # Movies don't track episode download progress — null it out
+        if config.get("current_episode_download", 0) > 0:
+            config["current_episode_download"] = 0
+            config_model.current_episode_download = 0
+            changed = True
+
+        title = config.get("title") or config.get("search_group") or folder.path.name
+        checked_text = config.get("metadata_last_checked")
+        use_cached = False
+        if use_cache and config.get("imdb_id") and title and checked_text:
+            try:
+                checked_at = datetime.fromisoformat(str(checked_text).replace("Z", "+00:00"))
+                if checked_at.tzinfo is None:
+                    checked_at = checked_at.replace(tzinfo=timezone.utc)
+                cache_hours = max(0, int(getattr(settings, "METADATA_CACHE_HOURS", 24)))
+                use_cached = datetime.now(timezone.utc) - checked_at < timedelta(hours=cache_hours)
+            except ValueError:
+                pass
+
+        if use_cached:
+            if changed:
+                atomic_write_json(config_path, config, indent=2)
+            return changed
+
+        # Try to get IMDB ID from Cinemeta
+        imdb_id = config.get("imdb_id") or get_imdb_id(title)
+
+        if imdb_id and config.get("imdb_id") != imdb_id:
+            config["imdb_id"] = imdb_id
+            config_model.imdb_id = imdb_id
+            changed = True
+
+        if not config.get("title") and title:
+            config["title"] = title
+            config_model.title = title
+            changed = True
+
+        checked_at = datetime.now(timezone.utc).isoformat()
+        config["metadata_last_checked"] = checked_at
+        if imdb_id:
+            changed = True
+
+        if changed:
+            atomic_write_json(config_path, config, indent=2)
+
+        return changed
 
     def _metadata_cache_fresh(self, config: dict) -> bool:
         """Return True when cached metadata is complete and recent enough for full runs."""

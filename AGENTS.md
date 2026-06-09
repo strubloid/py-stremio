@@ -307,7 +307,9 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 
 ## Addon System
 
-- **64 built-in addon classes** in `components/addons/types/`, each class in its own file organized by category folder:
+### Built-in Addons
+
+**54 built-in addon classes** in `components/addons/types/`, each class in its own file organized by category folder:
   - `torrentio_family/` (7 variants: Torrentio, SortSeeders, Portuguese, Spanish, Hindi, Lite, TorrentsDB)
   - `comet_family/` (7: Comet, CometElfHosted, CometNet, HDHub, StremThru, BrazucaTorrents, Guindex)
   - `aggregators/` (19: MediaFusion, KnightCrawler, EasyNews+, ThePirateBay+, Peerflix, Nucleus, Orion, DebridSearch, Stremify, Jackettio, AIOStreams, CineTorrent, Torrin, FlixStreams, MyCine, NebulaStreams, StreamViX, VidFastPro, Ytztvio)
@@ -315,9 +317,43 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
   - `iptv/` (6: Skyflix, ArgentinaTV, GreekTV, XtreamPro, AIOStreaming, Watchio)
   - `regional/` (11: NoTorrent, LatinMovies, RicosStremio, FTV, FigaroCorso, Einthusan, VStremio, Dubbindo, MaineLocalNews, FenixFlix, MicoLeaoDublado)
   - `misc/` (4: WatchHub, YouTubePro, FShare, Consumet)
+
+### Addon Loading Behavior (addons.txt + Built-ins)
+
+When `create_addon_manager()` is called (via `factory.py`):
+1. **Always loads all 54 built-in addons first** — these have correct RealDebrid key injection in their `get_url()` methods
+2. **Supplements with addons from `addons.txt`** (if file exists) — loads URLs from `addons.txt` and `addons.stremio`
+3. **Deduplicates by hostname** — any URL from addons.txt whose hostname matches a built-in addon is skipped (reported as "covered by built-in")
+4. **Wraps file URLs as `UrlAddon`** — URLs from file become generic UrlAddon instances
+5. **Applies RealDebrid API key** to all addons (built-in and file-loaded)
+
+**Example output when loading**:
+```
+Loaded 90 addon(s) from addon file(s) (37 skipped, covered by built-in)
+```
+
+This means:
+- 127 URLs found in addons.txt
+- 37 URLs match built-in addon hostnames (e.g., torrentio.strem.fun) → skipped
+- 90 URLs are unique and loaded as UrlAddon instances
+- **Total: 54 built-in + 90 from file = 144 addons**
+
+**Important**: Many URLs in addons.txt are **non-stream addons** (subtitles, catalogs, metadata, ratings, trackers). These are still loaded but won't return downloadable streams:
+- Subtitle addons: OpenSubtitles, Addic7ed, Napisy24, Subscene, Podnapisi, YifySubtitles
+- Catalog/metadata: IMDB Catalogs, TMDB, RPDB, Trakt, RottenTomatoes, Netflix Catalog
+- Ratings/tracking: Ratings Aggregator, MyTrakt, Serializd, Simkl, Discussio
+- Collections/misc: Marvel, Concerts, Radio, Broadcast, Up-Next
+
+When these non-stream addons are queried for `/stream/`, they either:
+- Return empty `{"streams": []}` → correctly handled
+- Return advisory messages with `url` field → correctly identified and skipped
+- Timeout or return errors → correctly logged and skipped
+
+### Addon Features
+
 - **11 URL configurers** colocated with their addon families (in `addon.py` registry)
 - **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
-- **Custom addons**: create `addons.txt` in project root with one URL per line (URLs augment built-ins)
+- **Custom addons**: create `addons.txt` in project root with one URL per line (URLs augment built-ins, not replace)
 - **Addon Discovery**: `py-stremio --discover` scrapes addon sources, tests URLs, and merges working ones into `addons.txt`
 - **Preflight scan**: `preflight_discover_working_addons()` queries all addons concurrently on first run per folder to populate working server cache
 

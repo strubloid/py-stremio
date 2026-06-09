@@ -491,6 +491,11 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
     # ── Disabled-server cleanup ────────────────────────────────────────
     _update_disabled_servers(state, config, config_path, folder_path)
 
+    # Movies don't use episode tracking — clear it if somehow set
+    if config.current_episode_download != 0:
+        config.current_episode_download = 0
+        save_config(config_path, config)
+
     video_files = iter_video_files(folder_path)
     quality = _preferred_quality(config)
 
@@ -512,10 +517,12 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
     preferred_languages = _preferred_languages(config)
 
     # Pre-flight addon discovery for movies
-    if not servers and config.imdb_id:
-        stremio_id = build_stremio_id(config.imdb_id, title, None, None)
+    # Always run pre-flight to find which addons serve this title.
+    # Use IMDB ID if available, otherwise title-based search ID.
+    stremio_id = build_stremio_id(config.imdb_id, title, None, None) if config.imdb_id else build_stremio_id(None, title, None, None)
+    if not servers:
         print(f"\n  {'='*50}")
-        print(f"  Pre-flight: discovering working addons for movie {title}")
+        print(f"  Pre-flight: discovering working addons for movie '{title}'")
         print(f"  {'='*50}")
         discovered = preflight_discover_working_addons("movie", stremio_id)
         if discovered:
@@ -524,18 +531,20 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
             print(f"  Using {len(discovered)} pre-confirmed addons for this movie\n")
         else:
             print(f"  Pre-flight found no working addons — will search all\n")
-    elif not servers:
-        print(f"  No server cache and no IMDB ID — will search all addons\n")
+    else:
+        print(f"  Using {len(servers)} cached server(s)\n")
 
     print(f"  Searching for movie: {title}")
     result = search_and_download(
         title=title,
+        imdb_id=config.imdb_id,
         season=None,
         episode=None,
         folder_path=str(folder_path),
         preferred_quality=quality,
         preferred_languages=preferred_languages,
         working_addons=servers,
+        content_type="movie",
         progress_callback=lambda downloaded, total: progress_callback({
             "type": "bytes",
             "title": title,

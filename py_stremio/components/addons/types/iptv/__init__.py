@@ -1,17 +1,21 @@
 """IPTV addon classes."""
 
-from .SkyflixAddon import SkyflixAddon
-from .ArgentinaTVAddon import ArgentinaTVAddon
-from .GreekTVAddon import GreekTVAddon
-from .XtreamProAddon import XtreamProAddon
 from .AIOStreamingAddon import AIOStreamingAddon
+from .ArgentinaTVAddon import ArgentinaTVAddon
+from .EireGBTVAddon import EireGBTVAddon
+from .FreeMiumTVAddon import FreeMiumTVAddon
+from .GreekTVAddon import GreekTVAddon
+from .SkyflixAddon import SkyflixAddon
 from .WatchioAddon import WatchioAddon
+from .XtreamProAddon import XtreamProAddon
 
 __all__ = [
-    "SkyflixAddon",
-    "ArgentinaTVAddon",
-    "GreekTVAddon",
-    "XtreamProAddon",
     "AIOStreamingAddon",
+    "ArgentinaTVAddon",
+    "EireGBTVAddon",
+    "FreeMiumTVAddon",
+    "GreekTVAddon",
+    "SkyflixAddon",
     "WatchioAddon",
+    "XtreamProAddon",
 ]

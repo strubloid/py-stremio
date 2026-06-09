@@ -50,6 +50,10 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "VidFastProAddon",
     "MyCineAddon",
     "NebulaStreamsAddon",
+    "SupremeAddon",
+    "KodAddon",
+    "CinescrapeAddon",
+    "TillAddon",
     # anime.py
     "AnimeKitsuAddon",
     "AkumaAddon",
@@ -68,6 +72,8 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "XtreamProAddon",
     "AIOStreamingAddon",
     "WatchioAddon",
+    "FreeMiumTVAddon",
+    "EireGBTVAddon",
     # regional.py
     "NoTorrentAddon",
     "LatinMoviesAddon",
@@ -80,11 +86,17 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "MainelocalnewsAddon",
     "FenixFlixAddon",
     "MicoLeaoDubladoAddon",
+    "FrenchioAddon",
     # misc.py
     "WatchHubAddon",
     "YouTubeProAddon",
     "FShareAddon",
     "ConsumetAddon",
+    "SuperFlixAddon",
+    # debrid.py
+    "DMMAddon",
+    "PremiumizeAddon",
+    "PearioAddon",
 ])
 
 

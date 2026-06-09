@@ -2,8 +2,8 @@
 import json
 from types import SimpleNamespace
 
-from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings, save_config
-from py_stremio.components.download.processing import process_season_folder, _set_current_episode
+from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings, load_config, save_config
+from py_stremio.components.download.processing import process_movie_folder, process_season_folder, _set_current_episode
 from py_stremio.components.reports.output_writer import install_thread_stdout_filter, restore_thread_stdout_filter
 
 
@@ -744,3 +744,137 @@ def test_process_season_folder_downloads_only_new_episode_after_absolute_numbere
     assert calls == [15]
     assert result["downloaded"] == 1
     assert result["skipped"] == 14
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Movie processing tests
+# ═══════════════════════════════════════════════════════════════════
+
+
+def test_process_movie_folder_downloads_movie(tmp_path, monkeypatch):
+    """Movies download without episode tracking — no current_episode_download."""
+    config = DownloadConfig(
+        type="movies",
+        title="The Last Hangover",
+        imdb_id="tt9476490",
+        search_group="The Last Hangover",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append({
+            "title": kwargs.get("title"),
+            "imdb_id": kwargs.get("imdb_id"),
+            "season": kwargs.get("season"),
+            "episode": kwargs.get("episode"),
+        })
+        return {
+            "success": True,
+            "filename": "The.Last.Hangover_[1080p].mkv",
+            "quality": "1080p",
+            "working_urls": [],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.preflight_discover_working_addons",
+        lambda *args, **kwargs: [],
+    )
+
+    result = process_movie_folder(tmp_path)
+
+    assert result["downloaded"] == 1
+    assert result["skipped"] == 0
+    assert len(calls) == 1
+    assert calls[0]["title"] == "The Last Hangover"
+    assert calls[0]["imdb_id"] == "tt9476490"
+    assert calls[0]["season"] is None
+    assert calls[0]["episode"] is None
+
+
+def test_process_movie_folder_clears_current_episode_download(tmp_path, monkeypatch):
+    """Movie configs should have current_episode_download forced to 0."""
+    config = DownloadConfig(
+        type="movies",
+        title="The Last Hangover",
+        imdb_id="tt9476490",
+        current_episode_download=1,  # stale — should be force-cleared
+        search_group="The Last Hangover",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+
+    def fake_search_and_download(**kwargs):
+        return {"success": True, "filename": "test.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.preflight_discover_working_addons",
+        lambda *args, **kwargs: [],
+    )
+
+    result = process_movie_folder(tmp_path)
+
+    assert result["downloaded"] == 1
+    assert result["skipped"] == 0
+    # Reload config from disk to confirm current_episode_download was cleared
+    reloaded, _ = load_config(tmp_path)
+    assert reloaded.current_episode_download == 0
+
+
+def test_process_movie_folder_skips_when_already_downloaded(tmp_path, monkeypatch):
+    """Movie folder with existing video file should be skipped."""
+    config = DownloadConfig(
+        type="movies",
+        title="The Last Hangover",
+        imdb_id="tt9476490",
+        search_group="The Last Hangover",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    (tmp_path / "The Last Hangover.mkv").write_bytes(b"existing video content")
+
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    result = process_movie_folder(tmp_path)
+
+    assert result["skipped"] == 1
+    assert result["downloaded"] == 0
+
+
+def test_process_movie_folder_uses_search_group_as_fallback_title(tmp_path, monkeypatch):
+    """Movie with null title but set search_group uses search_group as title."""
+    config = DownloadConfig(
+        type="movies",
+        title=None,
+        imdb_id="tt9476490",
+        search_group="The Last Hangover",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs.get("title"))
+        return {"success": True, "filename": "test.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    process_movie_folder(tmp_path)
+
+    assert len(calls) == 1
+    assert calls[0] == "The Last Hangover"

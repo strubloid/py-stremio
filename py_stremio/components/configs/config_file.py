@@ -61,6 +61,7 @@ def create_movies_config(folder_path: Path) -> DownloadConfig:
     return DownloadConfig(
         type="movies",
         search_group=folder_path.name.replace("-", " ").replace("_", " ").title(),
+        current_episode_download=0,
     )
 
 
@@ -118,7 +119,9 @@ def load_config(folder_path: Path) -> tuple[DownloadConfig, Path]:
         data = json.load(f)
     quality_data = data.pop("quality", None)
     quality = QualitySettings(**quality_data) if quality_data else QualitySettings()
-    data["current_episode_download"] = max(1, int(data.get("current_episode_download") or 1))
+    # Series require episode tracking. Movies must stay at 0 — never bump them.
+    if data.get("type") != "movies":
+        data["current_episode_download"] = max(1, int(data.get("current_episode_download") or 1))
     config = DownloadConfig(quality=quality, **data)
     if repair_series_season_config(folder_path, config):
         save_config(config_path, config)

@@ -123,69 +123,10 @@ def _matches_target_episode(stream, target_season: int | None, target_episode: i
     }
     return any(token in compact for token in episode_tokens)
 
-def _matches_show_title(stream, title: str | None) -> bool:
-    """Check if stream title/release name contains the expected show title.
-    
-    Returns True when the stream title references the show, False when the
-    stream title clearly belongs to a different show (mismatched IMDB ID).
-    
-    Uses lower-case normalized substring matching with common filename
-    separators removed so both \"Bob's Burgers\" and \"Bob.s.Burgers\" match.
-    """
-    if not title:
-        return True  # no title to check against -> pass
-    
-    # Normalize the show title: lowercase, collapse special chars
-    show_normalized = re.sub(r"[^a-z0-9]", "", title.lower())
-    if not show_normalized:
-        return True
-    
-    # Combined stream text (title + name + filename)
-    text = _combined_stream_text(stream)
-    text_normalized = re.sub(r"[^a-z0-9]", "", text.lower())
-    
-    return show_normalized in text_normalized
-
-
-def _filter_streams_by_title(
-    streams: list,
-    title: str | None = None,
-) -> list:
-    """Filter streams that don't match the expected show title.
-
-    Streams whose release name doesn't contain the show title are removed
-    so they are never tried while legitimate title-matched streams exist.
-
-    When NO streams match the title, the addon returned content for a
-    different show — return empty so the caller tries a different addon
-    rather than downloading wrong content (e.g. South Park when
-    searching for One Piece).
-    """
-    if not title:
-        return streams
-
-    matched = []
-    unmatched = []
-    for stream in streams:
-        if _matches_show_title(stream, title):
-            matched.append(stream)
-        else:
-            short = (stream.title or stream.name or "")[:80].replace("\n", " ")
-            print(f"    ⚠ Stream title doesn't match \"{title}\": {short}")
-            unmatched.append(stream)
-
-    if not matched:
-        if unmatched:
-            print(f"    → No title-matched streams ({len(unmatched)} streams from addon "
-                  f"don't match \"{title}\")")
-            print(f"    → Falling back to title-unmatched streams — if wrong content is "
-                  f"downloaded, delete the file to auto-disable this addon")
-            return unmatched  # fallback: still try, user deletes wrong content = disabled_servers
-        return []
-
-    if unmatched:
-        print(f"    → {len(matched)} title-matched, {len(unmatched)} non-matching (dropped)")
-    return matched
+# _matches_show_title and _filter_streams_by_title removed:
+# The IMDb ID uniquely identifies the show, and _filter_streams_by_target_episode
+# already validates episode matching. Title filtering caused false rejections due
+# to torrent naming variations (e.g., "90 Day Fiancé" vs "90 Day The Single Life").
 
 
 def _filter_streams_by_target_episode(
@@ -344,8 +285,7 @@ def select_quality_streams(
     )
     if not usable:
         return []
-    # Warn about streams that don't match the show title
-    usable = _filter_streams_by_title(usable, title=title)
+    # _filter_streams_by_title removed — IMDb ID + episode filter are sufficient
     # Apply language filter
     usable = filter_streams_by_language(usable, preferred_languages=preferred_languages)
     if not usable:
@@ -425,7 +365,7 @@ def build_media_filename(
     return filename
 
 
-def _total_size_from_headers(headers: dict, existing_size: int) -> int:
+def _total_size_from_headers(headers: httpx.Headers, existing_size: int) -> int:
     content_range = headers.get("content-range") or headers.get("Content-Range")
     if content_range and "/" in content_range:
         total_text = content_range.rsplit("/", 1)[-1]
@@ -442,7 +382,7 @@ def _minimum_completed_video_bytes() -> int:
     return max(0, getattr(settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100)) * 1024 * 1024
 
 
-def _content_type(headers: dict) -> str:
+def _content_type(headers: httpx.Headers) -> str:
     return (headers.get("content-type") or headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
 
 

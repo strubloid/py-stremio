@@ -30,13 +30,28 @@ def search_and_download(
     working_addons: list[str] | None = None,
     progress_callback=None,
     bandwidth_limiter=None,
+    content_type: str = "auto",
 ) -> dict:
-    """Search addons for a stream and download the first usable result."""
+    """Search addons for a stream and download the first usable result.
+
+    content_type: "movie" | "series" | "auto" (default).
+    For movies, the search ID is built from the title only — no IMDB lookup.
+    For series, IMDB is resolved via Cinemeta if not provided.
+    """
+    movie_mode = content_type == "movie" or (content_type == "auto" and not season)
+
     print(f"    Looking up: {title}" + (f" S{season}E{episode}" if season else ""))
 
-    imdb_id = _resolve_imdb_id(title, imdb_id, season)
-    id_type = "series" if season else "movie"
-    stremio_id = build_stremio_id(imdb_id, title, season, episode)
+    if movie_mode:
+        # Movies: search by title only — no IMDB, no season/episode
+        stremio_id = build_stremio_id(None, title, None, None)
+        id_type = "movie"
+        if imdb_id:
+            print(f"    IMDB {imdb_id} available but not used for movie title-based search")
+    else:
+        imdb_id = _resolve_imdb_id(title, imdb_id, season)
+        id_type = "series"
+        stremio_id = build_stremio_id(imdb_id, title, season, episode)
 
     if working_addons:
         cached_streams, cached_working_urls = search_working_addons_for_streams(

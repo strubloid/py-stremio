@@ -176,36 +176,9 @@ class FakeStreamInfo:
         self.filename = filename
 
 
-def test_matches_show_title_match():
-    """Stream title containing the show name should match."""
-    stream = FakeStreamInfo(title="Bob's.Burgers.S15E21.1080p.WEBRip.x264-GROUP")
-    assert stream_download._matches_show_title(stream, "Bob's Burgers")
-
-
-def test_matches_show_title_no_match():
-    """Stream title for a different show should NOT match."""
-    stream = FakeStreamInfo(title="Some.Other.Show.S15E21.1080p.WEBRip.x264-GROUP")
-    assert not stream_download._matches_show_title(stream, "Bob's Burgers")
-
-
-def test_matches_show_title_no_title_provided():
-    """When no title is given, all streams pass."""
-    stream = FakeStreamInfo(title="Anything.At.All.S01E01.mkv")
-    assert stream_download._matches_show_title(stream, None)
-
-
-def test_matches_show_title_via_name():
-    """Should also check stream.name field, not just title."""
-    stream = FakeStreamInfo(title="S15E21.1080p", name="Bob's Burgers")
-    assert stream_download._matches_show_title(stream, "Bob's Burgers")
-
-
-def test_matches_show_title_apostrophe_variants():
-    """Both apostrophe and dot-separated variants should match."""
-    s1 = FakeStreamInfo(title="Bob.s.Burgers.S15E21.mkv")
-    assert stream_download._matches_show_title(s1, "Bob's Burgers")
-    s2 = FakeStreamInfo(title="Bobs.Burgers.S15E21.mkv")
-    assert stream_download._matches_show_title(s2, "Bob's Burgers")
+# Tests for _matches_show_title removed:
+# The helper function was removed along with _filter_streams_by_title because
+# title matching caused false rejections. The IMDb ID is the authoritative identifier.
 
 
 class TestDetectLanguages:
@@ -531,63 +504,7 @@ class TestSelectQualityStreamsWithLanguage:
         assert result == [episode]
 
 
-class TestFilterStreamsByTitle:
-    """Verify _filter_streams_by_title now actually filters mis-titled streams."""
-
-    def test_removes_non_matching_when_matched_exist(self):
-        """When some streams match the show title, non-matching ones are dropped."""
-        show = FakeStreamInfo(title="One.Piece.S23E04.1080p.WEBRip.mkv")
-        wrong = FakeStreamInfo(title="South.Park.S23E04.1080p.WEBRip.mkv")
-        result = stream_download._filter_streams_by_title([show, wrong], "One Piece")
-        assert len(result) == 1
-        assert result[0] == show
-
-    def test_returns_empty_when_none_match_title(self):
-        """When NO streams match the show title, fallback to unmatched streams."""
-        s1 = FakeStreamInfo(title="OP.S23E04.1080p.mkv")
-        s2 = FakeStreamInfo(title="Wano.Arc.1080p.mkv")
-        result = stream_download._filter_streams_by_title([s1, s2], "One Piece")
-        assert len(result) == 2  # falls back to unmatched instead of returning empty
-
-    def test_keeps_all_when_title_is_none(self):
-        """When no title is provided, all streams pass through."""
-        s1 = FakeStreamInfo(title="Some.Show.S01E01.mkv")
-        s2 = FakeStreamInfo(title="Other.Show.S01E01.mkv")
-        result = stream_download._filter_streams_by_title([s1, s2], None)
-        assert len(result) == 2
-
-    def test_removes_multiple_non_matching(self):
-        """Multiple non-matching streams are all removed when matches exist."""
-        match = FakeStreamInfo(title="Bob's.Burgers.S15E21.mkv")
-        wrong1 = FakeStreamInfo(title="South.Park.S15E21.mkv")
-        wrong2 = FakeStreamInfo(title="Family.Guy.S15E21.mkv")
-        result = stream_download._filter_streams_by_title(
-            [wrong1, match, wrong2], "Bob's Burgers"
-        )
-        assert len(result) == 1
-        assert result[0] == match
-
-    def test_select_quality_streams_drops_mismatched_titles(self, monkeypatch):
-        """select_quality_streams should drop title-mismatched streams."""
-        monkeypatch.setattr(
-            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
-        )
-        one_piece = StreamInfo(
-            title="One.Piece.S23E04.1080p.WEBRip.x264",
-            name="Torrentio",
-            url="https://dl.one.piece",
-        )
-        south_park = StreamInfo(
-            title="South.Park.S23E04.4k.WEBRip.x264",
-            name="Torrentio",
-            url="https://dl.south.park",
-        )
-        result = stream_download.select_quality_streams(
-            [south_park, one_piece],
-            "1080p",
-            target_season=23,
-            target_episode=4,
-            title="One Piece",
-        )
-        assert len(result) == 1
-        assert "One" in result[0].title or "One" in result[0].name
+# TestFilterStreamsByTitle removed:
+# The _filter_streams_by_title function was removed from the pipeline because
+# it caused false rejections when torrent release names didn't match the official
+# show title. The IMDb ID + episode filter are sufficient to ensure correct content.
