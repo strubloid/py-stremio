@@ -79,8 +79,6 @@ class DownloadService:
                 skipped += 1
                 print(_c("    skipped", DIM))
                 continue
-            if folder.folder_type == FolderType.MOVIES:
-                print(f"  • {_c(folder_display(folder), ACCENT)}")
             runnable.append(folder)
 
         def process_folder(folder: ScannedFolder) -> tuple[ScannedFolder, dict[str, Any]]:
@@ -99,7 +97,7 @@ class DownloadService:
             if result.get("skipped") is True:
                 skipped += 1
                 if folder.folder_type != FolderType.SERIES:
-                    print(_c(f"  {folder_display(folder)} skipped ({result.get('reason', 'disabled')})", YELLOW))
+                    print(_c(f"  {folder_display(folder)} skipped ({result.get('reason', 'disabled')})", YELLOW), file=sys.stderr)
                 report_folders.append({
                     "name": folder.path.name,
                     "type": folder.folder_type.value,
@@ -121,7 +119,7 @@ class DownloadService:
                 status = _c(f"✓ {downloaded_count} downloaded", GREEN) if failed_count == 0 else _c(f"! {failed_count} failed", RED)
                 if downloaded_count and failed_count:
                     status = f"{_c(f'✓ {downloaded_count}', GREEN)} / {_c(f'! {failed_count}', RED)}"
-                print(f"  {folder_display(folder)} {status}")
+                print(f"  {folder_display(folder)} {status}", file=sys.stderr)
 
             report_folders.append({
                 "name": folder.path.name,

@@ -16,8 +16,6 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
     streams = []
     url = f"{addon_url.rstrip('/')}/stream/{type_}/{id_}.json"
 
-    print(f"    Querying: {url}")
-
     try:
         response = httpx.get(
             url,
@@ -39,18 +37,29 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
                     addon_url=normalize_manifest_url(addon_url),
                 )
             )
+    except httpx.HTTPStatusError as e:
+        from py_stremio.components.errors import report_error
+
+        report_error(context=f"query_addon({_name_from_url(addon_url)})", exception=e, url=url)
     except httpx.RequestError as e:
-        print(f"    Network error: {e}")
-        from py_stremio.components.errors.error_logger import log_error
+        from py_stremio.components.errors import report_error
 
-        log_error("query_addon", e, url)
+        report_error(context=f"query_addon({_name_from_url(addon_url)})", exception=e, url=url)
     except Exception as e:
-        print(f"    Error: {e}")
-        from py_stremio.components.errors.error_logger import log_error
+        from py_stremio.components.errors import report_error
 
-        log_error("query_addon", e, url)
+        report_error(context=f"query_addon({_name_from_url(addon_url)})", exception=e, url=url)
 
     return streams
+
+
+def _name_from_url(url: str) -> str:
+    """Extract a short addon name from a URL."""
+    parts = url.split("/")
+    for part in reversed(parts):
+        if part and not part.startswith("http") and not part.startswith("?"):
+            return part[:30]
+    return parts[-2][:30] if len(parts) > 1 else "unknown"
 
 
 def configured_addon_url(addon: Any) -> str:

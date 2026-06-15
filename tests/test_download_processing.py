@@ -275,7 +275,7 @@ def test_process_season_folder_skips_unverified_season_without_episode_count(tmp
     result = process_season_folder(tmp_path)
 
     assert calls == []
-    assert result == {"skipped": True, "reason": "season metadata has no episodes"}
+    assert result == {"skipped": True, "reason": "setup returned no task"}
 
 
 

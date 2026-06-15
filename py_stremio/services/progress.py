@@ -1,4 +1,16 @@
-"""Progress bar rendering for concurrent downloads."""
+"""Progress bar rendering for concurrent downloads — with stage indicators.
+
+Each download line now shows **three stage indicators** when active::
+
+    • Below Deck S08E04 [████████████████░░░░░░] 85% 342 MB · 4.2 MB/s  (1/6) T 67% [█████░░░░░░] L 89% [████████░░░░] E 0% [░░░░░░░░░░]
+
+    T = Total servers being tested (addon discovery / preflight scan)
+    L = Live / valid servers returning streams (stream resolution)
+    E = Experimental / extra servers fallback (last-resort tier)
+
+Stages that aren't applicable show ──.  The renderer redraws at ~10 fps so
+changing numbers give a live animation feel without flooding the terminal.
+"""
 import re
 import shutil
 import sys
@@ -84,6 +96,62 @@ def _terminal_width(stream) -> int:
     return shutil.get_terminal_size(fallback=(100, 24)).columns
 
 
+# ── Stage percent helpers ────────────────────────────────────────────────
+
+_DASH = f"{DIM}──{RESET}"
+
+
+def _stage_pct(current: int | None, total: int | None) -> str:
+    """Return a short percentage string like '67%' or '──' when N/A."""
+    if current is None and total is None:
+        return _DASH
+    if current is None or total is None or total < 0:
+        return _DASH
+    if total == 0:
+        return "0%"
+    pct = int(round(max(0, min(100, current / total * 100))))
+    # Color the percentage based on value
+    if pct >= 100:
+        return f"{GREEN}{pct}%{RESET}"
+    if pct >= 50:
+        return f"{YELLOW}{pct}%{RESET}"
+    return f"{pct}%"
+
+
+def _stage_block(stage: str, event: dict[str, Any], bar_width: int = 10) -> str:
+    """Render one stage indicator block (T / L / E) from the event dict.
+
+    Uses prefixed keys::
+
+        T ← server_current / server_total
+        L ← live_current / live_total
+        E ← experimental_current / experimental_total
+
+    Returns empty string when no stage data is present in the event.
+
+    Renders as: ``T 67% [█████░░░░░]``
+    """
+    cur = event.get(f"{stage}_current")
+    tot = event.get(f"{stage}_total")
+    if cur is None and tot is None:
+        return ""
+    label = {"server": "T", "live": "L", "experimental": "E"}.get(stage, stage[:1].upper())
+    pct = _stage_pct(cur, tot)
+
+    # Small inline progress bar for this stage
+    if tot is not None and tot > 0:
+        ratio = max(0.0, min(1.0, cur / tot)) if cur else 0.0
+        filled = int(round(bar_width * ratio))
+        bar = f"[{'█' * filled}{'░' * (bar_width - filled)}]"
+    else:
+        bar = f"[{'░' * bar_width}]"
+
+    return f"{label} {pct} {bar}"
+
+
+# ── Event → line rendering ───────────────────────────────────────────────
+
+
 def _event_progress_bar(event: dict[str, Any], width: int) -> str:
     if event.get("type") == "bytes":
         return render_progress_bar(event.get("downloaded", 0), event.get("bytes_total", 0), width=width)
@@ -95,39 +163,80 @@ def _event_progress_bar(event: dict[str, Any], width: int) -> str:
         if downloaded is not None and bytes_total:
             return render_progress_bar(downloaded, bytes_total, width=width)
         return render_progress_bar(100, 100, width=width)
+    # Type-less events with stage data (addon discovery phase) — no byte information
+    # to display, so render as a clean "scanning" bar instead of using position
+    # values (current/total) as fake byte sizes.
+    if not event.get("type") and (event.get("server_total") is not None or event.get("live_total") is not None):
+        return render_progress_bar(0, 100, width=width)
     return render_progress_bar(event.get("current", 0), event.get("total", 0), width=width)
 
 
 def _progress_line(event: dict[str, Any], color: bool = False, max_width: int | None = None) -> str:
-    title = str(event.get("title") or "Download")
+    """Render one progress line with fixed-width columns for tabular alignment.
+
+    Columns (in order)::
+
+        1. Bullet   (3 chars: `` ·``)
+        2. Title    (min 15, grows with terminal, left-aligned)
+        3. Episode  (9 chars: ``S08E04  `` or ``movie   ``)
+        4. Bar      (24 or 14 chars)
+        5. Speed    (variable, e.g. `` · 4.2 MB/s``)
+        6. Position (8 chars: ``(  1/6)`` — left-aligned)
+        7. Stage    (T/L/E indicators, right-most)
+
+    All lines share the same column widths so everything aligns vertically
+    without printing a visible grid.
+    """
+    title_raw = str(event.get("title") or event.get("type", "Download"))
     season = event.get("season")
-    episode = event.get("episode")
+    episode_num = event.get("episode")
     current = event.get("current", 0)
     total = event.get("total", 0)
-    episode_label_text = f"S{season:02d}E{episode:02d}" if season and episode else "movie"
+
+    # ── Build each segment ──
+    episode_label = f"S{season:02d}E{episode_num:02d}" if season and episode_num else "movie"
     bar_width = 24 if not max_width or max_width >= 120 else 14
     bar_text = _event_progress_bar(event, bar_width)
     speed_text = _speed_label(event.get("rate_bps"))
-    episode_position_text = f"episode {current}/{total}"
+    stage_text = " ".join(filter(None, (
+        _stage_block("server", event),
+        _stage_block("live", event),
+        _stage_block("experimental", event),
+    )))
 
+    # ── Fixed-width columns ──
+    EPISODE_W = 9       # "S08E04  " or "movie   "
+    POS_W = 8           # "(  1/6)" — left-aligned
+
+    episode_col = episode_label.ljust(EPISODE_W)
+    pos_col = f"({current}/{total})".ljust(POS_W)
+
+    # ── Compute suffix (everything after title) ──
+    suffix = f" {episode_col} {bar_text}{speed_text} {pos_col} {stage_text}"
+    suffix_len = _display_len(suffix)
+
+    # ── Title column: fill available space, min 15 ──
+    bullet_len = _display_len("  · ")
     if max_width:
-        episode_position_text = f"{current}/{total}"
-        for candidate_bar_width in (bar_width, 8):
-            bar_text = _event_progress_bar(event, candidate_bar_width)
-            fixed_text = f"  •  {episode_label_text} {bar_text}{speed_text}  ({episode_position_text})"
-            title_width = max(8, max_width - len(fixed_text))
-            title_text = _truncate_label(title, title_width)
-            plain_line = f"  • {title_text} {episode_label_text} {bar_text}{speed_text}  ({episode_position_text})"
-            if len(plain_line) <= max_width or candidate_bar_width == 8:
-                title = title_text
-                break
+        title_w = max(15, max_width - bullet_len - suffix_len)
+        title = _truncate_label(title_raw, title_w)
+    else:
+        title = title_raw
+    # Left-align the title field to its max width
+    title_col = title.ljust(max(15, _display_len(title)))
 
-    title_label = _color(title, ACCENT, color)
-    episode_label = _color(episode_label_text, GREEN, color)
-    bar = _color_bar(bar_text, color)
-    speed = _color(speed_text, GREEN, color)
-    episode_position = _color(episode_position_text, DIM, color)
-    return f"  {_color('•', GREEN, color)} {title_label} {episode_label} {bar}{speed}  ({episode_position})"
+    # ── Assemble ──
+    if color:
+        bullet = _color("·", GREEN, True)
+        title_label = _color(title_col, ACCENT, True)
+        episode_label_colored = _color(episode_col, GREEN, True)
+        bar = _color_bar(bar_text, True)
+        speed = _color(speed_text, GREEN, True)
+        pos_label = _color(pos_col, DIM, True)
+        stage = _color(stage_text, YELLOW, True)
+        return f"  {bullet} {title_label} {episode_label_colored} {bar}{speed} {pos_label} {stage}"
+
+    return f"  · {title_col} {episode_col} {bar_text}{speed_text} {pos_col} {stage_text}"
 
 
 def _progress_key(event: dict[str, Any]) -> tuple[Any, Any, Any]:
@@ -194,15 +303,26 @@ def build_table(
 
 
 def make_progress_printer(stream):
-    """Return a progress renderer that keeps concurrent episodes on separate lines."""
+    """Return a progress renderer that keeps concurrent episodes on separate lines.
+
+    Each event dict can carry optional **stage keys** that get rendered as T/L/E
+    indicators at the end of the progress line::
+
+        server_current  / server_total     → T xx%  (addon preflight scan)
+        live_current    / live_total       → L xx%  (stream resolution)
+        experimental_current / experimental_total  → E xx%  (experimental fallback)
+    """
     active_lines: dict[tuple[Any, Any, Any], str] = {}
     order: list[tuple[Any, Any, Any]] = []
     rendered_count = 0
     last_redraw_at = 0.0
+    last_print_at: dict[tuple[Any, Any, Any], float] = {}
     min_redraw_interval = 0.10
+    min_print_interval = 1.0  # at most 1 line per second per episode in append-only mode
     lock = threading.Lock()
-    use_ansi_block = bool(getattr(stream, "isatty", lambda: False)())
-    max_line_width = max(40, _terminal_width(stream) - 1) if use_ansi_block else None
+    use_ansi_block = False
+    use_color = bool(getattr(stream, "isatty", lambda: False)())
+    max_line_width = _terminal_width(stream) - 1
 
     def redraw(force: bool = False) -> None:
         nonlocal rendered_count, last_redraw_at
@@ -217,7 +337,12 @@ def make_progress_printer(stream):
             if use_ansi_block:
                 stream.write(f"\r\033[K{line}\n")
             else:
+                # Rate-limit: skip this line if we printed it less than 1s ago
+                last = last_print_at.get(key)
+                if last is not None and not force and now - last < min_print_interval:
+                    continue
                 stream.write(f"{line}\n")
+                last_print_at[key] = now
         if use_ansi_block and previous_count > len(order):
             extra_lines = previous_count - len(order)
             for _ in range(extra_lines):
@@ -239,7 +364,7 @@ def make_progress_printer(stream):
             is_new_line = key not in active_lines
             if is_new_line:
                 order.append(key)
-            active_lines[key] = _progress_line(event, color=use_ansi_block, max_width=max_line_width)
+            active_lines[key] = _progress_line(event, color=use_color, max_width=max_line_width)
             redraw(force=is_new_line or event.get("type") == "episode_start")
 
     return printer

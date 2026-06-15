@@ -41,6 +41,7 @@ class DownloadConfig:
     servers: list[str] = field(default_factory=list)
     disabled_servers: list[str] = field(default_factory=list)
     metadata_last_checked: str | None = None
+    experimental_addons_enabled: bool = True
 
 
 def create_series_config(folder_path: Path) -> DownloadConfig:

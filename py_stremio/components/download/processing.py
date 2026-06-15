@@ -1,21 +1,71 @@
 """Process configured series and movie folders."""
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
 import threading
 import time
+from typing import Any, Callable
 
-from py_stremio.components.configs.config_file import load_config, save_config
+from py_stremio.components.configs.config_file import load_config, save_config, DownloadConfig
 from py_stremio.components.library.media_file import detect_existing_season_episodes, iter_video_files, scan_episode_files
 from py_stremio.components.reports.output_writer import suppress_current_thread_output
 from py_stremio.components.configs.app_settings import settings
-from py_stremio.components.state.app_state import load_state, save_state
-from py_stremio.components.stremio.stremio_client import search_and_download
+from py_stremio.components.state.app_state import load_state, save_state, DownloadState
+from py_stremio.components.stremio.stremio_client import StageTracker, search_and_download
 from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
 from py_stremio.components.download.stream_download import build_media_filename
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
 from py_stremio.components.addons.addon_search_service import preflight_discover_working_addons
 from py_stremio.components.stremio.stremio_ids import build_stremio_id
+from py_stremio.components.addons.experimental import load_experimental_urls
+
+
+# ── Task descriptor for global thread pool scheduling ────────────────────
+
+
+@dataclass
+class SeasonFolderTask:
+    """Prepared context for one season folder ready to download episodes."""
+    folder_path: Path
+    config_path: Path
+    config: DownloadConfig
+    state: DownloadState
+    title: str
+    season: int
+    quality: str
+    preferred_languages: list[str] | None
+    servers: list[str]
+    experimental_addons: list[str] | None
+    missing_episodes: list[int]
+    total_missing: int
+    bandwidth_limiter: Any = None
+    servers_lock: threading.Lock = field(default_factory=threading.Lock)
+    config_lock: threading.Lock = field(default_factory=threading.Lock)
+    progress_lock: threading.Lock = field(default_factory=threading.Lock)
+    worker_semaphore: threading.Semaphore | None = None
+    quiet_output: bool = False
+    # Accumulated results (mutated in place as episodes complete)
+    downloaded: int = 0
+    failed: int = 0
+    skipped: int = 0
+    verified_servers: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MovieFolderTask:
+    """Prepared context for one movie folder ready to download."""
+    folder_path: Path
+    config_path: Path
+    config: DownloadConfig
+    state: DownloadState
+    title: str
+    quality: str
+    preferred_languages: list[str] | None
+    servers: list[str]
+    experimental_addons: list[str] | None
+    bandwidth_limiter: Any = None
+    quiet_output: bool = False
 
 
 def scan_folder_for_episodes(folder_path: Path) -> list[dict]:
@@ -50,6 +100,234 @@ def _save_verified_server_urls(config, config_path: Path, urls: list[str] | None
     return servers
 
 
+def setup_season_folder(
+    folder_path: Path,
+    bandwidth_limiter=None,
+    quiet_output: bool = False,
+) -> SeasonFolderTask | None:
+    """Prepare a season folder for download — load config, scan, pre-flight.
+
+    Returns a ``SeasonFolderTask`` with all state needed to download episodes,
+    or ``None`` if the folder should be skipped (disabled, invalid, complete).
+    """
+    config, config_path = load_config(folder_path)
+    state = load_state(folder_path)
+
+    if not config.enabled:
+        print(f"    skipped ({folder_path.parent.name} S{config.season or 1:02d} disabled)")
+        return None
+
+    _update_disabled_servers(state, config, config_path, folder_path)
+
+    if not config.title:
+        return None
+    title = config.title
+
+    season = config.season if config.season is not None else 1
+    if config.episode_count is None:
+        return None
+
+    # ── Experimental addons ──────────────────────────────────────────
+    experimental_addons: list[str] | None = None
+    if config.experimental_addons_enabled:
+        experimental_addons = load_experimental_urls()
+        if experimental_addons:
+            print(f"    \U0001f9ea {len(experimental_addons)} experimental addon(s) loaded")
+
+    quality = _preferred_quality(config)
+    preferred_languages = _preferred_languages(config)
+
+    existing_episodes = detect_existing_season_episodes(folder_path, config.episode_count)
+    start_episode = max(1, config.current_episode_download or 1)
+    missing = _missing_episodes(folder_path, config, state, season, existing_episodes)
+
+    if missing:
+        _set_current_episode(config, config_path, missing[0])
+    elif start_episode <= (config.episode_count or 1) and config.available_episodes is None:
+        _set_current_episode(config, config_path, (config.episode_count or 1) + 1)
+
+    # ── Pre-flight addon discovery ───────────────────────────────────
+    servers = unique_manifest_urls(config.servers)
+    disabled = set(unique_manifest_urls(config.disabled_servers))
+    if disabled:
+        filtered = [s for s in servers if s not in disabled]
+        if len(filtered) < len(servers):
+            servers = filtered
+    if missing and not servers and config.imdb_id:
+        first_episode = missing[0]
+        stremio_id = build_stremio_id(config.imdb_id, title, season, first_episode)
+        discovered = preflight_discover_working_addons("series", stremio_id)
+        if discovered:
+            servers = discovered
+            _save_verified_server_urls(config, config_path, servers)
+            print(f"      Using {len(discovered)} pre-confirmed addons")
+        else:
+            print(f"      No working addons found — will search all per-episode")
+    elif not servers and missing:
+        print(f"      No server cache and no IMDB ID — will search all per-episode")
+
+    return SeasonFolderTask(
+        folder_path=folder_path,
+        config_path=config_path,
+        config=config,
+        state=state,
+        title=title,
+        season=season,
+        quality=quality,
+        preferred_languages=preferred_languages,
+        servers=servers,
+        experimental_addons=experimental_addons,
+        missing_episodes=missing,
+        total_missing=len(missing),
+        bandwidth_limiter=bandwidth_limiter,
+        quiet_output=quiet_output,
+    )
+
+
+def download_episode_task(
+    task: SeasonFolderTask,
+    index: int,
+    episode_num: int,
+    progress_callback: Callable | None = None,
+) -> dict:
+    """Download a single episode from a prepared ``SeasonFolderTask``.
+
+    ``index`` is the 1-based position within the task's missing_episodes list
+    (used for progress display).  Returns the same dict as the inner
+    ``download_episode`` closure.
+    """
+    return _do_download_one_episode(task, index, episode_num, progress_callback)
+
+
+def _do_download_one_episode(
+    task: SeasonFolderTask,
+    index: int,
+    episode_num: int,
+    progress_callback: Callable | None = None,
+) -> dict:
+    """Download one episode from a prepared task — extracted logic."""
+    last_downloaded_bytes = 0
+    last_total_bytes = 0
+    last_rate_bps = 0.0
+    last_progress_bytes = 0
+    last_progress_at = time.monotonic()
+    last_bytes_event: dict = {}
+    stage_tracker = StageTracker()
+
+    def emit(event: dict) -> None:
+        if progress_callback:
+            with task.progress_lock:
+                progress_callback(event)
+
+    # Core identity fields that must always reach the progress renderer
+    _identity_fields = {
+        "title": task.title,
+        "season": task.season,
+        "episode": episode_num,
+        "current": index,
+        "total": task.total_missing,
+    }
+
+    emit({
+        "type": "episode_start",
+        **_identity_fields,
+        **stage_tracker.to_dict(),
+    })
+
+    def _emit_with_stage() -> None:
+        # Always carry identity fields (title, season, episode, position)
+        # even when last_bytes_event has not been set yet (pre-bytes stage
+        # events from the addon search pipeline).
+        payload = {
+            **last_bytes_event,
+            **stage_tracker.to_dict(),
+        }
+        for k in ("title", "season", "episode", "current", "total"):
+            if k not in payload or payload[k] is None:
+                payload[k] = _identity_fields.get(k)
+        if payload:
+            emit(payload)
+
+    stage_tracker.on_update(_emit_with_stage)
+
+    def on_bytes(downloaded_bytes: int, total_bytes: int) -> None:
+        nonlocal last_downloaded_bytes, last_total_bytes, last_rate_bps, last_progress_bytes, last_progress_at, last_bytes_event
+        now = time.monotonic()
+        elapsed = max(0.001, now - last_progress_at)
+        delta = max(0, downloaded_bytes - last_progress_bytes)
+        if delta:
+            last_rate_bps = delta / elapsed
+            last_progress_bytes = downloaded_bytes
+            last_progress_at = now
+        last_downloaded_bytes = downloaded_bytes
+        last_total_bytes = total_bytes
+        last_bytes_event = {
+            "type": "bytes",
+            "title": task.title,
+            "season": task.season,
+            "episode": episode_num,
+            "current": index,
+            "total": task.total_missing,
+            "downloaded": downloaded_bytes,
+            "bytes_total": total_bytes,
+            "rate_bps": last_rate_bps,
+            **stage_tracker.to_dict(),
+        }
+        emit(last_bytes_event)
+
+    # Guard against previously-downloaded-but-deleted files
+    generated_filename = _generated_episode_filename(task.folder_path, task.config, task.season, episode_num)
+    legacy_key = f"episode_{episode_num}.mkv"
+    bad_servers: list[str] = []
+    for state_key in (generated_filename, legacy_key):
+        if task.state.is_downloaded(state_key):
+            previous_url = task.state.get_server(state_key)
+            if previous_url:
+                bad_servers.append(previous_url)
+    if bad_servers:
+        with task.config_lock:
+            new_disabled = unique_manifest_urls(bad_servers + task.config.disabled_servers)
+            if new_disabled != unique_manifest_urls(task.config.disabled_servers):
+                task.config.disabled_servers = new_disabled
+                save_config(task.config_path, task.config)
+    active_servers = [s for s in task.servers if s not in bad_servers]
+    if bad_servers:
+        print(f"    \u26a0 Previous server(s) delivered wrong content — excluded from retry")
+
+    result = search_and_download(
+        title=task.title,
+        imdb_id=task.config.imdb_id,
+        season=task.season,
+        episode=episode_num,
+        folder_path=str(task.folder_path),
+        preferred_quality=task.quality,
+        preferred_languages=task.preferred_languages,
+        working_addons=active_servers,
+        progress_callback=on_bytes,
+        bandwidth_limiter=task.bandwidth_limiter,
+        experimental_addons=task.experimental_addons,
+        stage_tracker=stage_tracker,
+    )
+
+    emit({
+        "type": "episode_done",
+        "title": task.title,
+        "season": task.season,
+        "episode": episode_num,
+        "current": index,
+        "total": task.total_missing,
+        "success": bool(result.get("success")),
+        "downloaded": last_downloaded_bytes,
+        "bytes_total": last_total_bytes,
+        "rate_bps": last_rate_bps,
+    })
+
+    return {"episode": episode_num, "result": result}
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
 def _update_disabled_servers(
     state,
     config,
@@ -65,7 +343,7 @@ def _update_disabled_servers(
     """
     new_disabled: list[str] = []
     for filename, record in state.items.items():
-        if not record.server and not record.addon_url:  # server not recorded
+        if not record.server and not record.addon_url:
             continue
         server_url = record.server or record.addon_url
         file_path = folder_path / filename
@@ -160,6 +438,12 @@ def _is_resume_candidate(folder_path: Path, config, season: int, episode: int, s
 def _missing_episodes(folder_path: Path, config, state, season: int, existing_episodes: set[int]) -> list[int]:
     final_episode = config.episode_count or 20
     start_episode = max(1, config.current_episode_download or 1)
+    # When current_episode_download has been advanced past the season's
+    # final episode, all episodes were already attempted.  Reset to 1 so
+    # the scan can still detect files that were deleted from disk since
+    # the last successful run.
+    if start_episode > final_episode:
+        start_episode = 1
     missing = []
     if config.available_episodes is not None:
         candidates = [
@@ -196,6 +480,9 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
     return missing
 
 
+# ── Backward-compatible season folder processor ────────────────────
+
+
 def process_season_folder(
     folder_path: Path,
     progress_callback=None,
@@ -204,67 +491,22 @@ def process_season_folder(
     worker_semaphore: threading.Semaphore | None = None,
     quiet_output: bool = False,
 ) -> dict:
-    """Process a season folder and download missing episodes from Stremio."""
-    config, config_path = load_config(folder_path)
-    state = load_state(folder_path)
-
-    if not config.enabled:
-        return {"skipped": True, "reason": "disabled"}
-
-    # ── Disabled-server cleanup ────────────────────────────────────────
-    # Scan all state entries for files that were downloaded but are now
-    # missing (user deleted = wrong content). Disable those servers so they
-    # are never queried again for this folder.
-    _update_disabled_servers(state, config, config_path, folder_path)
-
-    if not config.title:
-        return {"skipped": True, "reason": "no title in config"}
-    title = config.title
-
-    season = config.season if config.season is not None else 1
-    if config.episode_count is None:
-        return {"skipped": True, "reason": "season metadata has no episodes"}
-
-    quality = _preferred_quality(config)
-    preferred_languages = _preferred_languages(config)
-    final_episode = config.episode_count
-    episodes = scan_folder_for_episodes(folder_path)
-    existing_episodes = detect_existing_season_episodes(folder_path, config.episode_count)
-    start_episode = max(1, config.current_episode_download or 1)
-    missing = _missing_episodes(folder_path, config, state, season, existing_episodes)
-
-    if missing:
-        _set_current_episode(config, config_path, missing[0])
-    elif start_episode <= final_episode and config.available_episodes is None:
-        _set_current_episode(config, config_path, final_episode + 1)
-
-    # ── Pre-flight addon discovery ──────────────────────────────────────────
-    # If the server cache is empty, scan ALL addons once using the first
-    # missing episode to discover which addons actually have content for this
-    # show.  Subsequent episode downloads will only query these confirmed
-    # working addons instead of the full ~65-addon list every time.
-    servers = unique_manifest_urls(config.servers)
-    disabled = set(unique_manifest_urls(config.disabled_servers))
-    if disabled:
-        filtered = [s for s in servers if s not in disabled]
-        if len(filtered) < len(servers):
-            print(f"    Excluded {len(servers) - len(filtered)} disabled server(s) that delivered wrong content")
-            servers = filtered
-    if missing and not servers and config.imdb_id:
-        print(f"\n  {'='*50}")
-        print(f"  Pre-flight: discovering working addons for {title}")
-        print(f"  {'='*50}")
-        first_episode = missing[0]
-        stremio_id = build_stremio_id(config.imdb_id, title, season, first_episode)
-        discovered = preflight_discover_working_addons("series", stremio_id)
-        if discovered:
-            servers = discovered
-            _save_verified_server_urls(config, config_path, servers)
-            print(f"  Using {len(discovered)} pre-confirmed addons for this season\n")
-        else:
-            print(f"  Pre-flight found no working addons — will search all per-episode\n")
-    elif not servers and missing:
-        print(f"  No server cache and no IMDB ID — will search all addons per-episode\n")
+    """Process a season folder — backward-compatible wrapper around the task system."""
+    task = setup_season_folder(
+        folder_path=folder_path,
+        bandwidth_limiter=bandwidth_limiter,
+        quiet_output=quiet_output,
+    )
+    if task is None:
+        return {"skipped": True, "reason": "setup returned no task"}
+    if not task.missing_episodes:
+        episodes = scan_folder_for_episodes(folder_path)
+        for ep in episodes:
+            if ep["path"].exists() and not task.state.is_downloaded(ep["filename"]):
+                task.state.add_download(ep["filename"], task.quality, "stremio")
+                task.skipped += 1
+        save_state(folder_path, task.state)
+        return {"downloaded": 0, "skipped": task.skipped, "failed": 0}
 
     downloaded = 0
     skipped = 0
@@ -273,98 +515,13 @@ def process_season_folder(
     servers_lock = threading.Lock()
     config_lock = threading.Lock()
     progress_lock = threading.Lock()
-    total_missing = len(missing)
+    total_missing = task.total_missing
+    missing = task.missing_episodes
 
     def emit(event: dict) -> None:
         if progress_callback:
             with progress_lock:
                 progress_callback(event)
-
-    def download_episode(index: int, episode_num: int) -> dict:
-        last_downloaded_bytes = 0
-        last_total_bytes = 0
-        last_rate_bps = 0.0
-        last_progress_bytes = 0
-        last_progress_at = time.monotonic()
-        emit({
-            "type": "episode_start",
-            "title": title,
-            "season": season,
-            "episode": episode_num,
-            "current": index,
-            "total": total_missing,
-        })
-
-        def on_bytes(downloaded_bytes: int, total_bytes: int) -> None:
-            nonlocal last_downloaded_bytes, last_total_bytes, last_rate_bps, last_progress_bytes, last_progress_at
-            now = time.monotonic()
-            elapsed = max(0.001, now - last_progress_at)
-            delta = max(0, downloaded_bytes - last_progress_bytes)
-            if delta:
-                last_rate_bps = delta / elapsed
-                last_progress_bytes = downloaded_bytes
-                last_progress_at = now
-            last_downloaded_bytes = downloaded_bytes
-            last_total_bytes = total_bytes
-            emit({
-                "type": "bytes",
-                "title": title,
-                "season": season,
-                "episode": episode_num,
-                "current": index,
-                "total": total_missing,
-                "downloaded": downloaded_bytes,
-                "bytes_total": total_bytes,
-                "rate_bps": last_rate_bps,
-            })
-
-        print(f"  Downloading {title} S{season:02d}E{episode_num:02d}")
-        # If this episode was previously downloaded but the file is missing
-        # (user deleted it = wrong content), exclude the server that provided it
-        generated_filename = _generated_episode_filename(folder_path, config, season, episode_num)
-        legacy_key = f"episode_{episode_num}.mkv"
-        bad_servers: list[str] = []
-        for state_key in (generated_filename, legacy_key):
-            if state.is_downloaded(state_key):
-                previous_url = state.get_server(state_key)
-                if previous_url:
-                    bad_servers.append(previous_url)
-        # Persist bad servers to disabled_servers so they never get re-queried
-        if bad_servers:
-            with config_lock:
-                new_disabled = unique_manifest_urls(bad_servers + config.disabled_servers)
-                if new_disabled != unique_manifest_urls(config.disabled_servers):
-                    config.disabled_servers = new_disabled
-                    save_config(config_path, config)
-        with servers_lock:
-            active_servers = [s for s in servers if s not in bad_servers]
-        if bad_servers:
-            print(f"    ⚠ Previous server(s) delivered wrong content — excluded from retry")
-        result = search_and_download(
-            title=title,
-            imdb_id=config.imdb_id,
-            season=season,
-            episode=episode_num,
-            folder_path=str(folder_path),
-            preferred_quality=quality,
-            preferred_languages=preferred_languages,
-            working_addons=active_servers,
-            progress_callback=on_bytes,
-            bandwidth_limiter=bandwidth_limiter,
-        )
-        emit({
-            "type": "episode_done",
-            "title": title,
-            "season": season,
-            "episode": episode_num,
-            "current": index,
-            "total": total_missing,
-            "success": bool(result.get("success")),
-            "downloaded": last_downloaded_bytes,
-            "bytes_total": last_total_bytes,
-            "rate_bps": last_rate_bps,
-        })
-        return {"episode": episode_num, "result": result}
 
     def _download_episode_with_slot(index: int, episode_num: int) -> dict:
         if worker_semaphore:
@@ -372,35 +529,35 @@ def process_season_folder(
         try:
             if quiet_output:
                 with suppress_current_thread_output():
-                    return download_episode(index, episode_num)
-            return download_episode(index, episode_num)
+                    return _do_download_one_episode(task, index, episode_num, progress_callback)
+            return _do_download_one_episode(task, index, episode_num, progress_callback)
         finally:
             if worker_semaphore:
                 worker_semaphore.release()
 
     def apply_result(episode_num: int, result: dict, completed_successes: set[int] | None = None) -> None:
-        nonlocal downloaded, failed, servers, verified_servers
+        nonlocal downloaded, failed, verified_servers
         if result.get("success"):
             filename = Path(result.get("filename", f"episode_{episode_num}.mkv")).name
             server = result.get("successful_url") or ""
-            state.add_download(filename, result.get("quality", quality), "stremio", server=server)
-            save_state(folder_path, state)  # persist immediately after each download
+            task.state.add_download(filename, result.get("quality", task.quality), "stremio", server=server)
+            save_state(folder_path, task.state)
             downloaded += 1
             successful_urls = _verified_urls_from_result(result)
             for successful_url in successful_urls:
                 if successful_url and successful_url not in verified_servers:
                     verified_servers.append(successful_url)
-                    print(f"    ✓ Verified download server: {successful_url}")
+                    print(f"    \u2713 Verified download server: {successful_url}")
             with servers_lock:
-                servers = _save_verified_server_urls(config, config_path, verified_servers)
+                task.servers = _save_verified_server_urls(task.config, task.config_path, verified_servers)
             if completed_successes is not None:
                 completed_successes.add(episode_num)
                 next_cursor = min((ep for ep in missing if ep not in completed_successes), default=max(missing) + 1)
-                _set_current_episode(config, config_path, next_cursor)
+                _set_current_episode(task.config, task.config_path, next_cursor)
             else:
-                _set_current_episode(config, config_path, episode_num + 1)
+                _set_current_episode(task.config, task.config_path, episode_num + 1)
         else:
-            state.mark_failed(f"episode_{episode_num}", result.get("error", "failed"), 1)
+            task.state.mark_failed(f"episode_{episode_num}", result.get("error", "failed"), 1)
             failed += 1
 
     max_attempts = getattr(settings, "MAX_DOWNLOAD_ATTEMPTS", 5)
@@ -408,7 +565,6 @@ def process_season_folder(
     completed_successes: set[int] = set()
 
     if max_workers > 1 and total_missing > 1:
-        # Parallel with retry rounds — try failed episodes again in subsequent rounds
         for round_num in range(max_attempts):
             if shutdown_requested() or not queue:
                 break
@@ -442,7 +598,6 @@ def process_season_folder(
             if queue:
                 print(f"  -> {len(queue)} episodes deferred to next round")
     else:
-        # Sequential with retry rounds
         for round_num in range(max_attempts):
             if shutdown_requested() or not queue:
                 break
@@ -451,8 +606,8 @@ def process_season_folder(
             if round_num > 0:
                 print(f"  Round {round_num + 1}: retrying {len(round_items)} deferred episodes")
             for index, episode_num in enumerate(round_items, start=1):
-                _set_current_episode(config, config_path, episode_num)
-                item = download_episode(index, episode_num)
+                _set_current_episode(task.config, task.config_path, episode_num)
+                item = _download_episode_with_slot(index, episode_num)
                 if item["result"].get("success"):
                     apply_result(item["episode"], item["result"])
                 elif item["result"].get("permanent_failure"):
@@ -462,28 +617,39 @@ def process_season_folder(
             if queue:
                 print(f"  -> {len(queue)} episodes deferred to next round")
 
-    # Mark episodes that exhausted all rounds as permanently failed
     for episode_num in queue:
-        state.mark_failed(f"episode_{episode_num}", "All retry rounds exhausted", max_attempts)
+        task.state.mark_failed(f"episode_{episode_num}", "All retry rounds exhausted", max_attempts)
         failed += 1
 
-    if missing:
+    if task.missing_episodes:
         with servers_lock:
-            servers = _save_verified_server_urls(config, config_path, verified_servers)
+            task.servers = _save_verified_server_urls(task.config, task.config_path, verified_servers)
+        if not verified_servers and len(task.missing_episodes) < total_missing:
+            _save_verified_server_urls(task.config, task.config_path, None)
 
+    episodes = scan_folder_for_episodes(folder_path)
     for ep in episodes:
-        if ep["path"].exists() and not state.is_downloaded(ep["filename"]):
-            state.add_download(ep["filename"], quality, "stremio")
+        if ep["path"].exists() and not task.state.is_downloaded(ep["filename"]):
+            task.state.add_download(ep["filename"], task.quality, "stremio")
             skipped += 1
-
-    save_state(folder_path, state)
+    save_state(folder_path, task.state)
     return {"downloaded": downloaded, "skipped": skipped, "failed": failed}
+
+
+# ── Movie folder processing ────────────────────────────────────────
 
 
 def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_limiter=None) -> dict:
     """Process a movie folder and download missing content from Stremio."""
     config, config_path = load_config(folder_path)
     state = load_state(folder_path)
+
+    # ── Load experimental addons (last-resort fallback) ─────────────────
+    experimental_addons: list[str] | None = None
+    if config.experimental_addons_enabled:
+        experimental_addons = load_experimental_urls()
+        if experimental_addons:
+            print(f"  \U0001f9ea {len(experimental_addons)} experimental addon(s) loaded (last-resort)")
 
     if not config.enabled:
         return {"skipped": True, "reason": "disabled"}
@@ -517,8 +683,6 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
     preferred_languages = _preferred_languages(config)
 
     # Pre-flight addon discovery for movies
-    # Always run pre-flight to find which addons serve this title.
-    # Use IMDB ID if available, otherwise title-based search ID.
     stremio_id = build_stremio_id(config.imdb_id, title, None, None) if config.imdb_id else build_stremio_id(None, title, None, None)
     if not servers:
         print(f"\n  {'='*50}")
@@ -535,6 +699,41 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
         print(f"  Using {len(servers)} cached server(s)\n")
 
     print(f"  Searching for movie: {title}")
+    movie_stage_tracker = StageTracker()
+    # Seed with title so stage-only events show the movie name
+    movie_last_bytes: dict = {
+        "type": "episode_start",
+        "title": title,
+        "season": None,
+        "episode": None,
+        "current": 1,
+        "total": 1,
+    }
+
+    def _movie_emit_stage() -> None:
+        if progress_callback:
+            progress_callback({**movie_last_bytes, **movie_stage_tracker.to_dict()})
+
+    movie_stage_tracker.on_update(_movie_emit_stage)
+    # Emit initial state so T/L/E bars appear from the start
+    _movie_emit_stage()
+
+    def on_movie_bytes(downloaded_bytes: int, total_bytes: int) -> None:
+        nonlocal movie_last_bytes
+        movie_last_bytes = {
+            "type": "bytes",
+            "title": title,
+            "season": None,
+            "episode": None,
+            "current": 1,
+            "total": 1,
+            "downloaded": downloaded_bytes,
+            "total_size": total_bytes,
+            **movie_stage_tracker.to_dict(),
+        }
+        if progress_callback:
+            progress_callback(movie_last_bytes)
+
     result = search_and_download(
         title=title,
         imdb_id=config.imdb_id,
@@ -545,17 +744,10 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
         preferred_languages=preferred_languages,
         working_addons=servers,
         content_type="movie",
-        progress_callback=lambda downloaded, total: progress_callback({
-            "type": "bytes",
-            "title": title,
-            "season": None,
-            "episode": None,
-            "current": 1,
-            "total": 1,
-            "downloaded": downloaded,
-            "bytes_total": total,
-        }) if progress_callback else None,
+        progress_callback=on_movie_bytes,
         bandwidth_limiter=bandwidth_limiter,
+        experimental_addons=experimental_addons,
+        stage_tracker=movie_stage_tracker,
     )
 
     if result.get("success"):
@@ -567,5 +759,5 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
         save_state(folder_path, state)
         return {"downloaded": 1, "skipped": 0}
 
-    _save_verified_server_urls(config, config_path, [])
-    return {"downloaded": 0, "skipped": 0, "failed": 1, "error": result.get("error")}
+    print(f"    No working streams found for movie: {title}")
+    return {"downloaded": 0, "skipped": 0, "failed": 1, "error": result.get("error", "No streams resolved")}

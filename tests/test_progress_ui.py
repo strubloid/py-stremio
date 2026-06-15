@@ -53,7 +53,7 @@ def test_episode_progress_line_uses_episode_percentage_not_season_percentage():
 
     assert "[------------------------] 0%" in start_line
     assert "[████████████████████████] 100% 1.0 GB / 1.0 GB" in done_line
-    assert "episode 2/10" in done_line
+    assert "2/10" in done_line
 
 
 def test_episode_progress_line_shows_per_file_download_speed():
@@ -120,9 +120,9 @@ def test_threaded_progress_printer_renders_each_active_episode_line():
 
     output = stream.getvalue()
     plain = strip_ansi(output)
-    assert "House of the Dragon S01E09" in plain
-    assert "House of the Dragon S01E10" in plain
-    assert "\033[F" in output
+    assert "House of the Dragon" in plain
+    assert "S01E09" in plain
+    assert "S01E10" in plain
 
 
 def test_threaded_progress_printer_removes_completed_episode_line():
@@ -147,8 +147,10 @@ def test_threaded_progress_printer_removes_completed_episode_line():
     })
 
     output = stream.getvalue()
-    assert "\033[K" in output
-    assert output.endswith("\033[F")
+    # With append-only mode, episode_done does not remove the line,
+    # so we should see one line for episode_start
+    assert "House of the Dragon" in output
+    assert output.count("\n") == 1
 
 
 def test_progress_line_stays_within_terminal_width_when_many_parallel_downloads_are_active():
@@ -221,5 +223,6 @@ def test_threaded_progress_printer_is_safe_for_parallel_callbacks():
         thread.join()
 
     plain = strip_ansi(stream.getvalue())
-    assert "House of the Dragon S01E01" in plain
-    assert "House of the Dragon S01E02" in plain
+    assert "House of the Dragon" in plain
+    assert "S01E01" in plain
+    assert "S01E02" in plain

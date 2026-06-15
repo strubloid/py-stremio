@@ -199,10 +199,13 @@ class AppService:
             validate_and_update()
 
         elif choice == "6":
+            self._menu_experimental_addons()
+
+        elif choice == "7" or choice == "6":
             print("Bye.")
 
         else:
-            print(_c("Unknown option. Choose 1-6.", RED))
+            print(_c("Unknown option. Choose 1-7.", RED))
 
     # ------------------------------------------------------------------
     # UI helpers
@@ -225,7 +228,8 @@ class AppService:
         print("  3  ⬇   Download missing episodes/movies")
         print("  4  🔍  Discover new addon URLs")
         print("  5  🛠  Validate addon URLs")
-        print("  6  🚪  Exit")
+        print("  6  🧪  Experimental addons")
+        print("  7  🚪  Exit")
 
     def _phase(self, title: str, detail: str | None = None) -> None:
         if title:
@@ -246,3 +250,22 @@ class AppService:
             return max(1, int(answer))
         except ValueError:
             return default
+
+    def _menu_experimental_addons(self) -> None:
+        """Submenu for experimental addon management."""
+        from py_stremio.components.addons.experimental import (
+            EXPERIMENTAL_FILE,
+            load_experimental_urls,
+        )
+
+        print(_c("\n🧪 Experimental Addons", ACCENT))
+        urls = load_experimental_urls()
+        if urls:
+            print(f"  {len(urls)} URL(s) loaded from {EXPERIMENTAL_FILE}:")
+            for url in urls:
+                print(f"    └─ {url}")
+        else:
+            print(f"  No experimental addons loaded")
+            print(f"  Add URLs to {EXPERIMENTAL_FILE} at project root")
+            print("  (one per line, '#' for comments)")
+        input("\n  Press Enter to return to menu › ")
