@@ -217,7 +217,7 @@ Scanner.scan()
 ```
 
 - Queries Stremio addons concurrently (10 at a time via ThreadPoolExecutor)
-- Per-episode progress bars with bandwidth limiting and speed display
+- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode)
 - Multi-threaded download support with configurable workers and speed %
 - Partial download resume via .part files and Range headers
 - Working addon URL tracking in config (servers list)
@@ -429,13 +429,13 @@ absolute numbering scheme.
 ### Thread-Aware Output
 
 When `DOWNLOAD_THREADS > 1`, the application installs a thread-aware stdout filter
-so worker threads don't garble the concurrent progress UI. Each episode gets its own
-line that updates in-place via ANSI escape codes.
+so worker threads don't garble the concurrent progress UI. Progress output is
+append-only with per-episode rate limiting (~1 line/sec/episode).
 
 ## CLI Commands
 
 ```bash
-# Interactive menu
+# Interactive menu (no thread prompt — uses config value silently)
 py-stremio
 
 # Individual steps (menu or CLI)
@@ -452,6 +452,10 @@ py-stremio 4 50            # Menu shortcut 4, 50% speed (threads from settings)
 
 # Validate addons
 py-stremio --validate      # or: py-stremio 5
+
+# Cron wrapper (5 threads, 80% speed)
+py-stremio-cron 2          # update metadata (for crontab)
+py-stremio-cron 3          # download missing (for crontab)
 
 # Legacy paths (superseded by `py-stremio`, kept for reference)```
 ```
@@ -507,7 +511,7 @@ py-stremio --validate      # or: py-stremio 5
 | MAX_DOWNLOAD_ATTEMPTS | 5 | Retry limit per quality |
 | LIMIT_EPISODES | 0 | Max episodes per run (0=unlimited) |
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min size for valid completed file |
-| DOWNLOAD_THREADS | 1 | Parallel download workers |
+| DOWNLOAD_THREADS | 2 | Parallel download workers |
 | METADATA_CACHE_HOURS | 24 | Full-run metadata cache TTL; option 2 / `--metadata` forces refresh |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
 | INTERNET_MAX_SPEED_MBPS | 100 | Max Mbps for bandwidth calculation |
@@ -565,11 +569,14 @@ Uses regex patterns in `media_files.parse_episode_number()`:
 
 - Modern Stremio addon-based download path is primary workflow
 - Concurrent addon search (10 at a time, ~12s for 57 addons)
+- **Preflight optimization**: no_working_addons flag skips per-episode re-scan when preflight finds nothing
+- **`py-stremio-cron` wrapper**: 5 threads + 80% speed for crontab
+- **No thread prompt**: interactive menu uses config value silently
 - RealDebrid integration functional (magnet → torrent → direct URL with polling)
 - Torrentio RD proxy error-page detection for DMCA'd/blocked content
 - Quality fallback via descending sort (4K → 1080p → 720p → 480p → 360p)
 - Minimum file size guard against placeholder/trailer files
-- Per-episode progress bars with speed display and bandwidth limiting
+- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode)
 - Multi-threaded concurrent downloads with thread-aware output
 - Partial download resume (.part files + Range headers)
 - Working addon URL tracking and caching

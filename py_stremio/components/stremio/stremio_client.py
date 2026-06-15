@@ -108,6 +108,7 @@ def search_and_download(
     content_type: str = "auto",
     experimental_addons: list[str] | None = None,
     stage_tracker: StageTracker | None = None,
+    skip_full_search: bool = False,
 ) -> dict:
     """Search addons for a given movie/episode, try to download it.
 
@@ -116,6 +117,10 @@ def search_and_download(
       2. Title-based          — fallback when no IMDB or IMDB fails
     Each strategy is tried in order until one succeeds.
     For series, IMDB is resolved via Cinemeta if not provided.
+
+    ``skip_full_search``: When True and there are no cached working addons,
+    skip the full search of all 54+ addons. Used when preflight already
+    found zero working addons for this content.
     """
     movie_mode = content_type == "movie" or (content_type == "auto" and not season)
 
@@ -160,6 +165,7 @@ def search_and_download(
             progress_callback=progress_callback,
             bandwidth_limiter=bandwidth_limiter,
             stage_tracker=stage_tracker,
+            skip_full_search=skip_full_search,
         )
         last_result = result
         if result.get("success"):
@@ -207,6 +213,7 @@ def _search_single_id(
     progress_callback=None,
     bandwidth_limiter=None,
     stage_tracker: StageTracker | None = None,
+    skip_full_search: bool = False,
 ) -> dict:
     """Search addons for a single identifier and try to download."""
 
@@ -270,6 +277,18 @@ def _search_single_id(
         return {"success": False, "error": "No streams found", "working_urls": combined_working_urls}
 
     # No cached addons — search all
+    if skip_full_search:
+        # Preflight already searched all addons and found nothing for this
+        # content.  Skip the full per-episode re-scan to avoid wasting
+        # 30+ seconds on every missing episode.
+        print(f"    Preflight found no working addons — skipping full search")
+        if stage_tracker:
+            stage_tracker.set_servers(0)
+            stage_tracker.server_done(0)
+            stage_tracker.set_live(0)
+            stage_tracker.live_resolved(0)
+        return {"success": False, "error": "Preflight found no working addons",
+                "working_urls": []}
     streams, working_urls = search_all_addons_for_streams(id_type, stremio_id, working_addons)
     if stage_tracker:
         # Mark T complete — we got streams or not

@@ -50,6 +50,10 @@ class SeasonFolderTask:
     failed: int = 0
     skipped: int = 0
     verified_servers: list[str] = field(default_factory=list)
+    # When True, preflight searched all addons and found zero working addons —
+    # skip the full per-episode addon search to avoid re-searching all
+    # 54 addons for every single missing episode.
+    no_working_addons: bool = False
 
 
 @dataclass
@@ -153,6 +157,7 @@ def setup_season_folder(
         filtered = [s for s in servers if s not in disabled]
         if len(filtered) < len(servers):
             servers = filtered
+    no_working_addons = False
     if missing and not servers and config.imdb_id:
         first_episode = missing[0]
         stremio_id = build_stremio_id(config.imdb_id, title, season, first_episode)
@@ -163,8 +168,11 @@ def setup_season_folder(
             print(f"      Using {len(discovered)} pre-confirmed addons")
         else:
             print(f"      No working addons found — will search all per-episode")
+
+        no_working_addons = len(discovered) == 0
     elif not servers and missing:
         print(f"      No server cache and no IMDB ID — will search all per-episode")
+        no_working_addons = True
 
     return SeasonFolderTask(
         folder_path=folder_path,
@@ -181,6 +189,7 @@ def setup_season_folder(
         total_missing=len(missing),
         bandwidth_limiter=bandwidth_limiter,
         quiet_output=quiet_output,
+        no_working_addons=no_working_addons,
     )
 
 
@@ -307,6 +316,7 @@ def _do_download_one_episode(
         bandwidth_limiter=task.bandwidth_limiter,
         experimental_addons=task.experimental_addons,
         stage_tracker=stage_tracker,
+        skip_full_search=task.no_working_addons,
     )
 
     emit({
@@ -621,11 +631,9 @@ def process_season_folder(
         task.state.mark_failed(f"episode_{episode_num}", "All retry rounds exhausted", max_attempts)
         failed += 1
 
-    if task.missing_episodes:
+    if task.missing_episodes and verified_servers:
         with servers_lock:
             task.servers = _save_verified_server_urls(task.config, task.config_path, verified_servers)
-        if not verified_servers and len(task.missing_episodes) < total_missing:
-            _save_verified_server_urls(task.config, task.config_path, None)
 
     episodes = scan_folder_for_episodes(folder_path)
     for ep in episodes:

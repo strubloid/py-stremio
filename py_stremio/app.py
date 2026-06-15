@@ -176,19 +176,29 @@ class AppService:
         choice = input(_c("Select 1-6 › ", ACCENT)).strip()
 
         if choice == "1" or choice == "":
+            
+            ## asking for the max workers
             max_workers = self._ask_download_threads()
+            
+            ## scanning folders
             self._phase("\n🔎 Library sync", "scanning folders and refreshing metadata...")
             folders = self.scanner.run_with_metadata(self.metadata, quiet=False)
             self._phase("", f"found {len(folders)} managed folder(s)")
+            
+            ## downloading missing items
             self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s)...")
             self.downloader.run(folders, quiet=True, max_workers=max_workers)
 
         elif choice == "2":
+            
+            ## updating the library metadata
             print(_c("\n📚 Update library", ACCENT))
             folders = self.scanner.run()
             self.metadata.run(folders=folders, quiet=False)
 
         elif choice == "3":
+            ## downloading missing items
+            self._phase("\n⬇ Downloads", f"starting with {self._ask_download_threads()} thread(s)...")
             self.downloader.run(quiet=True, max_workers=self._ask_download_threads())
 
         elif choice == "4":
@@ -196,9 +206,13 @@ class AppService:
             discover_new_addons()
 
         elif choice == "5":
+            ## validating addon URLs
+            self._phase("\n🛠  Validate addon URLs", "testing addons before download...")
             validate_and_update()
 
         elif choice == "6":
+            ## experimental addons
+            self._phase("\n🧪 Experimental Addons", "managing experimental addons...")
             self._menu_experimental_addons()
 
         elif choice == "7" or choice == "6":
@@ -242,14 +256,8 @@ class AppService:
         print(_c("\nInterrupted — shutting down workers and exiting.", YELLOW), flush=True)
 
     def _ask_download_threads(self) -> int:
-        default = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
-        answer = input(_c(f"Download threads [{default}] › ", ACCENT)).strip()
-        if not answer:
-            return default
-        try:
-            return max(1, int(answer))
-        except ValueError:
-            return default
+        """Return thread count from config without prompting."""
+        return max(1, getattr(settings, "DOWNLOAD_THREADS", 5))
 
     def _menu_experimental_addons(self) -> None:
         """Submenu for experimental addon management."""

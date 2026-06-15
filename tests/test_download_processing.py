@@ -214,7 +214,7 @@ def test_process_season_folder_does_not_clear_servers_after_transient_failure(tm
     assert saved["servers"] == ["https://successful-addon"]
 
 
-def test_process_season_folder_clears_servers_when_no_download_succeeds(tmp_path, monkeypatch):
+def test_process_season_folder_preserves_servers_when_no_download_succeeds(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",
         title="How I Met Your Mother",
@@ -247,7 +247,10 @@ def test_process_season_folder_clears_servers_when_no_download_succeeds(tmp_path
     with open(tmp_path / "download-config.json") as f:
         saved = json.load(f)
     assert result["failed"] == 1
-    assert saved["servers"] == []
+    # Server cache should be preserved when no download succeeds —
+    # existing working servers are not cleared just because one
+    # missing episode failed (e.g. it may not have aired yet).
+    assert saved["servers"] == ["https://previously-working-addon"]
 
 
 def test_process_season_folder_skips_unverified_season_without_episode_count(tmp_path, monkeypatch):

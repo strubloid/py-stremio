@@ -320,7 +320,7 @@ def make_progress_printer(stream):
     min_redraw_interval = 0.10
     min_print_interval = 1.0  # at most 1 line per second per episode in append-only mode
     lock = threading.Lock()
-    use_ansi_block = False
+    use_ansi_block = bool(getattr(stream, "isatty", lambda: False)())
     use_color = bool(getattr(stream, "isatty", lambda: False)())
     max_line_width = _terminal_width(stream) - 1
 

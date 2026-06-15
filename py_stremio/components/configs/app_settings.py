@@ -18,7 +18,7 @@ class Settings:
     MAX_DOWNLOAD_ATTEMPTS: int = field(default_factory=lambda: int(os.getenv("MAX_DOWNLOAD_ATTEMPTS", "5")))
     LIMIT_EPISODES: int = field(default_factory=lambda: int(os.getenv("LIMIT_EPISODES", "0")))
     MIN_COMPLETED_VIDEO_SIZE_MB: int = field(default_factory=lambda: int(os.getenv("MIN_COMPLETED_VIDEO_SIZE_MB", "100")))
-    DOWNLOAD_THREADS: int = field(default_factory=lambda: int(os.getenv("DOWNLOAD_THREADS", "1")))
+    DOWNLOAD_THREADS: int = field(default_factory=lambda: int(os.getenv("DOWNLOAD_THREADS", "2")))
     METADATA_CACHE_HOURS: int = field(default_factory=lambda: int(os.getenv("METADATA_CACHE_HOURS", "24")))
     INTERNET_SPEED_LIMIT: int = field(default_factory=lambda: int(os.getenv("INTERNET_SPEED_LIMIT", "100")))
     INTERNET_MAX_SPEED_MBPS: float = field(default_factory=lambda: float(os.getenv("INTERNET_MAX_SPEED_MBPS", "100")))

@@ -24,46 +24,46 @@
 
 # SUPREME — multi-source fallback (NyaaSi, YTS, EZTV, TorrentGalaxy + debrid)
 # Uncomment this and KOD for a completely independent search path
-https://sup-sooty-one.vercel.app
+# https://sup-sooty-one.vercel.app
 
 # KOD — 29 torrent sources incl. anime + debrid
-https://kod-three.vercel.app
+# https://kod-three.vercel.app
 
 # Cinescrape — multi-source HTTPS streams (different backend than Torrentio)
-https://bc48e59c61df-cinescrape-docker.baby-beamup.club
+# https://bc48e59c61df-cinescrape-docker.baby-beamup.club
 
 # TILL — Jackett, Prowlarr, Zilean + all debrid
-https://till-8b4w.onrender.com
+# https://till-8b4w.onrender.com
 
 # ProwJack — Qbittorrent+Prowlarr/Jackett+Debrid+keyword filters
-https://prowjack.onrender.com
+# https://prowjack.onrender.com
 
 # ── TIER 2: ELFHOSTED ADDONS (backup instances) ──────────────────
 # (same addons as main but on different hosts/configs)
 
 # Stremio-Jackett — Jackett indexer aggregation (elfhosted mirror)
-https://stremio-jackett.elfhosted.com
+# https://stremio-jackett.elfhosted.com
 
 # Annatar — large torrent indexer (elfhosted mirror)
-https://annatar.elfhosted.com
+# https://annatar.elfhosted.com
 
 # Comet — fastest torrent/debrid search (alternative instance)
 https://comet.feels.legal
 
 # CometNet — Comet network variant
-https://cometnet.elfhosted.com
+# https://cometnet.elfhosted.com
 
 # Jackettio — Jackett frontend for Stremio
-https://jackettio.elfhosted.com
+# https://jackettio.elfhosted.com
 
 # EasyNews+ — Usenet provider for Stremio
-https://easynewsplus.elfhosted.com
+# https://easynewsplus.elfhosted.com
 
 # Stremify — alternative scraper
-https://stremify.elfhosted.com
+# https://stremify.elfhosted.com
 
 # AIOStreams — consolidates multiple addons into one
-https://aiostreams.elfhosted.com
+# https://aiostreams.elfhosted.com
 
 # ── TIER 3: STREAMING / HTTP DIRECT ───────────────────────────────
 # (useful when torrent-based addons fail — direct HTTP streams)
@@ -72,27 +72,27 @@ https://aiostreams.elfhosted.com
 https://peerflix.mov
 
 # Plexio — Plex-like direct streams
-https://plexio.stream
+# https://plexio.stream
 
 # MY CINE — alternative movie catalog with direct streams
-https://mycine.alwaysdata.net
+# https://mycine.alwaysdata.net
 
 # StremThru — universal stream proxy
-https://stremthru.13377001.xyz/stremio/torz
+# https://stremthru.13377001.xyz/stremio/torz
 
 # Torrin — lightweight torrent aggregator
-https://torrin.app
+# https://torrin.app
 
 # ── TIER 4: REGIONAL / NICHE ──────────────────────────────────────
 # (may only have content for specific regions/languages)
 
 # Brazil specific addons
-https://27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club
-https://94c8cb9f702d-brazuca-torrents.baby-beamup.club
+# https://27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club
+# https://94c8cb9f702d-brazuca-torrents.baby-beamup.club
 
 # Latin movies & shows
-https://latinmovies.vercel.app
-https://latinmovies2.vercel.app
+# https://latinmovies.vercel.app
+# https://latinmovies2.vercel.app
 
 # Filipino (Pinoy) content
 # https://dindz-addon.onrender.com
@@ -107,7 +107,7 @@ https://latinmovies2.vercel.app
 # https://frenchio.elfhosted.com
 
 # Italian content (Leviathan — 16 global trackers)
-https://leviathan-addon.onrender.com
+# https://leviathan-addon.onrender.com
 
 # Turkey / Arabic content
 # https://stremio-ar.baby-beamup.club
@@ -116,7 +116,7 @@ https://leviathan-addon.onrender.com
 # (alternative debrid service integrations)
 
 # DebridMediaManager — library-based fallback
-https://debridmediamanager.com/api/stremio/default
+# https://debridmediamanager.com/api/stremio/default
 
 # Premiumize — alternative debrid service
 # https://premiumize.almosteffective.com
@@ -125,35 +125,35 @@ https://debridmediamanager.com/api/stremio/default
 # https://shluflix.elfhosted.com
 
 # HDHub — HD content aggregator
-https://hdhub.thevolecitor.qzz.io
+# https://hdhub.thevolecitor.qzz.io
 
 # Intelligent Debrid Search
-https://intell-debridsearch.nepiraw.com
+# https://intell-debridsearch.nepiraw.com
 
 # ── TIER 6: SPECIALIZED ───────────────────────────────────────────
 # (specific content types)
 
 # Anime (Kitsu catalog)
-https://anime-kitsu.strem.fun
+# https://anime-kitsu.strem.fun
 
 # Anime (HiAnime)
-https://streamio-hianime.onrender.com
+# https://streamio-hianime.onrender.com
 
 # Anime (Anime Digital)
-https://animesdigital-vercel.vercel.app
+# https://animesdigital-vercel.vercel.app
 
 # Anime (Yomi)
-https://yomi.ruka.pw
+# https://yomi.ruka.pw
 
 # Sports streams
-https://stremio-sport.pages.dev
+# https://stremio-sport.pages.dev
 
 # TV channels (global)
-https://stremio-tv.pages.dev
-https://noodlestv.pages.dev
+# https://stremio-tv.pages.dev
+# https://noodlestv.pages.dev
 
 # ThePirateBay+ — direct TPB source
 https://thepiratebay-plus.strem.fun
 
 # NoTorrent — Netflix/Disney+/Prime/etc. TV shows
-https://notorrent.vercel.app
+# https://notorrent.vercel.app

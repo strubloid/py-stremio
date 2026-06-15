@@ -27,7 +27,7 @@ def test_menu_choice_two_updates_library(monkeypatch, capsys):
 def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch):
     calls = []
     folders = [object()]
-    answers = iter(["1", "3"])
+    answers = iter(["1"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -43,11 +43,11 @@ def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch)
 
     assert calls[0][0] == "library-sync"
     assert calls[0][2] is False
-    assert calls[1] == ("download", folders, True, 3)
+    assert calls[1] == ("download", folders, True, 2)
 
 
 def test_menu_choice_one_prints_library_sync_status_before_blocking_work(monkeypatch, capsys):
-    answers = iter(["1", "3"])
+    answers = iter(["1"])
     folders = []
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -100,7 +100,7 @@ def test_cron_positional_run_all_and_speed_limit(monkeypatch):
 
     application.run(interactive=False)
 
-    assert calls == [(True, True, 1, 50)]
+    assert calls == [(True, True, 2, 50)]
 
 
 def test_run_pipeline_ctrl_c_exits_cleanly(monkeypatch, capsys):

@@ -108,7 +108,7 @@ py-stremio/
 │           ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
 │           ├── error_reporter.py      # ErrorReporter singleton + redact_url helpers
 │           └── error_logger.py        # Legacy error logger (backward compat)
-└── tests/                             # 27 test files, 317 tests
+└── tests/                             # 27 test files, 311 tests
     ├── test_addon_enabled.py
     ├── test_addon_type_configurers.py
     ├── test_addon_validator.py
@@ -160,7 +160,9 @@ AppService.run_pipeline()
         → load_config() / load_state()
         → _missing_episodes()
         → preflight_discover_working_addons() # addons/addon_search_service.py
-        → search_and_download() # stremio/stremio_client.py
+        → no_working_addons flag set if preflight finds nothing
+        → skip_full_search=True → episodes skip re-scanning all 54 addons
+        → search_and_download(skip_full_search=task.no_working_addons) # stremio/stremio_client.py
           → resolve IMDB ID via Cinemeta
           → search_all_addons_for_streams()
           → select_quality_streams()
@@ -172,8 +174,10 @@ AppService.run_pipeline()
 ```
 
 - Queries Stremio addons directly (Torrentio, MediaFusion, ThePirateBay+, etc.)
-- Per-episode progress bars with bandwidth limiting and speed display
-- Multi-threaded download support (DOWNLOAD_THREADS)
+- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode)
+- Multi-threaded download support (DOWNLOAD_THREADS, default: 2)
+- **`py-stremio-cron` wrapper** — sets 5 threads + 80% speed for crontab use
+- **No thread prompt** — interactive menu reads config value directly
 - Partial download resume via .part files and Range headers
 - Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
 
@@ -261,7 +265,7 @@ ELSE
 | MAX_DOWNLOAD_ATTEMPTS | 5 | Retry limit per quality |
 | LIMIT_EPISODES | 0 | Max episodes per run (0=unlimited) |
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min size for valid completed file |
-| DOWNLOAD_THREADS | 1 | Parallel download workers |
+| DOWNLOAD_THREADS | 2 | Parallel download workers |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
 | INTERNET_MAX_SPEED_MBPS | 100 | Max Mbps for bandwidth calculation |
 | DRY_RUN | false | Test mode — no actual downloads |
@@ -281,7 +285,7 @@ ELSE
 # Install
 pip install -e .
 
-# Interactive menu
+# Interactive menu (no thread prompt — uses config value silently)
 py-stremio
 
 # Full pipeline (non-interactive)
@@ -295,6 +299,15 @@ py-stremio --download    # or: py-stremio 3
 
 # With thread count and speed limit
 py-stremio --run 4 50   # 4 threads, 50% speed
+
+# Cron wrapper (5 threads, 80% speed, no interactive prompts)
+py-stremio-cron 2       # update metadata (for crontab)
+py-stremio-cron 3       # download missing (for crontab)
+
+# Cron setup (crontab -e)
+# PATH=/home/strubloid/apps/py-stremio/venv/bin:/usr/local/bin:/usr/bin:/bin
+# 0 */3 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 2
+# 0 */2 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 3
 
 # Legacy paths (superseded by `py-stremio`, kept for reference)
 
@@ -389,18 +402,21 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Config tests verify default creation and loading
 - Download processing tests mock the Stremio client
 - **Monkeypatch caveat**: `from X import Y` in service modules creates a permanent local binding. When tests monkeypatch `X.Y`, the local binding in the service module is unaffected if the service was already imported by a prior test. Always also monkeypatch the local binding (`py_stremio.services.<name>.<function>`) in tests that need to mock functions imported via `from ... import` in service modules.
-- **Test status**: 317 tests across 27 files, all passing (run `pytest tests/ -v`)
+- **Test status**: 311 tests across 27 files, all passing (run `pytest tests/ -v`)
 
 ## Current Status
 
 - Modern Stremio addon-based download path is primary workflow
 - RealDebrid integration functional (magnet → torrent → direct URL with polling)
-- Per-episode progress bars with speed display and bandwidth limiting
-- Multi-threaded concurrent downloads
+- Append-only progress bars with per-episode rate limiting (~1 line/sec), no ANSI cursor blocks
+- Multi-threaded concurrent downloads with configurable workers (default: 2)
 - Partial download resume (.part files + Range headers)
 - Working addon URL tracking and caching
 - Metadata auto-fetch via Cinemeta + IMDb TSV dataset
 - Auto-creation of new season folders for current year
+- **Preflight optimization**: when preflight scan finds zero working addons, subsequent episodes skip the full addon re-scan (saves ~30s/episode)
+- **`py-stremio-cron`** wrapper: cron-friendly variant with 5 threads and 80% speed limit
+- **No thread prompt**: interactive menu uses config value silently, no user prompt for thread count
 - Legacy abstract provider path maintained but secondary
 - Email reports via SMTP (optional)
 

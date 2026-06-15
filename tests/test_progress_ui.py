@@ -126,7 +126,7 @@ def test_threaded_progress_printer_renders_each_active_episode_line():
 
 
 def test_threaded_progress_printer_removes_completed_episode_line():
-    stream = TtyBuffer()
+    stream = io.StringIO()
     printer = _make_progress_printer(stream)
 
     printer({
@@ -147,7 +147,7 @@ def test_threaded_progress_printer_removes_completed_episode_line():
     })
 
     output = stream.getvalue()
-    # With append-only mode, episode_done does not remove the line,
+    # With append-only mode (non-TTY), episode_done does not remove the line,
     # so we should see one line for episode_start
     assert "House of the Dragon" in output
     assert output.count("\n") == 1
