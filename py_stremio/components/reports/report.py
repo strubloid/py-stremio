@@ -68,6 +68,17 @@ def _nice_status(entry: dict[str, Any]) -> str:
     return "· up to date"
 
 
+def _compact_failure_reason(entry: dict[str, Any]) -> str:
+    reasons = entry.get("failed_reasons") or []
+    if not reasons:
+        return ""
+    first = str(reasons[0])
+    reason = first.split(": ", 1)[1] if ": " in first else first
+    if all((str(item).split(": ", 1)[1] if ": " in str(item) else str(item)) == reason for item in reasons):
+        return reason
+    return first
+
+
 def _detail_label(entry: dict[str, Any]) -> str:
     """Return a colorized detail column for a folder entry."""
     if entry.get("skipped"):
@@ -86,6 +97,9 @@ def _detail_label(entry: dict[str, Any]) -> str:
     if dl:
         return _c(f"✓ {dl} new", GREEN)
     if fl:
+        reason = _compact_failure_reason(entry)
+        if reason:
+            return _c(f"✗ {fl} failed: {reason}", RED)
         return _c(f"✗ {fl} failed", RED)
     return _c("· up to date", DIM)
 

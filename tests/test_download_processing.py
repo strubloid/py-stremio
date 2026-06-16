@@ -3,7 +3,14 @@ import json
 from types import SimpleNamespace
 
 from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings, load_config, save_config
-from py_stremio.components.download.processing import process_movie_folder, process_season_folder, _set_current_episode
+from py_stremio.components.download.processing import (
+    SeasonFolderTask,
+    download_episode_task,
+    process_movie_folder,
+    process_season_folder,
+    _set_current_episode,
+)
+from py_stremio.components.state.app_state import DownloadState
 from py_stremio.components.reports.output_writer import install_thread_stdout_filter, restore_thread_stdout_filter
 
 
@@ -91,6 +98,211 @@ def test_process_season_folder_passes_config_languages_to_search(tmp_path, monke
 
     assert result["downloaded"] == 1
     assert captured["preferred_languages"] == ["english"]
+
+
+def test_process_season_folder_skips_existing_jury_duty_presents_files(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Jury Duty Presents",
+        imdb_id="tt22074164",
+        season=2,
+        episode_count=8,
+        available_episodes=[1, 2, 3, 4, 5, 6, 7, 8],
+        current_episode_download=1,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://torrentsdb.com"],
+    )
+    save_config(tmp_path / "download-config.json", config)
+    for episode in [1, 2, 3, 4, 8]:
+        (tmp_path / f"Jury Duty Presents_s02e{episode:02d}.mkv").write_bytes(b"video")
+
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs["episode"])
+        return {
+            "success": False,
+            "error": "not available in test",
+            "working_urls": [],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path)
+
+    assert all(ep not in calls for ep in [1, 2, 3, 4, 8])
+    assert set(calls) == {5, 6, 7}
+    assert result["failed"] == 3
+
+
+def test_download_episode_task_skips_existing_final_file_even_if_task_is_stale(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Jury Duty Presents",
+        imdb_id="tt22074164",
+        season=2,
+        episode_count=8,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://torrentsdb.com"],
+    )
+    config_path = tmp_path / "download-config.json"
+    save_config(config_path, config)
+    (tmp_path / "Jury Duty Presents_s02e01.mkv").write_bytes(b"already here")
+    task = SeasonFolderTask(
+        folder_path=tmp_path,
+        config_path=config_path,
+        config=config,
+        state=DownloadState(tmp_path),
+        title="Jury Duty Presents",
+        season=2,
+        quality="1080p",
+        preferred_languages=["english"],
+        servers=["https://torrentsdb.com"],
+        experimental_addons=None,
+        missing_episodes=[1, 5, 6, 7],
+        total_missing=4,
+    )
+    calls = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs["episode"])
+        return {"success": False, "error": "should not be called"}
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+
+    result = download_episode_task(task, index=1, episode_num=1)
+
+    assert result["episode"] == 1
+    assert result["result"]["success"] is False
+    assert result["result"]["skipped"] is True
+    assert result["result"]["reason"] == "already exists"
+    assert calls == []
+
+
+def test_process_season_folder_reindexes_stale_missing_list_before_download_round(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Jury Duty Presents",
+        imdb_id="tt22074164",
+        season=2,
+        episode_count=8,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://torrentsdb.com"],
+    )
+    config_path = tmp_path / "download-config.json"
+    save_config(config_path, config)
+    for episode in [1, 2, 3, 4, 8]:
+        (tmp_path / f"Jury Duty Presents_s02e{episode:02d}.mkv").write_bytes(b"already here")
+    task = SeasonFolderTask(
+        folder_path=tmp_path,
+        config_path=config_path,
+        config=config,
+        state=DownloadState(tmp_path),
+        title="Jury Duty Presents",
+        season=2,
+        quality="1080p",
+        preferred_languages=["english"],
+        servers=["https://torrentsdb.com"],
+        experimental_addons=None,
+        missing_episodes=[1, 2, 3, 4, 5, 6, 7, 8],
+        total_missing=8,
+    )
+    calls = []
+    progress_events = []
+
+    def fake_search_and_download(**kwargs):
+        calls.append(kwargs["episode"])
+        kwargs["progress_callback"](0, 100)
+        return {"success": False, "error": "not available", "working_urls": [], "permanent_failure": True}
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.setup_season_folder",
+        lambda *args, **kwargs: task,
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.settings",
+        SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=0, MAX_DOWNLOAD_ATTEMPTS=1),
+    )
+
+    process_season_folder(tmp_path, progress_callback=progress_events.append, max_workers=5)
+
+    assert calls == [5, 6, 7]
+    byte_events = [event for event in progress_events if event.get("type") == "bytes"]
+    assert [(event["episode"], event["current"], event["total"]) for event in byte_events] == [
+        (5, 1, 3),
+        (6, 2, 3),
+        (7, 3, 3),
+    ]
+
+
+def test_process_season_folder_keeps_retry_progress_totals_stable_with_parallel_workers(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Jury Duty Presents",
+        imdb_id="tt22074164",
+        season=2,
+        episode_count=8,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://torrentsdb.com"],
+    )
+    config_path = tmp_path / "download-config.json"
+    save_config(config_path, config)
+    task = SeasonFolderTask(
+        folder_path=tmp_path,
+        config_path=config_path,
+        config=config,
+        state=DownloadState(tmp_path),
+        title="Jury Duty Presents",
+        season=2,
+        quality="1080p",
+        preferred_languages=["english"],
+        servers=["https://torrentsdb.com"],
+        experimental_addons=None,
+        missing_episodes=[5, 6, 7],
+        total_missing=3,
+    )
+    progress_events = []
+
+    def fake_search_and_download(**kwargs):
+        # Force completion order to differ from episode order; retries should
+        # still keep progress totals bounded to the active missing set.
+        import time
+
+        time.sleep({5: 0.03, 6: 0.01, 7: 0.0}[kwargs["episode"]])
+        kwargs["progress_callback"](0, 100)
+        return {"success": False, "error": "transient", "working_urls": []}
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.setup_season_folder",
+        lambda *args, **kwargs: task,
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.settings",
+        SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=0, MAX_DOWNLOAD_ATTEMPTS=2),
+    )
+
+    process_season_folder(tmp_path, progress_callback=progress_events.append, max_workers=3)
+
+    start_events = [event for event in progress_events if event.get("type") == "episode_start"]
+    assert len(start_events) == 6
+    assert {event["episode"] for event in start_events} == {5, 6, 7}
+    assert all(event["total"] == 3 for event in start_events)
+    assert all(1 <= event["current"] <= 3 for event in start_events)
 
 
 def test_process_season_folder_persists_only_successful_download_server(tmp_path, monkeypatch):

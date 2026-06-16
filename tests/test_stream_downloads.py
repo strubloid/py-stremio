@@ -148,6 +148,48 @@ def test_parse_streams_prefers_explicit_info_hash_and_file_idx():
     assert streams[0].file_idx == 4
 
 
+def test_parse_streams_preserves_tracker_sources_for_local_torrent_proxy():
+    addon = UrlAddon("https://torrentsdb.com")
+    streams = addon.parse_streams([
+        {
+            "name": "TorrentsDB\n1080p",
+            "infoHash": "a480e87c450a7f581e771a00f28ea95f8db25e0a",
+            "fileIdx": 0,
+            "sources": [
+                "tracker:udp://tracker.opentrackr.org:1337/announce",
+                "tracker:udp://open.stealth.si:80/announce",
+                "dht:opentrackr.org",
+            ],
+        }
+    ])
+
+    assert streams[0].sources == [
+        "tracker:udp://tracker.opentrackr.org:1337/announce",
+        "tracker:udp://open.stealth.si:80/announce",
+        "dht:opentrackr.org",
+    ]
+
+
+def test_build_torrent_proxy_url_includes_tracker_sources():
+    stream = StreamInfo(
+        name="TorrentsDB\n1080p",
+        info_hash="a480e87c450a7f581e771a00f28ea95f8db25e0a",
+        file_idx=0,
+        sources=[
+            "tracker:udp://tracker.opentrackr.org:1337/announce",
+            "tracker:udp://open.stealth.si:80/announce",
+            "dht:opentrackr.org",
+        ],
+    )
+
+    url = stream_download.build_torrent_proxy_url("http://127.0.0.1:11470/", stream)
+
+    assert url.startswith("http://127.0.0.1:11470/a480e87c450a7f581e771a00f28ea95f8db25e0a/0?")
+    assert "tr=tracker%3Audp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce" in url
+    assert "tr=tracker%3Audp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce" in url
+    assert "tr=dht%3Aopentrackr.org" in url
+
+
 def test_resolve_real_debrid_proxy_url_timeout_logs_and_falls_back(monkeypatch):
     """RD proxy timeouts should not crash because of stale refactor imports."""
     logged = []
@@ -502,6 +544,25 @@ class TestSelectQualityStreamsWithLanguage:
             target_episode=13,
         )
         assert result == [episode]
+    def test_target_episode_filter_rejects_wrong_movie_with_generated_episode_suffix(self, monkeypatch):
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["any"]
+        )
+        wrong_movie = self._make_stream(
+            "Na.Mira.2022.1080p.WEB-DL.x264.DUAL",
+            name="[RD] GuIndex WEB-DL",
+            filename="Na.Mira.2022.1080p.WEB-DL.x264.DUAL 2.24 GB E05 - starck_filmes",
+        )
+
+        result = stream_download.select_quality_streams(
+            [wrong_movie],
+            "1080p",
+            target_season=2,
+            target_episode=5,
+            title="Jury Duty Presents",
+        )
+
+        assert result == []
 
 
 # TestFilterStreamsByTitle removed:

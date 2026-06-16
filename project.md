@@ -220,6 +220,7 @@ Scanner.scan()
 - Append-only progress bars with per-episode rate limiting (~1 line/sec/episode)
 - Multi-threaded download support with configurable workers and speed %
 - Partial download resume via .part files and Range headers
+- Per-episode final-file existence guard skips download workers if the expected output already exists, protecting against stale missing-episode tasks
 - Working addon URL tracking in config (servers list)
 
 ### 2. Legacy Path (maintained)
@@ -287,8 +288,12 @@ download_folders()
                       │   ├── Handle Torrentio RD proxy redirect
                       │   │   └── If redirect → torrentio /videos/* → error page
                       │   │       return None (skip to next stream)
+                      │   ├── If TORRENT_PROXY_URL is set and stream has info_hash:
+                      │   │   └── Build local proxy URL as /{info_hash}/{fileIdx}?tr=...
+                      │   │       using Stremio stream sources (tracker/DHT entries)
                       │   └── Fallback to info_hash → RealDebrid API
-                      │       (may return 451 infringing_file → skip)
+                      │       └── Map zero-based Stremio fileIdx to RD file id
+                      │           before selectFiles; 451 infringing_file → skip
                       │
                       └── download_stream_to_file()
                           ├── Check for .part resume
@@ -518,6 +523,7 @@ py-stremio-cron 3          # download missing (for crontab)
 | DRY_RUN | false | Test mode — no actual downloads |
 | STREMIO_ADDON_URL | None | Override addon base URL |
 | STREMIO_ADDON_URL_BASE | `https://torrentio.strem.fun` | Addon base URL when no RD key |
+| TORRENT_PROXY_URL | None | Optional local Stremio-compatible torrent proxy for info-hash streams; Stremio tracker/DHT sources are sent as `tr=` params |
 | SMTP_HOST | None | Email report SMTP server |
 | SMTP_PORT | 587 | SMTP port |
 | SMTP_USER | None | SMTP login |
@@ -572,10 +578,12 @@ Uses regex patterns in `media_files.parse_episode_number()`:
 - **Preflight optimization**: no_working_addons flag skips per-episode re-scan when preflight finds nothing
 - **`py-stremio-cron` wrapper**: 5 threads + 80% speed for crontab
 - **No thread prompt**: interactive menu uses config value silently
-- RealDebrid integration functional (magnet → torrent → direct URL with polling)
+- RealDebrid integration functional (magnet → torrent → direct URL with polling, zero-based Stremio fileIdx mapped to RD file IDs)
+- Optional local torrent proxy support via `TORRENT_PROXY_URL`, including tracker/DHT source propagation for info-hash streams
 - Torrentio RD proxy error-page detection for DMCA'd/blocked content
 - Quality fallback via descending sort (4K → 1080p → 720p → 480p → 360p)
 - Minimum file size guard against placeholder/trailer files
+- Final-file existence guard prevents stale tasks from re-downloading episodes already present on disk
 - Append-only progress bars with per-episode rate limiting (~1 line/sec/episode)
 - Multi-threaded concurrent downloads with thread-aware output
 - Partial download resume (.part files + Range headers)

@@ -99,6 +99,7 @@ class ExperimentalAddonManager:
         normalised URLs of addons that returned at least one stream.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        from py_stremio.components.configs.app_settings import settings
 
         if not self.addons:
             return [], []
@@ -107,8 +108,6 @@ class ExperimentalAddonManager:
         all_streams: list[StreamInfo] = []
         working_urls: list[str] = []
         result_lock = threading_lock()
-
-        print(f"    [experimental] Searching {total} experimental addons...", flush=True)
 
         executor = ThreadPoolExecutor(max_workers=min(SEARCH_CONCURRENCY, total))
         futures = {}
@@ -133,15 +132,6 @@ class ExperimentalAddonManager:
                             working_urls.append(addon_url)
         finally:
             executor.shutdown(wait=True)
-
-        if all_streams:
-            print(
-                f"    [experimental] {len(all_streams)} stream(s) from "
-                f"{len(working_urls)} addon(s)",
-                flush=True,
-            )
-        else:
-            print("    [experimental] No streams found", flush=True)
 
         return all_streams, working_urls
 

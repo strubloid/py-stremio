@@ -60,9 +60,59 @@ class BaseAddon(ABC):
                 addon_name=self.name,
                 filename=(stream.get("behaviorHints") or {}).get("filename"),
                 addon_url=self.get_url(None),
+                sources=stream.get("sources"),
             )
             for stream in streams_data
+            if _is_downloadable_stream_candidate(stream)
         ]
+
+
+def _is_downloadable_stream_candidate(stream: dict) -> bool:
+    """Return True only for streams the downloader can automate.
+
+    Stremio addons sometimes return advisory rows as streams, e.g. a Reddit
+    link explaining that non-debrid search is disabled. Those are useful in the
+    Stremio UI but should not be treated as video downloads.
+    """
+    if not isinstance(stream, dict):
+        return False
+
+    if stream.get("externalUrl") and not stream.get("url") and not stream.get("infoHash"):
+        return False
+
+    info_hash = _stream_info_hash(stream)
+    if info_hash:
+        return True
+
+    url = stream.get("url")
+    if not url:
+        return False
+
+    name = str(stream.get("name") or "").lower()
+    title = str(stream.get("title") or "").lower()
+    description = str(stream.get("description") or "").lower()
+    advisory_text = " ".join([name, title, description])
+    advisory_markers = (
+        "⛔",
+        "⚠",
+        "ℹ",
+        "error",
+        "disabled",
+        "configure this addon",
+        "access streams",
+        "use a debrid provider",
+        "not available",
+    )
+    if any(marker in advisory_text for marker in advisory_markers):
+        return False
+
+    parsed = urlparse(str(url))
+    host = (parsed.netloc or "").lower()
+    if host in {"www.reddit.com", "reddit.com", "old.reddit.com"}:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    return True
 
 
 def _stream_info_hash(stream: dict) -> str | None:

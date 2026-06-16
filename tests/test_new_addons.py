@@ -77,6 +77,48 @@ class TestCometNetAddon:
         addon = CometNetAddon()
         url = addon.query_stream_url("series", "tt0944947:1:1")
         assert url == "https://cometnet.elfhosted.com/stream/series/tt0944947:1:1.json"
+    def test_parse_streams_drops_advisory_error_url(self):
+        addon = CometNetAddon()
+
+        streams = addon.parse_streams([
+            {
+                "name": "[⛔️] CometNet",
+                "description": "Non-debrid searches disabled on ElfHosted, use a debrid provider or another instance",
+                "url": "https://www.reddit.com/r/StremioAddons/comments/1plsqv7/elfhosted_addons_disabling_nondebrid_modes/",
+            },
+            {
+                "name": "CometNet 1080p",
+                "title": "Jury.Duty.Presents.S02E05.1080p.WEB-DL",
+                "url": "https://cdn.example.test/video.mkv",
+            },
+        ])
+
+        assert len(streams) == 1
+        assert streams[0].name == "CometNet 1080p"
+
+    def test_parse_streams_drops_browser_only_external_url(self):
+        addon = CometNetAddon()
+
+        streams = addon.parse_streams([
+            {
+                "name": "Watch in browser",
+                "externalUrl": "https://example.test/watch/jury-duty",
+            }
+        ])
+
+        assert streams == []
+    def test_parse_streams_drops_configure_addon_advisory_url(self):
+        addon = CometNetAddon()
+
+        streams = addon.parse_streams([
+            {
+                "name": "Jackettio | ElfHosted",
+                "title": "ℹ Kindly configure this addon to access streams.",
+                "url": "https://jackettio.elfhosted.com/playback/token/token",
+            }
+        ])
+
+        assert streams == []
 
 
 class TestEasyNewsPlusAddon:

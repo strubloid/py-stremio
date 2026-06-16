@@ -472,6 +472,54 @@ def test_download_folders_series_overview_shows_partial_download_percentage(tmp_
     assert "Doctor Who (2023) S01" not in output
 
 
+def test_download_folders_deduplicates_same_imdb_season_preferring_folder_with_files(tmp_path, monkeypatch, capsys):
+    series_root = tmp_path / "series"
+    real_s02 = series_root / "Jury Duty" / "s02"
+    duplicate_s02 = series_root / "Jury Duty Presents" / "s02"
+    real_s02.mkdir(parents=True)
+    duplicate_s02.mkdir(parents=True)
+    for episode in [1, 2, 3, 4, 8]:
+        (real_s02 / f"Jury Duty Presents_s02e{episode:02d}.mkv").write_bytes(b"done")
+
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
+
+    for folder in (real_s02, duplicate_s02):
+        save_config(
+            folder / "download-config.json",
+            DownloadConfig(
+                type="series",
+                title="Jury Duty Presents",
+                imdb_id="tt22074164",
+                season=2,
+                episode_count=8,
+                available_episodes=[1, 2, 3, 4, 5, 6, 7, 8],
+            ),
+        )
+
+    folders = [
+        ScannedFolder(real_s02, FolderType.SERIES, series_root, 2),
+        ScannedFolder(duplicate_s02, FolderType.SERIES, series_root, 2),
+    ]
+    processed = []
+
+    def fake_run_processor(self, folder, **kwargs):
+        processed.append(folder.path)
+        return {"downloaded": 0, "failed": 0, "skipped": 0}
+
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService._run_processor",
+        fake_run_processor,
+    )
+    monkeypatch.setattr("py_stremio.services.download.print_and_send_report", lambda report: None)
+
+    application.download_folders(folders=folders, max_workers=1)
+
+    output = capsys.readouterr().out
+    assert processed == [real_s02]
+    assert "5/8" in output
+    assert "5/16" not in output
+
+
 def test_download_folders_starts_next_season_when_thread_capacity_exists(tmp_path, monkeypatch):
     folders = [
         ScannedFolder(tmp_path / "series" / "Show" / "s01", FolderType.SERIES, tmp_path / "series", 1),

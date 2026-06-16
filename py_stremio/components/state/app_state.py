@@ -82,8 +82,26 @@ def load_state(folder_path: Path) -> DownloadState:
     state_path = folder_path / ".download-state.json"
     if not state_path.exists():
         return DownloadState(folder_path=folder_path)
-    with open(state_path) as f:
-        data = json.load(f)
+    try:
+        with open(state_path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        from py_stremio.components.errors import report_error
+
+        report_error(
+            context=f"load_state({folder_path.name})",
+            exception=exc,
+            url=str(state_path),
+        )
+        # Backup and return fresh state — don't let a corrupted file
+        # block the entire pipeline
+        backup = state_path.with_suffix(".download-state.json.corrupt")
+        try:
+            import shutil
+            shutil.copy2(state_path, backup)
+        except OSError:
+            pass
+        return DownloadState(folder_path=folder_path)
     items = {}
     for filename, record_data in data.get("items", {}).items():
         # Backward compatibility: old states only have addon_url.

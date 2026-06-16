@@ -58,7 +58,9 @@ class MetadataService:
                             if status:
                                 rows.append(status)
                     except Exception as e:
-                        print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
+                        from py_stremio.components.errors import report_error
+
+                        report_error(context="metadata_update_series", exception=e, url=str(folder.path / 'download-config.json'))
             except KeyboardInterrupt:
                 request_shutdown()
                 shutdown_executor_now(executor, future_map.keys())
@@ -76,7 +78,9 @@ class MetadataService:
                         if status:
                             rows.append(status)
                 except Exception as e:
-                    print(f"  ! Error updating {folder.path / 'download-config.json'}: {e}")
+                    from py_stremio.components.errors import report_error
+
+                    report_error(context="metadata_update_series_seq", exception=e, url=str(folder.path / 'download-config.json'))
 
         # ── Movie metadata ──────────────────────────────────────────────────
         for folder in movie_folders:
@@ -87,7 +91,9 @@ class MetadataService:
                 if changed:
                     updated += 1
             except Exception as e:
-                print(f"  ! Error updating movie {folder.path / 'download-config.json'}: {e}")
+                from py_stremio.components.errors import report_error
+
+                report_error(context="metadata_update_movie", exception=e, url=str(folder.path / 'download-config.json'))
 
         if not quiet and rows:
             print()

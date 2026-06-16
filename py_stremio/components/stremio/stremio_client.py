@@ -124,8 +124,6 @@ def search_and_download(
     """
     movie_mode = content_type == "movie" or (content_type == "auto" and not season)
 
-    print(f"    Looking up: {title}" + (f" S{season}E{episode}" if season else ""))
-
     if movie_mode:
         id_type = "movie"
         # Build ordered search strategies:
@@ -151,7 +149,6 @@ def search_and_download(
 
     last_result = None
     for stremio_id, current_type, description in strategies:
-        print(f"    Searching with {description}")
         result = _search_single_id(
             title=title,
             stremio_id=stremio_id,
@@ -170,15 +167,12 @@ def search_and_download(
         last_result = result
         if result.get("success"):
             return result
-        fallback_note = " — trying fallback" if len(strategies) > 1 else ""
-        print(f"    {description} did not produce a valid download{fallback_note}")
 
     # ── Experimental addon fallback ────────────────────────────────────
     # If all normal strategies failed and experimental addons are available,
     # try them as a last resort before declaring failure.
     if not last_result or not last_result.get("success"):
         if experimental_addons:
-            print("\n    Normal addons all failed — trying experimental addons...")
             if stage_tracker:
                 stage_tracker.set_experimental(len(experimental_addons))
             exp_result = _try_experimental_addons(
@@ -195,7 +189,6 @@ def search_and_download(
             )
             if exp_result.get("success"):
                 return exp_result
-            print("    Experimental addons also failed")
 
     return last_result or {"success": False, "error": "All strategies failed", "working_urls": []}
 
@@ -241,7 +234,6 @@ def _search_single_id(
         )
         if cached_result.get("success"):
             return cached_result
-        print("    Cached server did not complete this item; trying remaining addons...")
 
         # Mark cached servers as fully scanned
         if stage_tracker:
@@ -273,7 +265,6 @@ def _search_single_id(
             return remaining_result
         if cached_streams or remaining_streams:
             return remaining_result if remaining_streams else cached_result
-        print(f"    No streams found for ID: {stremio_id}")
         return {"success": False, "error": "No streams found", "working_urls": combined_working_urls}
 
     # No cached addons — search all
@@ -327,7 +318,6 @@ def _try_download_streams(
     if not streams:
         return {"success": False, "error": "No streams found", "working_urls": working_urls}
 
-    print(f"    Found {len(streams)} streams")
     streams_to_try = select_quality_streams(
         streams,
         preferred_quality,
@@ -336,17 +326,19 @@ def _try_download_streams(
         target_episode=episode,
         title=title,
     )
-    print(f"    {len(streams_to_try)} usable streams after quality filter")
+    if not streams_to_try:
+        return {
+            "success": False,
+            "error": "No downloadable streams found after filtering",
+            "working_urls": [],
+            "permanent_failure": True,
+        }
 
     last_error = None
     invalid_download_errors = 0
     for index, stream in enumerate(streams_to_try):
-        print(f"    Stream {index + 1}/{len(streams_to_try)}: {stream.name[:50]} "
-              f"{'(direct URL)' if stream.url else '(info_hash, needs RD)'}", flush=True)
-
         download_url = resolve_stream_download_url(stream)
         if not download_url:
-            print(f"    -> No download URL, trying next", flush=True)
             continue
 
         if settings.DRY_RUN:
@@ -365,7 +357,6 @@ def _try_download_streams(
             return _success_result(filename, stream, working_urls)
         except InvalidVideoDownloadError as e:
             invalid_download_errors += 1
-            print(f"    Invalid video stream: {e}", flush=True)
             from py_stremio.components.errors.error_logger import log_error
 
             log_error(f"invalid_video({stream.addon_name})", e, stream.url or stream.info_hash or "?")
@@ -375,7 +366,6 @@ def _try_download_streams(
                     return retry_result
             last_error = str(e)
         except Exception as e:
-            print(f"    Download error: {e}", flush=True)
             from py_stremio.components.errors.error_logger import log_error
 
             log_error(f"download_stream({stream.addon_name})", e, stream.url or stream.info_hash or "?")
@@ -398,10 +388,8 @@ def _resolve_imdb_id(title: str, imdb_id: str | None, season: int | None) -> str
     if not imdb_id:
         imdb_id = get_series_imdb_id(title, season) if season else get_imdb_id(title)
 
-    if imdb_id:
-        print(f"    Found IMDB ID: {imdb_id}")
-    else:
-        print("    Using title-based search")
+    if not imdb_id:
+        return None
 
     return imdb_id
 
@@ -410,16 +398,17 @@ def _retry_with_real_debrid(stream: StreamInfo, filename: str, working_urls: lis
     if not stream.info_hash:
         return None
 
-    print("    Retrying with info_hash via RealDebrid...")
     rd_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
     if not rd_url:
         return None
 
     try:
-        download_stream_to_file(rd_url, filename, "    Download complete via RealDebrid!", progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
+        download_stream_to_file(rd_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
         return _success_result(filename, stream, working_urls)
     except Exception as e:
-        print(f"    RealDebrid download error: {e}")
+        from py_stremio.components.errors.error_logger import log_error
+
+        log_error(f"realdebrid_download({stream.addon_name})", e, stream.url or stream.info_hash or "?")
         return None
 
 
@@ -462,7 +451,6 @@ def _try_experimental_addons(
         return {"success": False, "error": "Could not build Stremio ID", "working_urls": []}
 
     type_ = "series" if season is not None else "movie"
-    print(f"    [experimental] Searching for {type_}/{stremio_id}")
 
     streams, exp_working_urls = mgr.search(type_, stremio_id)
     if stage_tracker:

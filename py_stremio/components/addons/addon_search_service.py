@@ -83,7 +83,6 @@ def search_working_addons_for_streams(
     if not working_urls:
         return [], []
 
-    print(f"    First trying {len(working_urls)} known working addons...")
     working_manager = addons.create_addon_manager_from_urls(working_urls)
     return working_manager.search_all_addons_and_collect_working(type_, stremio_id)
 
@@ -109,9 +108,6 @@ def search_remaining_addons_for_streams(
             searched_urls.add(addon_url)
             remaining_addons.append(addon)
         manager.addons = remaining_addons
-        print(f"    Searching {len(manager.addons)} remaining addons...")
-    else:
-        print(f"    Searching all {len(manager.addons)} addons...")
 
     if not manager.addons:
         return [], []
@@ -212,15 +208,16 @@ def preflight_discover_working_addons(
                     if url not in alive:
                         alive.append(url)
 
-            # Light progress indicator
-            char = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[done_count % 10]
-            status = f"{char} Pre-flight ({done_count}/{total})"
-            if len(alive) == 1:
-                status += " — 1 working addon found"
-            elif alive:
-                status += f" — {len(alive)} working addons found"
-            sys.stdout.write(f"\r    {status}")
-            sys.stdout.flush()
+            # Light progress indicator — skip spinner animation when not a TTY
+            if sys.stdout.isatty():
+                char = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[done_count % 10]
+                status = f"{char} Pre-flight ({done_count}/{total})"
+                if len(alive) == 1:
+                    status += " — 1 working addon found"
+                elif alive:
+                    status += f" — {len(alive)} working addons found"
+                sys.stdout.write(f"\\r    {status}")
+                sys.stdout.flush()
     except KeyboardInterrupt:
         request_shutdown()
         shutdown_executor_now(executor, futures.keys())

@@ -163,6 +163,40 @@ def test_search_and_download_marks_all_invalid_video_streams_permanent(monkeypat
     assert "only 42 bytes" in result["error"]
 
 
+def test_search_and_download_marks_filtered_streams_as_no_downloadable_streams(monkeypatch, tmp_path):
+    streams = [
+        StreamInfo(
+            name="[RD] GuIndex WEB-DL",
+            url="https://guindex.test/wrong-content",
+            title="Na.Mira.2022.1080p.WEB-DL.x264.DUAL",
+            filename="Na.Mira.2022.1080p.WEB-DL.x264.DUAL 2.24 GB E05 - starck_filmes",
+            addon_name="Guindex",
+            addon_url="https://guindex-stremio.vercel.app",
+        )
+    ]
+
+    monkeypatch.setattr(stremio_client, "_resolve_imdb_id", lambda title, imdb_id, season: "tt22074164")
+    monkeypatch.setattr(
+        stremio_client,
+        "search_all_addons_for_streams",
+        lambda id_type, stremio_id, working_addons: (streams, ["https://guindex-stremio.vercel.app"]),
+    )
+    monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
+
+    result = stremio_client.search_and_download(
+        "Jury Duty Presents",
+        imdb_id="tt22074164",
+        season=2,
+        episode=5,
+        folder_path=str(tmp_path),
+    )
+
+    assert result["success"] is False
+    assert result["permanent_failure"] is True
+    assert result["working_urls"] == []
+    assert result["error"] == "No downloadable streams found after filtering"
+
+
 def test_search_and_download_falls_back_to_remaining_addons_when_cached_server_fails(monkeypatch, tmp_path):
     cached_stream = StreamInfo(
         name="Cached 1080p",

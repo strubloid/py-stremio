@@ -50,6 +50,8 @@ def _format_bytes(byte_count: int) -> str:
 def render_progress_bar(current: int, total: int, width: int = 24) -> str:
     """Render a compact 0-100% progress bar."""
     if total <= 0:
+        if current > 0:
+            return f"[{'█' * (width // 3)}{'░' * (width - width // 3)}] {_format_bytes(current)} · scanning"
         return f"[{'?' * width}] {_format_bytes(current)}"
     ratio = max(0.0, min(1.0, current / total))
     filled = int(round(width * ratio))
@@ -135,6 +137,9 @@ def _stage_block(stage: str, event: dict[str, Any], bar_width: int = 10) -> str:
     tot = event.get(f"{stage}_total")
     if cur is None and tot is None:
         return ""
+    # Hide the block when the stage never did anything (still zeroed)
+    if cur == 0 and tot == 0:
+        return ""
     label = {"server": "T", "live": "L", "experimental": "E"}.get(stage, stage[:1].upper())
     pct = _stage_pct(cur, tot)
 
@@ -152,11 +157,19 @@ def _stage_block(stage: str, event: dict[str, Any], bar_width: int = 10) -> str:
 # ── Event → line rendering ───────────────────────────────────────────────
 
 
+def _waiting_progress_bar(width: int) -> str:
+    return f"[{'-' * width}] waiting for download"
+
+
 def _event_progress_bar(event: dict[str, Any], width: int) -> str:
     if event.get("type") == "bytes":
-        return render_progress_bar(event.get("downloaded", 0), event.get("bytes_total", 0), width=width)
+        downloaded = event.get("downloaded", 0)
+        bytes_total = event.get("bytes_total", 0)
+        if downloaded == 0 and bytes_total == 100:
+            return _waiting_progress_bar(width)
+        return render_progress_bar(downloaded, bytes_total, width=width)
     if event.get("type") == "episode_start":
-        return render_progress_bar(0, 100, width=width)
+        return _waiting_progress_bar(width)
     if event.get("type") == "episode_done":
         downloaded = event.get("downloaded")
         bytes_total = event.get("bytes_total")
@@ -167,7 +180,11 @@ def _event_progress_bar(event: dict[str, Any], width: int) -> str:
     # to display, so render as a clean "scanning" bar instead of using position
     # values (current/total) as fake byte sizes.
     if not event.get("type") and (event.get("server_total") is not None or event.get("live_total") is not None):
-        return render_progress_bar(0, 100, width=width)
+        return _waiting_progress_bar(width)
+    # Catch-all: never render current/total (episode position counters) as bytes
+    # unless there's a genuine downloaded bytes field in the event.
+    if not event.get("downloaded"):
+        return _waiting_progress_bar(width)
     return render_progress_bar(event.get("current", 0), event.get("total", 0), width=width)
 
 

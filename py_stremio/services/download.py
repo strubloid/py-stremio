@@ -42,6 +42,7 @@ class DownloadService:
         clear_shutdown()
         if folders is None:
             folders = self.scanner.scan()
+        folders = self._dedupe_duplicate_series_seasons(folders)
 
         print(_c("\n⬇ Downloads", ACCENT))
         if speed_percent is None:
@@ -127,6 +128,7 @@ class DownloadService:
                 "path": str(folder.path),
                 "downloaded": _result_items(result.get("downloaded", []), "downloaded", downloaded_count),
                 "failed": _result_items(result.get("failed", []), "failed", failed_count),
+                "failed_reasons": result.get("failed_reasons", []),
                 "downloaded_count": downloaded_count,
                 "failed_count": failed_count,
             })
@@ -173,6 +175,56 @@ class DownloadService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _dedupe_duplicate_series_seasons(self, folders: list[ScannedFolder]) -> list[ScannedFolder]:
+        """Drop duplicate series season folders with the same IMDb/title identity.
+
+        Auto-created canonical-title folders can coexist with older user folders
+        (for example `Jury Duty/s02` and empty `Jury Duty Presents/s02`). When
+        both configs point to the same IMDb ID and season, only one should appear
+        in the overview and download queue. Prefer the folder that already has
+        media files.
+        """
+        best: dict[tuple[str, int], tuple[ScannedFolder, tuple[int, int]]] = {}
+        passthrough: list[ScannedFolder] = []
+
+        for folder in folders:
+            if folder.folder_type != FolderType.SERIES:
+                passthrough.append(folder)
+                continue
+            try:
+                config, _ = load_config(folder.path)
+            except Exception:
+                passthrough.append(folder)
+                continue
+
+            identity = (config.imdb_id or config.title or folder.path.parent.name).casefold().strip()
+            season = config.season if config.season is not None else folder.season_number
+            if not identity or season is None:
+                passthrough.append(folder)
+                continue
+
+            episode_count = config.episode_count or 0
+            existing_count = len(detect_existing_season_episodes(folder.path, episode_count)) if episode_count > 0 else 0
+            # Score: prefer folders with existing media, then enabled configs.
+            score = (existing_count, 1 if config.enabled else 0)
+            key = (identity, int(season))
+            current = best.get(key)
+            if current is None or score > current[1]:
+                best[key] = (folder, score)
+
+        chosen_series = {folder.path for folder, _score in best.values()}
+        deduped: list[ScannedFolder] = []
+        for folder in folders:
+            if folder.folder_type == FolderType.SERIES:
+                if folder.path in chosen_series:
+                    deduped.append(folder)
+            else:
+                deduped.append(folder)
+        for folder in passthrough:
+            if folder not in deduped:
+                deduped.append(folder)
+        return deduped
 
     def _run_processor(
         self,

@@ -20,6 +20,9 @@ from py_stremio.components.addons.addon_search_service import preflight_discover
 from py_stremio.components.stremio.stremio_ids import build_stremio_id
 from py_stremio.components.addons.experimental import load_experimental_urls
 
+# Module-level flag to print the experimental addon count once, not per-folder
+_experimental_announced: list[bool] = [False]
+
 
 # ── Task descriptor for global thread pool scheduling ────────────────────
 
@@ -135,7 +138,8 @@ def setup_season_folder(
     experimental_addons: list[str] | None = None
     if config.experimental_addons_enabled:
         experimental_addons = load_experimental_urls()
-        if experimental_addons:
+        if experimental_addons and not _experimental_announced[0]:
+            _experimental_announced[0] = True
             print(f"    \U0001f9ea {len(experimental_addons)} experimental addon(s) loaded")
 
     quality = _preferred_quality(config)
@@ -172,7 +176,7 @@ def setup_season_folder(
         no_working_addons = len(discovered) == 0
     elif not servers and missing:
         print(f"      No server cache and no IMDB ID — will search all per-episode")
-        no_working_addons = True
+        no_working_addons = False
 
     return SeasonFolderTask(
         folder_path=folder_path,
@@ -215,6 +219,25 @@ def _do_download_one_episode(
     progress_callback: Callable | None = None,
 ) -> dict:
     """Download one episode from a prepared task — extracted logic."""
+    # Final safety net: never attempt a network download for an episode whose
+    # generated final filename already exists on disk. This protects against
+    # stale tasks or stale missing-episode lists created before state/config was
+    # reconciled.
+    generated_filename = _generated_episode_filename(task.folder_path, task.config, task.season, episode_num)
+    if (task.folder_path / generated_filename).exists():
+        if not task.state.is_downloaded(generated_filename):
+            task.state.add_download(generated_filename, task.quality, "stremio")
+        return {
+            "episode": episode_num,
+            "result": {
+                "success": False,
+                "skipped": True,
+                "reason": "already exists",
+                "filename": generated_filename,
+                "working_urls": [],
+            },
+        }
+
     last_downloaded_bytes = 0
     last_total_bytes = 0
     last_rate_bps = 0.0
@@ -301,7 +324,14 @@ def _do_download_one_episode(
                 save_config(task.config_path, task.config)
     active_servers = [s for s in task.servers if s not in bad_servers]
     if bad_servers:
-        print(f"    \u26a0 Previous server(s) delivered wrong content — excluded from retry")
+        print(f"    ⚠ Previous server(s) delivered wrong content — excluded from retry")
+
+    # Only skip the full search when we have cached servers to try first.
+    # If active_servers is empty, the skip_full_search flag would prevent
+    # ANY addon search (since _search_single_id only checks it after the
+    # `if working_addons:` branch is skipped due to an empty list).
+    # Always allow the full search as a safety net when no server cache exists.
+    skip_full = task.no_working_addons and bool(active_servers)
 
     result = search_and_download(
         title=task.title,
@@ -316,7 +346,7 @@ def _do_download_one_episode(
         bandwidth_limiter=task.bandwidth_limiter,
         experimental_addons=task.experimental_addons,
         stage_tracker=stage_tracker,
-        skip_full_search=task.no_working_addons,
+        skip_full_search=skip_full,
     )
 
     emit({
@@ -490,6 +520,30 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
     return missing
 
 
+def _drop_existing_episodes_from_task(task: SeasonFolderTask) -> int:
+    """Remove episodes whose generated final file already exists from a task.
+
+    This is a scheduler-level safety net for stale prepared tasks. It keeps
+    progress counters honest by reindexing the remaining queue after existing
+    files are dropped, instead of letting E05 render as position 5/8 when
+    E01-E04 already exist.
+    """
+    remaining: list[int] = []
+    skipped = 0
+    for episode in task.missing_episodes:
+        generated_filename = _generated_episode_filename(task.folder_path, task.config, task.season, episode)
+        if (task.folder_path / generated_filename).exists():
+            if not task.state.is_downloaded(generated_filename):
+                task.state.add_download(generated_filename, task.quality, "stremio")
+            skipped += 1
+        else:
+            remaining.append(episode)
+    if remaining != task.missing_episodes:
+        task.missing_episodes = remaining
+        task.total_missing = len(remaining)
+    return skipped
+
+
 # ── Backward-compatible season folder processor ────────────────────
 
 
@@ -509,6 +563,11 @@ def process_season_folder(
     )
     if task is None:
         return {"skipped": True, "reason": "setup returned no task"}
+
+    skipped_existing = _drop_existing_episodes_from_task(task)
+    if skipped_existing:
+        save_state(folder_path, task.state)
+
     if not task.missing_episodes:
         episodes = scan_folder_for_episodes(folder_path)
         for ep in episodes:
@@ -516,11 +575,12 @@ def process_season_folder(
                 task.state.add_download(ep["filename"], task.quality, "stremio")
                 task.skipped += 1
         save_state(folder_path, task.state)
-        return {"downloaded": 0, "skipped": task.skipped, "failed": 0}
+        return {"downloaded": 0, "skipped": task.skipped + skipped_existing, "failed": 0}
 
     downloaded = 0
-    skipped = 0
+    skipped = skipped_existing
     failed = 0
+    failed_reasons: list[str] = []
     verified_servers: list[str] = []
     servers_lock = threading.Lock()
     config_lock = threading.Lock()
@@ -567,7 +627,9 @@ def process_season_folder(
             else:
                 _set_current_episode(task.config, task.config_path, episode_num + 1)
         else:
-            task.state.mark_failed(f"episode_{episode_num}", result.get("error", "failed"), 1)
+            failure_reason = result.get("error", "failed")
+            task.state.mark_failed(f"episode_{episode_num}", failure_reason, 1)
+            failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {failure_reason}")
             failed += 1
 
     max_attempts = getattr(settings, "MAX_DOWNLOAD_ATTEMPTS", 5)
@@ -589,6 +651,7 @@ def process_season_folder(
                     for idx, ep_num in enumerate(round_items, start=1)
                 ]
                 future_map = {future: ep_num for future, ep_num in zip(futures, round_items)}
+                deferred: set[int] = set()
                 for future in as_completed(future_map):
                     if shutdown_requested():
                         break
@@ -598,7 +661,8 @@ def process_season_folder(
                     elif item["result"].get("permanent_failure"):
                         apply_result(item["episode"], item["result"])
                     else:
-                        queue.append(item["episode"])
+                        deferred.add(item["episode"])
+                queue.extend(ep_num for ep_num in round_items if ep_num in deferred)
             except KeyboardInterrupt:
                 request_shutdown()
                 shutdown_executor_now(executor, futures)
@@ -628,7 +692,9 @@ def process_season_folder(
                 print(f"  -> {len(queue)} episodes deferred to next round")
 
     for episode_num in queue:
-        task.state.mark_failed(f"episode_{episode_num}", "All retry rounds exhausted", max_attempts)
+        reason = "All retry rounds exhausted"
+        task.state.mark_failed(f"episode_{episode_num}", reason, max_attempts)
+        failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {reason}")
         failed += 1
 
     if task.missing_episodes and verified_servers:
@@ -641,7 +707,7 @@ def process_season_folder(
             task.state.add_download(ep["filename"], task.quality, "stremio")
             skipped += 1
     save_state(folder_path, task.state)
-    return {"downloaded": downloaded, "skipped": skipped, "failed": failed}
+    return {"downloaded": downloaded, "skipped": skipped, "failed": failed, "failed_reasons": failed_reasons}
 
 
 # ── Movie folder processing ────────────────────────────────────────

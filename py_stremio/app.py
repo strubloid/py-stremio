@@ -54,30 +54,47 @@ class AppService:
     # CLI entry point
     # ------------------------------------------------------------------
 
-    def run(self, interactive: bool | None = None) -> None:
+    def run(
+        self,
+        interactive: bool | None = None,
+        default_max_workers: int | None = None,
+        default_speed_percent: int | None = None,
+    ) -> None:
         """CLI entry point.
 
         Interactive terminals show a menu. Non-interactive runs keep the historical
         scan → metadata → download behavior so tests/scripts do not block on input.
+        `py-stremio-cron` uses this same method with cron-friendly defaults.
         """
         clear_shutdown()
         try:
-            return self._run(interactive=interactive)
+            return self._run(
+                interactive=interactive,
+                default_max_workers=default_max_workers,
+                default_speed_percent=default_speed_percent,
+            )
         except KeyboardInterrupt:
             self._interrupted()
 
-    def _run(self, interactive: bool | None = None) -> None:
+    def _run(
+        self,
+        interactive: bool | None = None,
+        default_max_workers: int | None = None,
+        default_speed_percent: int | None = None,
+    ) -> None:
         raw_args = sys.argv[1:]
         args = set(raw_args)
         positional = [arg for arg in raw_args if not arg.startswith("--")]
         action = positional[0] if positional else None
+        configured_workers = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
+        max_workers = max(1, default_max_workers or configured_workers)
+        speed_percent = default_speed_percent
 
         if "--run" in args or "--all" in args:
-            max_workers = int(positional[0]) if positional and positional[0].isdigit() else max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
-            speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else None
+            max_workers = int(positional[0]) if positional and positional[0].isdigit() else max_workers
+            speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else speed_percent
         else:
-            speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else None
-            max_workers = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
+            speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else speed_percent
 
         if "--scan" in args or "--metadata" in args or "--config" in args or action == "2":
             self._banner()

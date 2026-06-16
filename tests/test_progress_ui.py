@@ -24,7 +24,10 @@ def test_render_progress_bar_shows_percentage_and_fill():
 
 
 def test_render_progress_bar_handles_unknown_total():
-    assert render_progress_bar(25 * 1024 * 1024, 0, width=10) == "[??????????] 25.0 MB"
+    # When we have bytes but total is unknown, show scanning bar
+    bar = render_progress_bar(25 * 1024 * 1024, 0, width=10)
+    assert "25.0 MB" in bar
+    assert "· scanning" in bar or "?" in bar
 
 
 def test_render_progress_bar_uses_mb_or_gb_size_units():
@@ -51,9 +54,26 @@ def test_episode_progress_line_uses_episode_percentage_not_season_percentage():
         "bytes_total": 1024 * 1024 * 1024,
     })
 
-    assert "[------------------------] 0%" in start_line
+    assert "waiting for download" in start_line
+    assert "0 B / 100 B" not in start_line
     assert "[████████████████████████] 100% 1.0 GB / 1.0 GB" in done_line
     assert "2/10" in done_line
+
+
+def test_episode_start_progress_line_does_not_show_fake_byte_percentage():
+    line = _progress_line({
+        "type": "episode_start",
+        "title": "House of the Dragon",
+        "season": 1,
+        "episode": 2,
+        "current": 2,
+        "total": 10,
+    })
+
+    assert "0 B / 100 B" not in line
+    assert "0%" not in line
+    assert "waiting for download" in line
+    assert "2/10" in line
 
 
 def test_episode_progress_line_shows_per_file_download_speed():

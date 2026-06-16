@@ -57,10 +57,14 @@ class AddonManager:
             return [], []
 
         total = len(self.addons)
-        spinner = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+        is_tty = sys.stdout.isatty()
         done_count = 0
 
-        print(f"    Searching {total} addons...", end="", flush=True)
+        if is_tty:
+            spinner = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+        else:
+            spinner = None
+
         working_addon_urls: list[str] = []
         all_streams: list[StreamInfo] = []
         result_lock = threading.Lock()
@@ -76,9 +80,10 @@ class AddonManager:
                 if shutdown_requested():
                     break
                 done_count += 1
-                char = next(spinner)
-                sys.stdout.write(f"\r    {char} Searching addons ({done_count}/{total})")
-                sys.stdout.flush()
+                if is_tty and spinner:
+                    char = next(spinner)
+                    sys.stdout.write(f"\r    {char} Searching addons ({done_count}/{total})")
+                    sys.stdout.flush()
 
                 addon = futures[future]
                 try:
@@ -108,7 +113,8 @@ class AddonManager:
             executor.shutdown(wait=True)
 
         # Clear spinner line
-        print()
+        if is_tty:
+            print()
 
         return all_streams, working_addon_urls
 

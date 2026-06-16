@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 py-stremio = "py_stremio.main:run"
+py-stremio-cron = "py_stremio.main:run_cron"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

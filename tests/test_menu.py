@@ -103,6 +103,44 @@ def test_cron_positional_run_all_and_speed_limit(monkeypatch):
     assert calls == [(True, True, 2, 50)]
 
 
+def test_cron_entrypoint_delegates_to_same_appservice_with_presets(monkeypatch):
+    from py_stremio import main
+
+    calls = []
+
+    class FakeAppService:
+        def run(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr("py_stremio.main.AppService", lambda: FakeAppService())
+
+    main.run_cron()
+
+    assert calls == [
+        {
+            "interactive": False,
+            "default_max_workers": 5,
+            "default_speed_percent": 80,
+        }
+    ]
+
+
+def test_cron_entrypoint_download_uses_shared_parser_with_cron_presets(monkeypatch):
+    from py_stremio.app import AppService
+
+    calls = []
+
+    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "3"]})())
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
+    )
+
+    AppService().run(interactive=False, default_max_workers=5, default_speed_percent=80)
+
+    assert calls == [(None, True, 5, 80)]
+
+
 def test_run_pipeline_ctrl_c_exits_cleanly(monkeypatch, capsys):
     from py_stremio.app import AppService
 

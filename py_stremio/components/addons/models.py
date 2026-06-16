@@ -12,3 +12,4 @@ class StreamInfo:
     addon_name: str = ""
     filename: str | None = None
     addon_url: str | None = None
+    sources: list[str] | None = None

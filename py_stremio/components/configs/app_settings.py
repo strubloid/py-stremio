@@ -31,6 +31,11 @@ class Settings:
     STREMIO_ADDON_URL: str | None = field(default_factory=lambda: os.getenv("STREMIO_ADDON_URL"))
     STREMIO_ADDON_URL_BASE: str = field(default_factory=lambda: os.getenv("STREMIO_ADDON_URL_BASE") or "https://torrentio.strem.fun")
 
+    # Local torrent proxy for fast RD cached content resolution.
+    # When set, resolve_stream_download_url tries this proxy first before
+    # the full RealDebrid API flow. Format: http://127.0.0.1:11470
+    TORRENT_PROXY_URL: str | None = field(default_factory=lambda: os.getenv("TORRENT_PROXY_URL"))
+
     @property
     def effective_addon_url(self) -> str:
         """Get the effective addon URL with RD key if configured."""

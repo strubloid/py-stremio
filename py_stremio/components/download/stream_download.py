@@ -1,4 +1,6 @@
 """Stream URL resolving and file download helpers."""
+from urllib.parse import urlencode
+
 import httpx
 
 import re
@@ -295,25 +297,54 @@ def select_quality_streams(
     return usable[:20]  # cap at 20 to avoid too many attempts
 
 
+def build_torrent_proxy_url(proxy_base_url: str, stream: StreamInfo) -> str | None:
+    """Build a local torrent proxy URL from a Stremio info-hash stream.
+
+    Stremio addons such as TorrentsDB return `sources` containing tracker and
+    DHT entries. Local Stremio-compatible torrent proxies need these as repeated
+    `tr=` query parameters; an info hash alone may not discover peers.
+    """
+    if not stream.info_hash:
+        return None
+
+    base = proxy_base_url.rstrip("/")
+    file_part = f"/{stream.file_idx}" if stream.file_idx is not None else ""
+    url = f"{base}/{stream.info_hash}{file_part}"
+
+    trackers = [
+        source
+        for source in (stream.sources or [])
+        if isinstance(source, str) and (source.startswith("tracker:") or source.startswith("dht:"))
+    ]
+    if trackers:
+        url = f"{url}?{urlencode([('tr', source) for source in trackers])}"
+
+    return url
+
+
 def resolve_stream_download_url(stream: StreamInfo) -> str | None:
-    """Resolve a Stremio stream into a direct download URL when possible."""
+    """Resolve a Stremio stream into a direct download URL when possible.
+
+    Resolution order:
+      1. Direct stream.url (if not an RD proxy)
+      2. RD proxy URL → resolve_real_debrid_proxy_url
+      3. info_hash + TORRENT_PROXY_URL → local proxy quick path
+      4. info_hash + REAL_DEBRID_API_KEY → full RD API (slow)
+    """
     download_url = stream.url
 
     if download_url and download_url.startswith(RD_PROXY_PREFIX):
-        print("    Resolving RD proxy URL...")
         download_url = resolve_real_debrid_proxy_url(download_url)
 
     if stream.info_hash and not download_url:
-        if settings.REAL_DEBRID_API_KEY:
-            print("    Resolving torrent via RealDebrid...")
-            download_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
-            if not download_url:
-                print("    RealDebrid failed, trying next...")
-        else:
-            print("    Torrent requires RealDebrid, trying next...")
+        # Fast path: try local torrent proxy if configured. The proxy needs the
+        # original Stremio tracker sources; without them it may not find peers.
+        if settings.TORRENT_PROXY_URL:
+            download_url = build_torrent_proxy_url(settings.TORRENT_PROXY_URL, stream)
 
-    if not download_url:
-        print("    No download URL, trying next...")
+        # Slow path: full RealDebrid API flow
+        if not download_url and settings.REAL_DEBRID_API_KEY:
+            download_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
 
     return download_url
 
@@ -423,7 +454,7 @@ def _validate_completed_file(file_path, partial_path) -> None:
 def download_stream_to_file(
     download_url: str,
     filename: str,
-    complete_message: str = "    Download complete!",
+    complete_message: str = "",
     progress_callback=None,
     bandwidth_limiter=None,
 ) -> None:
@@ -434,10 +465,6 @@ def download_stream_to_file(
     partial_path = file_path.with_name(f"{file_path.name}.part")
     existing_size = partial_path.stat().st_size if partial_path.exists() else 0
     headers = {"Range": f"bytes={existing_size}-"} if existing_size else {}
-
-    print(f"    Downloading to: {filename}", flush=True)
-    if existing_size:
-        print(f"    Resuming from {existing_size} bytes", flush=True)
 
     with httpx.stream("GET", download_url, timeout=300, headers=headers, follow_redirects=True) as response:
         response.raise_for_status()
@@ -464,7 +491,8 @@ def download_stream_to_file(
     partial_path.replace(file_path)
     _validate_completed_file(file_path, partial_path)
 
-    print(complete_message, flush=True)
+    if complete_message:
+        print(complete_message, flush=True)
 
 
 def can_retry_with_debrid(stream: StreamInfo, download_url: str) -> bool:

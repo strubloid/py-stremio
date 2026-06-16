@@ -108,7 +108,7 @@ py-stremio/
 │           ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
 │           ├── error_reporter.py      # ErrorReporter singleton + redact_url helpers
 │           └── error_logger.py        # Legacy error logger (backward compat)
-└── tests/                             # 27 test files, 311 tests
+└── tests/                             # 28 test files, 325 tests
     ├── test_addon_enabled.py
     ├── test_addon_type_configurers.py
     ├── test_addon_validator.py
@@ -176,9 +176,10 @@ AppService.run_pipeline()
 - Queries Stremio addons directly (Torrentio, MediaFusion, ThePirateBay+, etc.)
 - Append-only progress bars with per-episode rate limiting (~1 line/sec/episode)
 - Multi-threaded download support (DOWNLOAD_THREADS, default: 2)
-- **`py-stremio-cron` wrapper** — sets 5 threads + 80% speed for crontab use
+- **`py-stremio-cron` console entry point** — uses the same `AppService` path as `py-stremio` with cron preset defaults: 5 threads + 80% speed
 - **No thread prompt** — interactive menu reads config value directly
 - Partial download resume via .part files and Range headers
+- Per-episode final-file existence guard: download workers skip instead of re-downloading if the expected output file already exists, even if a stale task listed it as missing
 - Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
 
 ### 2. Legacy Path (maintained)
@@ -251,7 +252,8 @@ ELSE
 ### RealDebrid Integration
 
 - Stream URL proxy resolution via Torrentio RD proxy redirects
-- Direct info_hash → magnet → torrent → download URL via RealDebrid API
+- Optional local torrent proxy resolution via `TORRENT_PROXY_URL`, preserving Stremio `sources` as repeated `tr=` tracker/DHT query params
+- Direct info_hash → magnet → torrent → download URL via RealDebrid API, mapping Stremio zero-based `fileIdx` to RealDebrid file IDs before `selectFiles`
 - Retry fallback: if direct addon download fails and stream has info_hash, retry via RD
 
 ## Settings Reference
@@ -271,6 +273,7 @@ ELSE
 | DRY_RUN | false | Test mode — no actual downloads |
 | STREMIO_ADDON_URL | None | Override addon base URL |
 | STREMIO_ADDON_URL_BASE | `https://torrentio.strem.fun` | Addon base URL when no RD key |
+| TORRENT_PROXY_URL | None | Optional local Stremio-compatible torrent proxy for info-hash streams; tracker/DHT sources are passed as `tr=` params |
 | SMTP_HOST | None | Email report SMTP server |
 | SMTP_PORT | 587 | SMTP port |
 | SMTP_USER | None | SMTP login |
@@ -300,7 +303,7 @@ py-stremio --download    # or: py-stremio 3
 # With thread count and speed limit
 py-stremio --run 4 50   # 4 threads, 50% speed
 
-# Cron wrapper (5 threads, 80% speed, no interactive prompts)
+# Cron console entry point (same AppService path; preset 5 threads, 80% speed, no interactive prompts)
 py-stremio-cron 2       # update metadata (for crontab)
 py-stremio-cron 3       # download missing (for crontab)
 
@@ -402,20 +405,22 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Config tests verify default creation and loading
 - Download processing tests mock the Stremio client
 - **Monkeypatch caveat**: `from X import Y` in service modules creates a permanent local binding. When tests monkeypatch `X.Y`, the local binding in the service module is unaffected if the service was already imported by a prior test. Always also monkeypatch the local binding (`py_stremio.services.<name>.<function>`) in tests that need to mock functions imported via `from ... import` in service modules.
-- **Test status**: 311 tests across 27 files, all passing (run `pytest tests/ -v`)
+- **Test status**: 325 tests across 28 files, all passing (run `pytest tests/ -v`)
 
 ## Current Status
 
 - Modern Stremio addon-based download path is primary workflow
-- RealDebrid integration functional (magnet → torrent → direct URL with polling)
+- RealDebrid integration functional (magnet → torrent → direct URL with polling, zero-based Stremio fileIdx mapped to RD file IDs)
+- Optional local torrent proxy support via `TORRENT_PROXY_URL`, including tracker/DHT source propagation for info-hash streams
 - Append-only progress bars with per-episode rate limiting (~1 line/sec), no ANSI cursor blocks
 - Multi-threaded concurrent downloads with configurable workers (default: 2)
 - Partial download resume (.part files + Range headers)
+- Final-file existence guard prevents stale tasks from re-downloading episodes already present on disk
 - Working addon URL tracking and caching
 - Metadata auto-fetch via Cinemeta + IMDb TSV dataset
 - Auto-creation of new season folders for current year
 - **Preflight optimization**: when preflight scan finds zero working addons, subsequent episodes skip the full addon re-scan (saves ~30s/episode)
-- **`py-stremio-cron`** wrapper: cron-friendly variant with 5 threads and 80% speed limit
+- **`py-stremio-cron`** console entry point: same `AppService` path as `py-stremio`, with cron preset defaults (5 threads and 80% speed limit)
 - **No thread prompt**: interactive menu uses config value silently, no user prompt for thread count
 - Legacy abstract provider path maintained but secondary
 - Email reports via SMTP (optional)
