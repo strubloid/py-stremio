@@ -485,6 +485,24 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
     if start_episode > final_episode:
         start_episode = 1
     missing = []
+    # ── Stale-history scan ───────────────────────────────────────────────────
+    # Episodes before the cursor are never re-examined, even when the file
+    # was deleted after a successful download.  Scan them for mismatches:
+    # state says downloaded but file is gone → re-add to missing.
+    # A genuine miss (neither state nor file) also gets picked up.
+    for episode in range(1, start_episode):
+        generated_filename = _generated_episode_filename(folder_path, config, season, episode)
+        if state.is_downloaded(generated_filename):
+            final_path = folder_path / generated_filename
+            if not final_path.exists():
+                print(f"    State marks S{season:02d}E{episode:02d} downloaded but file "
+                      f"missing — re-downloading")
+                missing.append(episode)
+            continue  # on-disk file exists → skip
+        # Not in state at all — check disk directly
+        if episode in existing_episodes or _is_completed_generated_file(folder_path, config, season, episode):
+            continue
+        missing.append(episode)
     if config.available_episodes is not None:
         candidates = [
             int(episode)

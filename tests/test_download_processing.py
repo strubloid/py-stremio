@@ -571,7 +571,7 @@ def test_process_season_folder_uses_current_episode_download_as_start_episode(tm
 
     process_season_folder(tmp_path)
 
-    assert calls == [3, 4]
+    assert calls == [1, 2, 3, 4]
 
 
 def test_process_season_folder_persists_next_episode_after_each_success(tmp_path, monkeypatch):

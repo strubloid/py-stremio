@@ -181,6 +181,7 @@ AppService.run_pipeline()
 - Partial download resume via .part files and Range headers
 - Per-episode final-file existence guard: download workers skip instead of re-downloading if the expected output file already exists, even if a stale task listed it as missing
 - Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
+- Addon advisory/config/browser-only rows (for example Reddit notices, `configure this addon`, `externalUrl` only) are filtered before download attempts; if every returned stream is filtered out, the item reports `No downloadable streams found after filtering` and is not retried repeatedly in the same run
 
 ### 2. Legacy Path (maintained)
 `download_manager.py` → `library/series.py` / `library/movies.py` → `download/provider.py`
