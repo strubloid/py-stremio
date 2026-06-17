@@ -163,6 +163,39 @@ def test_search_and_download_marks_all_invalid_video_streams_permanent(monkeypat
     assert "only 42 bytes" in result["error"]
 
 
+def test_search_and_download_marks_invalid_attempts_permanent_even_with_unresolved_streams(monkeypatch, tmp_path):
+    streams = [
+        StreamInfo(name="Bad direct 1080p", url="https://dl.test/error.mp4", title="Bob's.Burgers.S13E13"),
+        StreamInfo(name="Dead hash 1080p", info_hash="abc123", title="Bob's.Burgers.S13E13"),
+    ]
+
+    monkeypatch.setattr(stremio_client, "_resolve_imdb_id", lambda title, imdb_id, season: "tt123")
+    monkeypatch.setattr(
+        stremio_client,
+        "search_all_addons_for_streams",
+        lambda id_type, stremio_id, working_addons: (streams, ["https://comet.feels.legal"]),
+    )
+    monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
+    monkeypatch.setattr(stremio_client, "resolve_stream_download_url", lambda stream: stream.url)
+
+    def fake_download(download_url, filename, **kwargs):
+        raise stremio_client.InvalidVideoDownloadError("Resolved stream is only 528 bytes")
+
+    monkeypatch.setattr(stremio_client, "download_stream_to_file", fake_download)
+
+    result = stremio_client.search_and_download(
+        "Bob's Burgers",
+        imdb_id="tt123",
+        season=13,
+        episode=13,
+        folder_path=str(tmp_path),
+    )
+
+    assert result["success"] is False
+    assert result["permanent_failure"] is True
+    assert "only 528 bytes" in result["error"]
+
+
 def test_search_and_download_marks_filtered_streams_as_no_downloadable_streams(monkeypatch, tmp_path):
     streams = [
         StreamInfo(

@@ -73,3 +73,38 @@ def test_resolve_torrent_reports_select_files_failure_without_crashing(monkeypat
             "https://api.real-debrid.com/rest/1.0/torrents/selectFiles/torrent-id",
         )
     ]
+
+
+def test_resolve_torrent_uses_short_poll_cap_for_uncached_torrents(monkeypatch):
+    poll_calls = []
+    sleeps = []
+
+    monkeypatch.setattr(real_debrid_client.settings, "REAL_DEBRID_API_KEY", "test-key")
+    monkeypatch.setattr(real_debrid_client.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    def fake_post(url, **kwargs):
+        if url.endswith("/torrents/addMagnet"):
+            return FakeResponse(201, {"id": "torrent-id"})
+        if "/torrents/selectFiles/" in url:
+            return FakeResponse(204)
+        raise AssertionError(f"unexpected POST {url}")
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/torrents/info/torrent-id"):
+            poll_calls.append(url)
+            return FakeResponse(200, {
+                "status": "downloading",
+                "files": [{"id": 1, "path": "/episode.mkv"}],
+            })
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(real_debrid_client.httpx, "post", fake_post)
+    monkeypatch.setattr(real_debrid_client.httpx, "get", fake_get)
+
+    result = real_debrid_client.resolve_torrent_with_debrid("abc123", file_idx=0)
+
+    assert result is None
+    # One initial file-list lookup plus a short bounded poll loop, not 60×5s.
+    assert len(poll_calls) == 1 + real_debrid_client.RD_POLL_ATTEMPTS
+    assert len(sleeps) == max(0, real_debrid_client.RD_POLL_ATTEMPTS - 1)
+    assert real_debrid_client.RD_POLL_ATTEMPTS <= 6

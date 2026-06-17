@@ -108,7 +108,7 @@ py-stremio/
 │           ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
 │           ├── error_reporter.py      # ErrorReporter singleton + redact_url helpers
 │           └── error_logger.py        # Legacy error logger (backward compat)
-└── tests/                             # 30 test files, 348 tests
+└── tests/                             # 30 test files, 350 tests
     ├── test_addon_enabled.py
     ├── test_addon_type_configurers.py
     ├── test_addon_validator.py
@@ -254,7 +254,7 @@ ELSE
 
 - Stream URL proxy resolution via Torrentio RD proxy redirects
 - Optional local torrent proxy resolution via `TORRENT_PROXY_URL`, preserving Stremio `sources` as repeated `tr=` tracker/DHT query params
-- Direct info_hash → magnet → torrent → download URL via RealDebrid API, mapping Stremio zero-based `fileIdx` to RealDebrid file IDs before `selectFiles`
+- Direct info_hash → magnet → torrent → download URL via RealDebrid API, mapping Stremio zero-based `fileIdx` to RealDebrid file IDs before `selectFiles`; uncached RD polling is capped to a short 6-attempt window so episodes do not sit on `waiting for download` for minutes per stream
 - Retry fallback: if direct addon download fails and stream has info_hash, retry via RD
 
 ## Settings Reference
@@ -407,16 +407,16 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Config tests verify default creation and loading
 - Download processing tests mock the Stremio client
 - **Monkeypatch caveat**: `from X import Y` in service modules creates a permanent local binding. When tests monkeypatch `X.Y`, the local binding in the service module is unaffected if the service was already imported by a prior test. Always also monkeypatch the local binding (`py_stremio.services.<name>.<function>`) in tests that need to mock functions imported via `from ... import` in service modules.
-- **Test status**: 348 tests across 30 files, all passing (run `pytest tests/ -v`)
+- **Test status**: 350 tests across 30 files, all passing (run `pytest tests/ -v`)
 
 ## Current Status
 
 - Modern Stremio addon-based download path is primary workflow
-- RealDebrid integration functional (magnet → torrent → direct URL with polling, zero-based Stremio fileIdx mapped to RD file IDs)
+- RealDebrid integration functional (magnet → torrent → direct URL with short capped polling, zero-based Stremio fileIdx mapped to RD file IDs)
 - Optional local torrent proxy support via `TORRENT_PROXY_URL`, including tracker/DHT source propagation for info-hash streams
 - Stream selection tries direct/playable Stremio URLs before info-hash-only streams to avoid slow RealDebrid magnet polling when a cached RD proxy URL is already available.
 - Language filtering no longer blocks Russian/Cyrillic-marked streams; those releases may include English audio, so the downloader tries them and relies on target-episode matching plus download validation to reject bad results.
-- Append-only progress bars with per-episode rate limiting (~1 line/sec), no ANSI cursor blocks; position counters like `(1/6)` are never rendered as byte progress (`1 B / 6 B`), and retry rounds stay silent after the initial `Downloading N episodes` header
+- Append-only progress bars with per-episode rate limiting (~1 line/sec), no ANSI cursor blocks; position counters like `(1/6)` are never rendered as byte progress (`1 B / 6 B`), tiny invalid bodies are treated as permanent failed attempts instead of retrying the whole episode repeatedly, and retry rounds stay silent after the initial `Downloading N episodes` header
 - Multi-threaded concurrent downloads with configurable workers (default: 2)
 - Partial download resume (.part files + Range headers)
 - Final-file existence guard prevents stale tasks from re-downloading episodes already present on disk

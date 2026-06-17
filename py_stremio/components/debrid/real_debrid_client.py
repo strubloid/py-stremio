@@ -6,6 +6,10 @@ import httpx
 from py_stremio.components.configs.app_settings import settings
 
 
+RD_POLL_ATTEMPTS = 6
+RD_POLL_INTERVAL_SECONDS = 5
+
+
 def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> str | None:
     """Resolve torrent via RealDebrid to get direct download URL.
 
@@ -62,8 +66,10 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
             )
             return None
 
-        # Poll for completion — 60 attempts × 5s = 5 min timeout
-        for _ in range(60):
+        # Poll briefly for completion. Long uncached torrent waits make the UI
+        # sit on "waiting for download" for minutes; if RD has not produced a
+        # link quickly, try the next stream/addon instead.
+        for attempt in range(RD_POLL_ATTEMPTS):
             info_response = httpx.get(
                 f"{base_url}/torrents/info/{torrent_id}",
                 headers=headers,
@@ -75,7 +81,8 @@ def resolve_torrent_with_debrid(info_hash: str, file_idx: int | None = None) -> 
                     return download_url
                 if download_url is False:
                     return None
-            time.sleep(5)
+            if attempt < RD_POLL_ATTEMPTS - 1:
+                time.sleep(RD_POLL_INTERVAL_SECONDS)
     except Exception as exc:
         from py_stremio.components.errors import report_error
 

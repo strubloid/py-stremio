@@ -335,11 +335,14 @@ def _try_download_streams(
 
     last_error = None
     invalid_download_errors = 0
+    attempted_downloads = 0
+    transient_download_errors = 0
     for index, stream in enumerate(streams_to_try):
         download_url = resolve_stream_download_url(stream)
         if not download_url:
             continue
 
+        attempted_downloads += 1
         if settings.DRY_RUN:
             return {
                 "success": True,
@@ -365,6 +368,7 @@ def _try_download_streams(
                     return retry_result
             last_error = str(e)
         except Exception as e:
+            transient_download_errors += 1
             from py_stremio.components.errors.error_logger import log_error
 
             log_error(f"download_stream({stream.addon_name})", e, stream.url or stream.info_hash or "?")
@@ -374,7 +378,11 @@ def _try_download_streams(
                     return retry_result
             last_error = str(e)
 
-    permanent_failure = bool(streams_to_try) and invalid_download_errors == len(streams_to_try)
+    permanent_failure = (
+        attempted_downloads > 0
+        and invalid_download_errors == attempted_downloads
+        and transient_download_errors == 0
+    )
     return {
         "success": False,
         "error": f"All streams failed. Last error: {last_error}",
