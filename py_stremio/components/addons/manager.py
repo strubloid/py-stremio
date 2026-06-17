@@ -71,11 +71,13 @@ class AddonManager:
 
         executor = ThreadPoolExecutor(max_workers=SEARCH_CONCURRENCY)
         futures = {}
+        # Stagger addon submission to avoid burst rate limits
+        for i, addon in enumerate(self.addons):
+            if i > 0 and i % 3 == 0:
+                import time
+                time.sleep(0.3)
+            futures[executor.submit(self._try_addon, addon, type_, id_)] = addon
         try:
-            futures = {
-                executor.submit(self._try_addon, addon, type_, id_): addon
-                for addon in self.addons
-            }
             for future in as_completed(futures):
                 if shutdown_requested():
                     break

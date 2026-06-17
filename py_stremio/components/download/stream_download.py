@@ -10,6 +10,14 @@ from py_stremio.components.debrid.real_debrid_client import resolve_torrent_with
 from py_stremio.components.configs.app_settings import settings
 
 RD_PROXY_PREFIX = "https://torrentio.strem.fun/resolve/"
+# Also match the direct realdebrid=<key> format
+_RD_DIRECT_PREFIX = "https://torrentio.strem.fun/realdebrid"
+_KNOWN_ERROR_VIDEOS = frozenset({
+    "failed_access_v2.mp4",
+    "failed_access.mp4",
+    "error.mp4",
+    "unavailable.mp4",
+})
 
 
 class InvalidVideoDownloadError(ValueError):
@@ -141,8 +149,6 @@ def _filter_streams_by_target_episode(
         if _is_advisory_stream(stream):
             continue
         if not _matches_target_episode(stream, target_season, target_episode):
-            short_title = (stream.title or stream.name or "")[:60].replace("\n", " ")
-            print(f"    Filtered out off-target stream: {short_title}")
             continue
         filtered.append(stream)
     return filtered
@@ -172,14 +178,13 @@ def _detect_languages(text: str) -> set[str]:
 
 
 def filter_streams_by_language(streams: list, preferred_languages: list[str] | None = None) -> list:
-    """Filter streams to prefer those matching the requested languages.
+    """Filter streams to prefer requested languages without blocking Russian.
 
-    Streams with Russian/Cyrillic markers are blocked unless Russian is explicitly
-    preferred, even when they also advertise English or multi-audio.
-    Streams with *no* detectable language are kept (safe default).
-    Multi-language streams pass only when no non-preferred language is detected.
-    Streams whose detected languages include at least one preferred language pass.
-    Streams whose only detected languages are non-preferred are filtered out.
+    Russian/Cyrillic markers are allowed because those releases may also carry
+    English audio and were causing valid Stremio-playable streams to be skipped.
+    Streams with *no* detectable language are kept (safe default). Multi-language
+    streams pass. Streams whose detected languages include at least one preferred
+    language pass. Other non-preferred single-language streams are filtered out.
     When preferred languages contains ``"any"``, all streams pass.
     """
     preferred = _normalize_preferred_languages(preferred_languages)
@@ -195,11 +200,11 @@ def filter_streams_by_language(streams: list, preferred_languages: list[str] | N
 
         detected = _detect_languages(combined)
 
-        # If the user did not ask for Russian, do not accept Russian-marked
-        # releases even when they also advertise English or multi-audio.
-        if "russian" in detected and "russian" not in preferred:
-            short_title = title[:60].replace("\n", " ")
-            print(f"    Filtered out russian stream: {short_title}")
+        # Russian/Cyrillic markers are no longer a hard block: many of those
+        # releases still include English audio, and blocking them caused valid
+        # cached RD streams to stay stuck at "waiting for download".
+        if "russian" in detected:
+            filtered.append(stream)
             continue
 
         # Multi-language streams pass after explicitly-banned languages were removed.
@@ -218,15 +223,15 @@ def filter_streams_by_language(streams: list, preferred_languages: list[str] | N
             continue
 
         # Only non-preferred languages detected → filter out
-        short_title = title[:60].replace("\n", " ")
-        print(f"    Filtered out {', '.join(sorted(detected))} stream: {short_title}")
+        continue
 
     return filtered
 
 
-def _quality_sort_key(stream) -> tuple[int, int, int]:
+def _quality_sort_key(stream) -> tuple:
     """Sort streams by quality: 4K > 1080p > 720p > 480p > 360p > others.
-    Prefers streams with a direct URL over info_hash-only at the same quality."""
+    Prefers streams with a direct URL over info_hash-only at the same quality.
+    Prefers streams with more seeders at the same quality level."""
     name = (stream.name or "").lower()
     title = (stream.title or "").lower()
 
@@ -254,8 +259,11 @@ def _quality_sort_key(stream) -> tuple[int, int, int]:
         addon_bonus = 30
     elif "torrentio" not in addon:
         addon_bonus = 10
-    # Sort descending: high quality first, then preferred addon family, direct URL.
-    return (-qscore, -addon_bonus, -url_bonus)
+    seeders = getattr(stream, "seeders", None) or 0
+    # Sort descending: direct/playable URLs first, then quality, addon
+    # reliability, then seeders. Info-hash-only streams can require a slow
+    # RealDebrid magnet/poll flow, so try Stremio-playable URLs before them.
+    return (-url_bonus, -qscore, -addon_bonus, -seeders)
 
 
 def select_quality_streams(
@@ -333,7 +341,10 @@ def resolve_stream_download_url(stream: StreamInfo) -> str | None:
     """
     download_url = stream.url
 
-    if download_url and download_url.startswith(RD_PROXY_PREFIX):
+    if download_url and (
+        download_url.startswith(RD_PROXY_PREFIX)
+        or _RD_DIRECT_PREFIX in download_url
+    ):
         download_url = resolve_real_debrid_proxy_url(download_url)
 
     if stream.info_hash and not download_url:
@@ -363,16 +374,16 @@ def resolve_real_debrid_proxy_url(download_url: str) -> str | None:
             resolved_url = response.headers.get("location", "")
             # Torrentio returns redirects to its own error pages when content
             # is unavailable — these start with the torrentio domain and
-            # contain '/videos/failed' or '/videos/error'
+            # contain '/videos/failed' or '/videos/error', or are known
+            # error filenames like failed_access_v2.mp4
             if "torrentio" in resolved_url.lower() and "/videos/" in resolved_url:
-                print(f"    RD proxy returned error page: {resolved_url[:80]}...")
-                print("    Falling through to info_hash RD API path...")
                 return None
-            print(f"    Resolved to: {resolved_url[:60]}...")
+            # Check resolved URL for known error video filenames
+            resolved_lower = resolved_url.lower()
+            if any(err_vid in resolved_lower for err_vid in _KNOWN_ERROR_VIDEOS):
+                return None
             return resolved_url
-        print(f"    RD proxy failed ({response.status_code}), trying info_hash fallback...")
     except Exception as e:
-        print(f"    Resolve error: {e}, trying info_hash fallback...")
         from py_stremio.components.errors.error_logger import log_error
 
         log_error("resolve_rd_proxy", e, download_url)

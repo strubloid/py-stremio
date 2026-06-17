@@ -2,9 +2,8 @@
 from abc import ABC, abstractmethod
 from urllib.parse import urlparse
 
-import httpx
-
 from .models import StreamInfo
+from .cloudscraper_client import addon_get_streams
 
 
 class BaseAddon(ABC):
@@ -33,20 +32,8 @@ class BaseAddon(ABC):
         return f"{base_url}/stream/{type_}/{id_}.json"
 
     def fetch_streams(self, url: str) -> list[dict]:
-        """Fetch raw streams from an addon URL."""
-        try:
-            response = httpx.get(
-                url,
-                timeout=8,
-                headers={"User-Agent": "Stremio/4.4.168", "Accept": "application/json"},
-            )
-            response.raise_for_status()
-            return response.json().get("streams", [])
-        except Exception as exc:
-            from py_stremio.components.errors.error_logger import log_error
-
-            log_error(f"fetch_streams({self.name})", exc, url)
-            return []
+        """Fetch raw streams from an addon URL via cloudscraper."""
+        return addon_get_streams(url, timeout=8, addon_name=self.name)
 
     def parse_streams(self, streams_data: list[dict]) -> list[StreamInfo]:
         """Parse stream dictionaries into StreamInfo objects."""
@@ -234,8 +221,11 @@ class UrlAddon(HttpAddon):
 
     @staticmethod
     def _name_from_url(url: str) -> str:
-        parts = url.split("/")
-        for part in reversed(parts):
-            if part and not part.startswith("http") and not part.startswith("?"):
-                return part[:30]
-        return parts[-2][:30] if len(parts) > 1 else "UrlAddon"
+        """Extract a readable addon name from a URL's domain first segment."""
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        host = parsed.netloc or parsed.hostname or ""
+        if ":" in host:
+            host = host.split(":")[0]
+        return host.split(".")[0][:30] if host else "UrlAddon"

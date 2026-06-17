@@ -169,13 +169,16 @@ def setup_season_folder(
         if discovered:
             servers = discovered
             _save_verified_server_urls(config, config_path, servers)
-            print(f"      Using {len(discovered)} pre-confirmed addons")
+            if not quiet_output:
+                print(f"      Using {len(discovered)} pre-confirmed addons")
         else:
-            print(f"      No working addons found — will search all per-episode")
+            if not quiet_output:
+                print(f"      No working addons found — will search all per-episode")
 
         no_working_addons = len(discovered) == 0
     elif not servers and missing:
-        print(f"      No server cache and no IMDB ID — will search all per-episode")
+        if not quiet_output:
+            print(f"      No server cache and no IMDB ID — will search all per-episode")
         no_working_addons = False
 
     return SeasonFolderTask(
@@ -323,8 +326,6 @@ def _do_download_one_episode(
                 task.config.disabled_servers = new_disabled
                 save_config(task.config_path, task.config)
     active_servers = [s for s in task.servers if s not in bad_servers]
-    if bad_servers:
-        print(f"    ⚠ Previous server(s) delivered wrong content — excluded from retry")
 
     # Only skip the full search when we have cached servers to try first.
     # If active_servers is empty, the skip_full_search flag would prevent
@@ -401,7 +402,6 @@ def _update_disabled_servers(
     combined = unique_manifest_urls(new_disabled + config.disabled_servers)
     config.disabled_servers = combined
     save_config(config_path, config)
-    print(f"    Disabled {len(combined)} server(s) that previously delivered wrong content")
     return combined
 
 
@@ -635,7 +635,6 @@ def process_season_folder(
             for successful_url in successful_urls:
                 if successful_url and successful_url not in verified_servers:
                     verified_servers.append(successful_url)
-                    print(f"    \u2713 Verified download server: {successful_url}")
             with servers_lock:
                 task.servers = _save_verified_server_urls(task.config, task.config_path, verified_servers)
             if completed_successes is not None:
@@ -660,7 +659,10 @@ def process_season_folder(
                 break
             round_items = list(queue)
             queue.clear()
-            print(f"  Round {round_num + 1}: {len(round_items)} episodes")
+            if round_num == 0:
+                print(f"  Downloading {len(round_items)} episodes")
+            elif len(round_items) > 1:
+                pass  # silently retry deferred episodes
             executor = ThreadPoolExecutor(max_workers=max(1, max_workers))
             futures = []
             try:
@@ -687,8 +689,6 @@ def process_season_folder(
                 raise
             else:
                 executor.shutdown(wait=True)
-            if queue:
-                print(f"  -> {len(queue)} episodes deferred to next round")
     else:
         for round_num in range(max_attempts):
             if shutdown_requested() or not queue:
@@ -696,7 +696,7 @@ def process_season_folder(
             round_items = list(queue)
             queue.clear()
             if round_num > 0:
-                print(f"  Round {round_num + 1}: retrying {len(round_items)} deferred episodes")
+                pass  # silently retry deferred episodes
             for index, episode_num in enumerate(round_items, start=1):
                 _set_current_episode(task.config, task.config_path, episode_num)
                 item = _download_episode_with_slot(index, episode_num)
@@ -706,8 +706,6 @@ def process_season_folder(
                     apply_result(item["episode"], item["result"])
                 else:
                     queue.append(episode_num)
-            if queue:
-                print(f"  -> {len(queue)} episodes deferred to next round")
 
     for episode_num in queue:
         reason = "All retry rounds exhausted"
@@ -768,29 +766,19 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
     servers = unique_manifest_urls(config.servers)
     disabled = set(unique_manifest_urls(config.disabled_servers))
     if disabled:
-        filtered = [s for s in servers if s not in disabled]
-        if len(filtered) < len(servers):
-            print(f"    Excluded {len(servers) - len(filtered)} disabled server(s) that delivered wrong content")
-            servers = filtered
+        servers = [s for s in servers if s not in disabled]
     preferred_languages = _preferred_languages(config)
 
     # Pre-flight addon discovery for movies
     stremio_id = build_stremio_id(config.imdb_id, title, None, None) if config.imdb_id else build_stremio_id(None, title, None, None)
     if not servers:
-        print(f"\n  {'='*50}")
-        print(f"  Pre-flight: discovering working addons for movie '{title}'")
-        print(f"  {'='*50}")
         discovered = preflight_discover_working_addons("movie", stremio_id)
         if discovered:
             servers = discovered
             _save_verified_server_urls(config, config_path, servers)
-            print(f"  Using {len(discovered)} pre-confirmed addons for this movie\n")
         else:
-            print(f"  Pre-flight found no working addons — will search all\n")
-    else:
-        print(f"  Using {len(servers)} cached server(s)\n")
+            pass
 
-    print(f"  Searching for movie: {title}")
     movie_stage_tracker = StageTracker()
     # Seed with title so stage-only events show the movie name
     movie_last_bytes: dict = {

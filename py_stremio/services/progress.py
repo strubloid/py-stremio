@@ -50,9 +50,8 @@ def _format_bytes(byte_count: int) -> str:
 def render_progress_bar(current: int, total: int, width: int = 24) -> str:
     """Render a compact 0-100% progress bar."""
     if total <= 0:
-        if current > 0:
-            return f"[{'█' * (width // 3)}{'░' * (width - width // 3)}] {_format_bytes(current)} · scanning"
-        return f"[{'?' * width}] {_format_bytes(current)}"
+        # Unknown total size (chunked / no Content-Length) — show sizing state
+        return f"[{'░' * width}] {_format_bytes(current)} · sizing"
     ratio = max(0.0, min(1.0, current / total))
     filled = int(round(width * ratio))
     percent = int(round(ratio * 100))
@@ -165,7 +164,16 @@ def _event_progress_bar(event: dict[str, Any], width: int) -> str:
     if event.get("type") == "bytes":
         downloaded = event.get("downloaded", 0)
         bytes_total = event.get("bytes_total", 0)
-        if downloaded == 0 and bytes_total == 100:
+        # Tiny downloads (< 1 MB total received OR unknown total size) are
+        # not real video files — they're error pages, redirect responses,
+        # Cloudflare challenges, or addon JSON metadata.  Never show a fake
+        # percentage bar for these.
+        #
+        # bytes_total == 0 means chunked streaming with no Content-Length;
+        # the tiny bytes received are addon responses, not video data.
+        if downloaded < 1024 * 1024 or bytes_total <= 0:
+            if downloaded > 0:
+                return f"[{'░' * width}] {_format_bytes(downloaded)} · sizing"
             return _waiting_progress_bar(width)
         return render_progress_bar(downloaded, bytes_total, width=width)
     if event.get("type") == "episode_start":

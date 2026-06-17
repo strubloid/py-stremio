@@ -231,29 +231,26 @@ class ErrorReporter:
         print(f"  ERROR SUMMARY  ({total} total)", file=sys.stderr)
         print("═" * 60, file=sys.stderr)
 
-        for entry in entries:
-            # Category heading with count
+        for entry in entries[:10]:  # max 10 categories shown
+            # Single line: [category] xN — Reason  |  pods: a, b, c (+N)
             label = entry.short_label
-            print(file=sys.stderr)
-            print(f"  {label}", file=sys.stderr)
-            print(f"  Reason: {entry.category.summary_line}", file=sys.stderr)
-
-            # Example text for specific categories
-            if entry.example_text and entry.example_text != entry.category.summary_line:
-                print(f"  Example:", file=sys.stderr)
-                print(f"    {entry.example_text}", file=sys.stderr)
-
-            # Affected addons
-            if entry.sorted_addons:
-                print(f"  Affected addons:", file=sys.stderr)
-                for addon in entry.sorted_addons:
-                    print(f"    - {addon}", file=sys.stderr)
-
-            # In debug mode, print the full traceback once
+            reason = entry.category.summary_line
+            addon_info = ""
+            addons_count = len(entry.sorted_addons)
+            if addons_count > 0:
+                names = ", ".join(sorted(entry.sorted_addons)[:6])
+                if addons_count > 6:
+                    names += f" (+{addons_count - 6})"
+                addon_info = f"  |  pods: {names}"
+            print(f"  {label} — {reason}{addon_info}", file=sys.stderr)
+            # In debug mode, print the full traceback once per category
             if show_debug and entry.traceback:
-                print(f"  Traceback (first occurrence):", file=sys.stderr)
                 for line in entry.traceback.rstrip("\n").split("\n"):
                     print(f"    {line}", file=sys.stderr)
+
+        hidden = len(entries) - 10
+        if hidden > 0:
+            print(f"  … and {hidden} more error categories ({total} shown)", file=sys.stderr)
 
         print(file=sys.stderr)
         print("═" * 60, file=sys.stderr)

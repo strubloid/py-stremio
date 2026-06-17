@@ -24,10 +24,10 @@ def test_render_progress_bar_shows_percentage_and_fill():
 
 
 def test_render_progress_bar_handles_unknown_total():
-    # When we have bytes but total is unknown, show scanning bar
+    # When we have bytes but total is unknown, show sizing bar
     bar = render_progress_bar(25 * 1024 * 1024, 0, width=10)
     assert "25.0 MB" in bar
-    assert "· scanning" in bar or "?" in bar
+    assert "· sizing" in bar
 
 
 def test_render_progress_bar_uses_mb_or_gb_size_units():
@@ -74,6 +74,45 @@ def test_episode_start_progress_line_does_not_show_fake_byte_percentage():
     assert "0%" not in line
     assert "waiting for download" in line
     assert "2/10" in line
+
+
+def test_stage_progress_line_does_not_treat_position_counter_as_bytes():
+    line = _progress_line({
+        "title": "Below Deck",
+        "season": 8,
+        "episode": 4,
+        "current": 1,
+        "total": 6,
+        "server_current": 0,
+        "server_total": 10,
+        "live_current": 0,
+        "live_total": 0,
+        "experimental_current": 0,
+        "experimental_total": 0,
+    })
+
+    assert "1 B / 6 B" not in line
+    assert "17%" not in line
+    assert "waiting for download" in line
+    assert "1/6" in line
+
+
+def test_tiny_byte_event_never_shows_fake_download_percentage():
+    line = _progress_line({
+        "type": "bytes",
+        "title": "Below Deck",
+        "season": 8,
+        "episode": 4,
+        "current": 1,
+        "total": 6,
+        "downloaded": 531,
+        "bytes_total": 531,
+        "rate_bps": 63,
+    })
+
+    assert "100%" not in line
+    assert "531 B / 531 B" not in line
+    assert "531 B · sizing" in line
 
 
 def test_episode_progress_line_shows_per_file_download_speed():

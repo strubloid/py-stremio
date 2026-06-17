@@ -27,7 +27,7 @@ def test_menu_choice_two_updates_library(monkeypatch, capsys):
 def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch):
     calls = []
     folders = [object()]
-    answers = iter(["1"])
+    answers = iter(["1", "7", "55"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -36,18 +36,33 @@ def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch)
     )
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
-        lambda self, folders=None, quiet=True, max_workers=1: calls.append(("download", folders, quiet, max_workers)),
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append(("download", folders, quiet, max_workers, speed_percent)),
     )
 
     application.run_menu()
 
     assert calls[0][0] == "library-sync"
     assert calls[0][2] is False
-    assert calls[1] == ("download", folders, True, 2)
+    assert calls[1] == ("download", folders, True, 7, 55)
+
+
+def test_menu_choice_three_asks_threads_and_speed_before_download(monkeypatch):
+    calls = []
+    answers = iter(["3", "4", "60"])
+
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
+    )
+
+    application.run_menu()
+
+    assert calls == [(None, True, 4, 60)]
 
 
 def test_menu_choice_one_prints_library_sync_status_before_blocking_work(monkeypatch, capsys):
-    answers = iter(["1"])
+    answers = iter(["1", "2", "100"])
     folders = []
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -62,7 +77,7 @@ def test_menu_choice_one_prints_library_sync_status_before_blocking_work(monkeyp
     monkeypatch.setattr("py_stremio.services.scanner.ScanService.run_with_metadata", fake_sync)
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
-        lambda self, folders=None, quiet=True, max_workers=1: None,
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: None,
     )
 
     application.run_menu()

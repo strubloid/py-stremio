@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 import httpx
+import requests
 
 from py_stremio.components.download.stream_download import InvalidVideoDownloadError
 
@@ -79,13 +80,16 @@ def _extract_http_status(exc: BaseException) -> int | None:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code
     if isinstance(exc, httpx.HTTPError):
-        # e.g. httpx.HTTPError without .response
         return None
-    # Check for wrapped httpx errors in the cause chain
+    if isinstance(exc, requests.exceptions.HTTPError):
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            return getattr(resp, "status_code", None)
+        return None
+    # Check for wrapped errors in the cause chain
     cause = exc.__cause__
     if cause is not None:
         return _extract_http_status(cause)
-    # Also check __context__
     ctx = exc.__context__
     if ctx is not None:
         return _extract_http_status(ctx)
@@ -105,6 +109,11 @@ def _extract_http_reason(exc: BaseException) -> str | None:
     """Extract the HTTP reason phrase from an exception."""
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.reason_phrase
+    if isinstance(exc, requests.exceptions.HTTPError):
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            return getattr(resp, "reason", None) or getattr(resp, "reason_phrase", None)
+        return None
     return None
 
 
@@ -116,6 +125,15 @@ def _extract_response_text(exc: BaseException) -> str | None:
             return text
         except Exception:
             return None
+    if isinstance(exc, requests.exceptions.HTTPError):
+        try:
+            resp = getattr(exc, "response", None)
+            if resp is not None:
+                text = getattr(resp, "text", None)
+                if text:
+                    return text[:200]
+        except Exception:
+            return None
     return None
 
 
@@ -123,6 +141,10 @@ def _is_dns_error(exc: BaseException) -> bool:
     """Check if an exception is a DNS / connection resolution error."""
     exc_str = str(exc)
     if isinstance(exc, httpx.ConnectError):
+        for pattern in _DNS_ERROR_PATTERNS:
+            if pattern.search(exc_str):
+                return True
+    if isinstance(exc, requests.exceptions.ConnectionError):
         for pattern in _DNS_ERROR_PATTERNS:
             if pattern.search(exc_str):
                 return True

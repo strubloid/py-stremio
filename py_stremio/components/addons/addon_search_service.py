@@ -1,8 +1,7 @@
 """Addon search and stream parsing helpers."""
 import threading
+import time
 from typing import Any
-
-import httpx
 
 from py_stremio.components.addons.base import BaseAddon
 from py_stremio.components.addons.models import StreamInfo
@@ -12,20 +11,21 @@ from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_no
 
 
 def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[StreamInfo]:
-    """Query a Stremio addon for streams."""
+    """Query a Stremio addon for streams via cloudscraper."""
     streams = []
     url = f"{addon_url.rstrip('/')}/stream/{type_}/{id_}.json"
+    addon_name = _name_from_url(addon_url)
 
     try:
-        response = httpx.get(
-            url,
-            timeout=10,
-            headers={"User-Agent": "Stremio/4.4.168", "Accept": "application/json"},
-        )
-        response.raise_for_status()
-        data = response.json()
+        from .cloudscraper_client import addon_get
 
+        data = addon_get(url, timeout=10)
         for stream in data.get("streams", []):
+            seeders_raw = stream.get("seeders") or stream.get("peers")
+            try:
+                parsed_seeders = int(seeders_raw) if seeders_raw is not None else None
+            except (ValueError, TypeError):
+                parsed_seeders = None
             streams.append(
                 StreamInfo(
                     name=stream.get("name", "unknown"),
@@ -35,31 +35,35 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
                     title=stream.get("title"),
                     filename=(stream.get("behaviorHints") or {}).get("filename"),
                     addon_url=normalize_manifest_url(addon_url),
+                    seeders=parsed_seeders,
                 )
             )
-    except httpx.HTTPStatusError as e:
+    except Exception as exc:
         from py_stremio.components.errors import report_error
 
-        report_error(context=f"query_addon({_name_from_url(addon_url)})", exception=e, url=url)
-    except httpx.RequestError as e:
-        from py_stremio.components.errors import report_error
-
-        report_error(context=f"query_addon({_name_from_url(addon_url)})", exception=e, url=url)
-    except Exception as e:
-        from py_stremio.components.errors import report_error
-
-        report_error(context=f"query_addon({_name_from_url(addon_url)})", exception=e, url=url)
+        report_error(context=f"query_addon({addon_name})", exception=exc, url=url)
 
     return streams
 
 
 def _name_from_url(url: str) -> str:
-    """Extract a short addon name from a URL."""
-    parts = url.split("/")
-    for part in reversed(parts):
-        if part and not part.startswith("http") and not part.startswith("?"):
-            return part[:30]
-    return parts[-2][:30] if len(parts) > 1 else "unknown"
+    """Extract a readable addon name from a URL's domain first segment.
+
+    Examples:
+      'https://torrentio.strem.fun/...'    → 'torrentio'
+      'https://comet.elfhosted.com/...'    → 'comet'
+      'https://podnapisi.net/...'          → 'podnapisi'
+      'https://thepiratebay-plus.strem.fun/...' → 'thepiratebay-plus'
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = parsed.netloc or parsed.hostname or ""
+    # Strip port
+    if ":" in host:
+        host = host.split(":")[0]
+    # Return the first segment of the domain
+    return host.split(".")[0][:30] if host else "unknown"
 
 
 def configured_addon_url(addon: Any) -> str:
@@ -139,6 +143,9 @@ def search_all_addons_for_streams(
 
 # ── Pre-flight addon discovery ────────────────────────────────────────────────
 
+_STAGGER_DELAY = 0.3    # 300ms between addon submission batches
+_STAGGER_GROUP = 3      # how many addons to submit before a delay
+
 def preflight_discover_working_addons(
     type_: str,
     stremio_id: str,
@@ -155,7 +162,6 @@ def preflight_discover_working_addons(
     Returns a list of normalized addon URLs that returned at least one stream.
     """
     import concurrent.futures
-    import sys
 
     import py_stremio.components.addons as addons
 
@@ -164,7 +170,6 @@ def preflight_discover_working_addons(
         return []
 
     total = len(manager.addons)
-    print(f"\n  🔍 Pre-flight: scanning {total} addons for {type_} {stremio_id}...")
 
     alive: list[str] = []
     result_lock = threading.Lock()
@@ -187,16 +192,16 @@ def preflight_discover_working_addons(
                 url = addon.get_url()
             return normalize_manifest_url(url), live
 
-        futures = {
-            executor.submit(_try_one, addon): addon
-            for addon in manager.addons
-        }
+        futures = {}
+        # Stagger addon submission by 150ms to avoid an initial burst
+        for i, addon in enumerate(manager.addons):
+            if i > 0 and i % _STAGGER_GROUP == 0:
+                time.sleep(_STAGGER_DELAY)
+            futures[executor.submit(_try_one, addon)] = addon
 
-        done_count = 0
         for future in concurrent.futures.as_completed(futures):
             if shutdown_requested():
                 break
-            done_count += 1
             addon = futures[future]
             try:
                 url, live = future.result(timeout=timeout_per_addon + 5)
@@ -207,30 +212,11 @@ def preflight_discover_working_addons(
                 with result_lock:
                     if url not in alive:
                         alive.append(url)
-
-            # Light progress indicator — skip spinner animation when not a TTY
-            if sys.stdout.isatty():
-                char = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[done_count % 10]
-                status = f"{char} Pre-flight ({done_count}/{total})"
-                if len(alive) == 1:
-                    status += " — 1 working addon found"
-                elif alive:
-                    status += f" — {len(alive)} working addons found"
-                sys.stdout.write(f"\\r    {status}")
-                sys.stdout.flush()
     except KeyboardInterrupt:
         request_shutdown()
         shutdown_executor_now(executor, futures.keys())
         raise
     else:
         executor.shutdown(wait=True)
-
-    print()
-    if alive:
-        print(f"  ✅ Pre-flight complete: {len(alive)} addons confirmed for this content")
-        for a in alive:
-            print(f"     └─ {a}")
-    else:
-        print(f"  ⚠️  Pre-flight: no addons returned streams — will search all per-episode")
 
     return alive

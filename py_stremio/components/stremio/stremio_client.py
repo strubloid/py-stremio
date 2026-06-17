@@ -272,7 +272,6 @@ def _search_single_id(
         # Preflight already searched all addons and found nothing for this
         # content.  Skip the full per-episode re-scan to avoid wasting
         # 30+ seconds on every missing episode.
-        print(f"    Preflight found no working addons — skipping full search")
         if stage_tracker:
             stage_tracker.set_servers(0)
             stage_tracker.server_done(0)

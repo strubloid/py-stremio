@@ -237,9 +237,9 @@ def test_process_season_folder_reindexes_stale_missing_list_before_download_roun
 
     process_season_folder(tmp_path, progress_callback=progress_events.append, max_workers=5)
 
-    assert calls == [5, 6, 7]
+    assert sorted(calls) == [5, 6, 7]
     byte_events = [event for event in progress_events if event.get("type") == "bytes"]
-    assert [(event["episode"], event["current"], event["total"]) for event in byte_events] == [
+    assert sorted((event["episode"], event["current"], event["total"]) for event in byte_events) == [
         (5, 1, 3),
         (6, 2, 3),
         (7, 3, 3),

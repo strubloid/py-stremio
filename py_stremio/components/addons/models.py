@@ -13,3 +13,4 @@ class StreamInfo:
     filename: str | None = None
     addon_url: str | None = None
     sources: list[str] | None = None
+    seeders: int | None = None

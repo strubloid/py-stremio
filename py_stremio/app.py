@@ -86,8 +86,7 @@ class AppService:
         args = set(raw_args)
         positional = [arg for arg in raw_args if not arg.startswith("--")]
         action = positional[0] if positional else None
-        configured_workers = max(1, getattr(settings, "DOWNLOAD_THREADS", 1))
-        max_workers = max(1, default_max_workers or configured_workers)
+        max_workers = max(1, default_max_workers if default_max_workers is not None else 2)
         speed_percent = default_speed_percent
 
         if "--run" in args or "--all" in args:
@@ -195,7 +194,7 @@ class AppService:
         if choice == "1" or choice == "":
             
             ## asking for the max workers
-            max_workers = self._ask_download_threads()
+            max_workers, speed_percent = self._ask_download_options()
             
             ## scanning folders
             self._phase("\n🔎 Library sync", "scanning folders and refreshing metadata...")
@@ -203,8 +202,13 @@ class AppService:
             self._phase("", f"found {len(folders)} managed folder(s)")
             
             ## downloading missing items
-            self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s)...")
-            self.downloader.run(folders, quiet=True, max_workers=max_workers)
+            self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed...")
+            self.downloader.run(
+                folders,
+                quiet=True,
+                max_workers=max_workers,
+                speed_percent=speed_percent,
+            )
 
         elif choice == "2":
             
@@ -215,8 +219,13 @@ class AppService:
 
         elif choice == "3":
             ## downloading missing items
-            self._phase("\n⬇ Downloads", f"starting with {self._ask_download_threads()} thread(s)...")
-            self.downloader.run(quiet=True, max_workers=self._ask_download_threads())
+            max_workers, speed_percent = self._ask_download_options()
+            self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed...")
+            self.downloader.run(
+                quiet=True,
+                max_workers=max_workers,
+                speed_percent=speed_percent,
+            )
 
         elif choice == "4":
             print(_c("\n🔍 Addon Discovery", ACCENT))
@@ -272,9 +281,39 @@ class AppService:
         request_shutdown()
         print(_c("\nInterrupted — shutting down workers and exiting.", YELLOW), flush=True)
 
-    def _ask_download_threads(self) -> int:
-        """Return thread count from config without prompting."""
-        return max(1, getattr(settings, "DOWNLOAD_THREADS", 5))
+    def _ask_download_options(self) -> tuple[int, int]:
+        """Ask interactive py-stremio users for download threads and speed."""
+        return self._ask_int("Download threads", default=2, minimum=1), self._ask_int(
+            "Download speed percent",
+            default=100,
+            minimum=1,
+            maximum=100,
+        )
+
+    def _ask_int(
+        self,
+        label: str,
+        *,
+        default: int,
+        minimum: int,
+        maximum: int | None = None,
+    ) -> int:
+        suffix = f" [{default}] › "
+        raw = input(_c(f"{label}{suffix}", ACCENT)).strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            print(_c(f"Invalid number; using {default}.", YELLOW))
+            return default
+        if value < minimum:
+            print(_c(f"Minimum is {minimum}; using {minimum}.", YELLOW))
+            return minimum
+        if maximum is not None and value > maximum:
+            print(_c(f"Maximum is {maximum}; using {maximum}.", YELLOW))
+            return maximum
+        return value
 
     def _menu_experimental_addons(self) -> None:
         """Submenu for experimental addon management."""
