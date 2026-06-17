@@ -34,7 +34,12 @@ def _create_session():
         session = httpx.Client(
             follow_redirects=True,
             headers={
-                "User-Agent": "Stremio/4.4.168",
+                # NOTE: Stremio/4.4.168 UA is blocked by Cloudflare on many IPs.
+                # Using a Chrome UA as a workaround until we implement proper
+                # Cloudflare bypass (tls_client / cloudscraper) for httpx.
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "application/json",
             },
         )
