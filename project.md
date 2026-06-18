@@ -170,7 +170,7 @@ py-stremio/
 │                   ├── YouTubeProAddon.py
 │                   ├── FShareAddon.py
 │                   └── ConsumetAddon.py
-├── tests/                             # 18 test files, 230+ tests
+├── tests/                             # 30 test files, 350 tests
 │   ├── test_addon_validator.py
 │   ├── test_application.py
 │   ├── test_bandwidth.py
@@ -217,11 +217,13 @@ Scanner.scan()
 ```
 
 - Queries Stremio addons concurrently (10 at a time via ThreadPoolExecutor)
-- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode)
+- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode); non-download phases show `waiting for download` instead of fake byte percentages, tiny invalid/error responses under 1 MB show `sizing` rather than a misleading 100% bar, and all-invalid tiny responses mark the episode permanently failed for the run instead of retrying the same bad sources repeatedly
+- Duplicate series-season folders with the same IMDb/title identity + season are deduplicated before overview/download processing, preferring folders that already contain media files
 - Multi-threaded download support with configurable workers and speed %
 - Partial download resume via .part files and Range headers
 - Per-episode final-file existence guard skips download workers if the expected output already exists, protecting against stale missing-episode tasks
 - Working addon URL tracking in config (servers list)
+- Addon advisory/config/browser-only rows (for example Reddit notices, `configure this addon`, `externalUrl` only) are filtered before download attempts; if every returned stream is filtered out, the item reports `No downloadable streams found after filtering` and is not retried repeatedly in the same run
 
 ### 2. Legacy Path (maintained)
 
@@ -251,7 +253,9 @@ update_config_imdb_ids()
   └── Write updated download-config.json
 
 download_folders()
-  └── For each folder:
+  ├── Deduplicate duplicate series-season folders by IMDb/title identity + season
+  │   └── Prefer the folder with existing media files, avoiding empty canonical-title duplicates
+  └── For each remaining folder:
       └── process_season_folder() or process_movie_folder()
           ├── load_config() → DownloadConfig
           ├── load_state()  → DownloadState
@@ -277,6 +281,7 @@ download_folders()
                   │   └── Collect working URLs for future use
                   │
                   ├── select_quality_streams()
+                  │   └── Filter advisory/config/browser-only rows and off-target media
                   │   └── Sort all streams by quality descending
                   │       2160p=100, 1080p=80, 720p=60, 480p=40,
                   │       360p=20, other=1
@@ -291,7 +296,7 @@ download_folders()
                       │   ├── If TORRENT_PROXY_URL is set and stream has info_hash:
                       │   │   └── Build local proxy URL as /{info_hash}/{fileIdx}?tr=...
                       │   │       using Stremio stream sources (tracker/DHT entries)
-                      │   └── Fallback to info_hash → RealDebrid API
+                      │   └── Fallback to info_hash → RealDebrid API with short capped polling
                       │       └── Map zero-based Stremio fileIdx to RD file id
                       │           before selectFiles; 451 infringing_file → skip
                       │
@@ -440,7 +445,7 @@ append-only with per-episode rate limiting (~1 line/sec/episode).
 ## CLI Commands
 
 ```bash
-# Interactive menu (no thread prompt — uses config value silently)
+# Interactive menu (download actions ask for threads and speed)
 py-stremio
 
 # Individual steps (menu or CLI)
@@ -453,12 +458,12 @@ py-stremio --run           # Also: py-stremio 4
 
 # Full pipeline with threads and speed %
 py-stremio --run 7 100     # 7 threads, 100% bandwidth
-py-stremio 4 50            # Menu shortcut 4, 50% speed (threads from settings)
+py-stremio 4 50            # CLI/menu shortcut 4, 50% speed for non-interactive run
 
 # Validate addons
 py-stremio --validate      # or: py-stremio 5
 
-# Cron wrapper (5 threads, 80% speed)
+# Cron console entry point (same AppService path; preset 5 threads, 80% speed)
 py-stremio-cron 2          # update metadata (for crontab)
 py-stremio-cron 3          # download missing (for crontab)
 
@@ -497,7 +502,7 @@ py-stremio-cron 3          # download missing (for crontab)
 | Modify report format | `report.py` |
 | Add new settings | `settings.py` |
 | Change episode detection | `media_files.py`, `utils.py` |
-| Modify progress UI | `application.py` (_progress_line, _make_progress_printer) |
+| Modify progress UI | `services/progress.py` (_progress_line, _make_progress_printer) |
 | Add bandwidth limits | `bandwidth.py` |
 | Modify addon validation | `addon_validator.py` |
 | Add new error categories | `errors/error_category.py` (ErrorCategory enum, normalize_error) |
@@ -535,7 +540,7 @@ py-stremio-cron 3          # download missing (for crontab)
 ## Testing
 
 ```bash
-# Run all tests (105+ tests across 17 files)
+# Run all tests (350 tests across 30 files)
 pytest tests/ -v
 
 # Run specific test file
@@ -575,16 +580,19 @@ Uses regex patterns in `media_files.parse_episode_number()`:
 
 - Modern Stremio addon-based download path is primary workflow
 - Concurrent addon search (10 at a time, ~12s for 57 addons)
+- Addon stream endpoints use `httpx` first for reliable per-request timeouts; `tls_client`/`cloudscraper` remain fallbacks. Per-host rate limiting uses re-entrant host locks so success/429 reporting cannot deadlock while the request lock is held.
 - **Preflight optimization**: no_working_addons flag skips per-episode re-scan when preflight finds nothing
-- **`py-stremio-cron` wrapper**: 5 threads + 80% speed for crontab
-- **No thread prompt**: interactive menu uses config value silently
-- RealDebrid integration functional (magnet → torrent → direct URL with polling, zero-based Stremio fileIdx mapped to RD file IDs)
+- **`py-stremio-cron` console entry point**: same `AppService` path as `py-stremio`, with cron preset defaults (5 threads + 80% speed)
+- **Interactive prompt split**: normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses 5 threads and 80% speed without prompts
+- RealDebrid integration functional (magnet → torrent → direct URL with short capped polling, zero-based Stremio fileIdx mapped to RD file IDs)
 - Optional local torrent proxy support via `TORRENT_PROXY_URL`, including tracker/DHT source propagation for info-hash streams
+- Stream selection tries direct/playable Stremio URLs before info-hash-only streams to avoid slow RealDebrid magnet polling when a cached RD proxy URL is already available
+- Language filtering no longer blocks Russian/Cyrillic-marked streams; those releases may include English audio, so the downloader tries them and relies on target-episode matching plus download validation to reject bad results
 - Torrentio RD proxy error-page detection for DMCA'd/blocked content
 - Quality fallback via descending sort (4K → 1080p → 720p → 480p → 360p)
 - Minimum file size guard against placeholder/trailer files
 - Final-file existence guard prevents stale tasks from re-downloading episodes already present on disk
-- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode)
+- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode); non-download phases show `waiting for download` instead of fake byte percentages, tiny invalid/error responses under 1 MB show `sizing` rather than a misleading 100% bar, and all-invalid tiny responses mark the episode permanently failed for the run instead of retrying the same bad sources repeatedly
 - Multi-threaded concurrent downloads with thread-aware output
 - Partial download resume (.part files + Range headers)
 - Working addon URL tracking and caching
@@ -647,7 +655,7 @@ Set `PY_STREMIO_DEBUG=true` in your environment or call `ErrorReporter.set_debug
 - No anime-style episode naming support (uses Western SxxExx patterns)
 - No subtitle download support
 - No torrent client integration (uses direct HTTP or RealDebrid)
-- RealDebrid poll loop is blocking (5s sleep iterations)
+- RealDebrid info-hash poll loop is still synchronous, but capped to 6 short attempts so uncached torrents do not block an episode for minutes per stream
 - RealDebrid may return `451 infringing_file` (error_code 35) for DMCA'd content
 - No web UI or REST API
 - Single-user, single-machine design
