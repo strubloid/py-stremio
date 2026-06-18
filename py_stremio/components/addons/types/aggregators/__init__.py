@@ -1,5 +1,6 @@
 """Aggregator addon classes."""
 
+from .CinAddon import CinAddon
 from .CinescrapeAddon import CinescrapeAddon
 from .EasyNewsPlusAddon import EasyNewsPlusAddon
 from .JackettioAddon import JackettioAddon
@@ -26,6 +27,7 @@ from .YtztvioAddon import YtztvioAddon
 
 __all__ = [
     "AIOStreamsAddon",
+    "CinAddon",
     "CineTorrentAddon",
     "CinescrapeAddon",
     "DebridSearchAddon",

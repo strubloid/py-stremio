@@ -34,6 +34,7 @@ from .comet_family import (
 # ── Major aggregators ────────────────────────────────────────────────────────
 from .aggregators import (
     AIOStreamsAddon,
+    CinAddon,
     CineTorrentAddon,
     CinescrapeAddon,
     DebridSearchAddon,
@@ -138,6 +139,7 @@ __all__ = [
     "GuindexAddon",
     # Aggregators
     "AIOStreamsAddon",
+    "CinAddon",
     "CineTorrentAddon",
     "CinescrapeAddon",
     "DebridSearchAddon",

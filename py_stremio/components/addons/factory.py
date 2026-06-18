@@ -14,6 +14,7 @@ from .types.builtin_addons import (
     AnimeStreamAddon,
     ArgentinaTVAddon,
     BrazucaTorrentsAddon,
+    CinAddon,
     CineTorrentAddon,
     CometAddon,
     CometElfHostedAddon,
@@ -123,6 +124,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(CometAddon())
     manager.register(CometElfHostedAddon())
     manager.register(CometNetAddon())
+    manager.register(CinAddon())
     manager.register(EasyNewsPlusAddon())
     manager.register(PeerflixAddon())
     manager.register(NucleusAddon())
