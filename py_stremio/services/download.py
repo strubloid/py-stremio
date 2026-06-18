@@ -9,6 +9,7 @@ from typing import Any
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.configs.config_file import load_config
 from py_stremio.components.download.bandwidth_service import build_limiter
+from py_stremio.components.download.control_panel import create_control_panel
 from py_stremio.components.download.processing import process_movie_folder as process_movies
 from py_stremio.components.download.processing import process_season_folder as process_series
 from py_stremio.components.library.library_scanner import Scanner, FolderType, ScannedFolder
@@ -51,6 +52,14 @@ class DownloadService:
 
         bandwidth_limiter = build_limiter(speed_percent, getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100))
         print(f"  Threads: {max_workers} · speed: {speed_percent}%")
+        print(_c("  Press [m] for floating menu (+/- speed, w/W threads, q quit)", DIM))
+
+        # Create interactive control panel
+        max_speed_mbps = getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100)
+        control_panel, workers_ref, speed_ref = create_control_panel(
+            bandwidth_limiter, max_workers, speed_percent, max_speed_mbps
+        )
+
         report_folders: list[dict[str, Any]] = []
         total_downloaded = 0
         total_failed = 0
@@ -83,7 +92,7 @@ class DownloadService:
             runnable.append(folder)
 
         def process_folder(folder: ScannedFolder) -> tuple[ScannedFolder, dict[str, Any]]:
-            per_folder_workers = max_workers
+            per_folder_workers = workers_ref[0]  # Use mutable ref for dynamic updates
             return folder, self._run_processor(
                 folder,
                 quiet=quiet,
@@ -171,6 +180,7 @@ class DownloadService:
             return report
         finally:
             restore_thread_stdout_filter(restore_stdout)
+            control_panel.stop()
 
     # ------------------------------------------------------------------
     # Internal helpers
