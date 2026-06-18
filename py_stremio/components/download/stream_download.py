@@ -319,11 +319,26 @@ def build_torrent_proxy_url(proxy_base_url: str, stream: StreamInfo) -> str | No
     file_part = f"/{stream.file_idx}" if stream.file_idx is not None else ""
     url = f"{base}/{stream.info_hash}{file_part}"
 
+    # Extract tracker/DHT sources from the stream
     trackers = [
         source
         for source in (stream.sources or [])
         if isinstance(source, str) and (source.startswith("tracker:") or source.startswith("dht:"))
     ]
+
+    # Fallback: if addon didn't provide trackers, use common public trackers
+    if not trackers:
+        trackers = [
+            "tracker:udp://tracker.opentrackr.org:1337/announce",
+            "tracker:udp://open.stealth.si:80/announce",
+            "tracker:udp://tracker.openbittorrent.com:6969/announce",
+            "tracker:udp://tracker.torrent.eu.org:451/announce",
+            "tracker:udp://exodus.desync.com:6969/announce",
+            "tracker:udp://tracker.tiny-vps.com:6969/announce",
+            "tracker:udp://tracker.internetwarriors.net:1337/announce",
+            "dht:opentrackr.org",
+        ]
+
     if trackers:
         url = f"{url}?{urlencode([('tr', source) for source in trackers])}"
 
