@@ -55,7 +55,7 @@ py-stremio/
 │       ├── media_files.py             # Video file detection, episode parsing helpers
 │       ├── utils.py                   # sanitize_filename, parse_episode_number, parse_season_from_folder
 │       ├── output.py                  # Thread-aware stdout filtering for parallel downloads
-│       ├── bandwidth.py               # BandwidthLimiter with per-second accounting window
+│       ├── bandwidth.py               # BandwidthLimiter + FairBandwidthLimiter fair-share accounting
 │       ├── download_processing.py     # Core logic: process_season_folder / process_movie_folder
 │       ├── download_manager.py        # CLI for legacy config/state-driven download path
 │       ├── download_discovery.py      # find_season_folders / find_movie_folders
@@ -170,7 +170,7 @@ py-stremio/
 │                   ├── YouTubeProAddon.py
 │                   ├── FShareAddon.py
 │                   └── ConsumetAddon.py
-├── tests/                             # 30 test files, 350 tests
+├── tests/                             # 30 test files, 359 tests
 │   ├── test_addon_validator.py
 │   ├── test_application.py
 │   ├── test_bandwidth.py
@@ -219,7 +219,7 @@ Scanner.scan()
 - Queries Stremio addons concurrently (10 at a time via ThreadPoolExecutor)
 - Append-only progress bars with per-episode rate limiting (~1 line/sec/episode); non-download phases show `waiting for download` instead of fake byte percentages, tiny invalid/error responses under 1 MB show `sizing` rather than a misleading 100% bar, and all-invalid tiny responses mark the episode permanently failed for the run instead of retrying the same bad sources repeatedly
 - Duplicate series-season folders with the same IMDb/title identity + season are deduplicated before overview/download processing, preferring folders that already contain media files
-- Multi-threaded download support with configurable workers and speed %
+- Multi-threaded download support with configurable workers, speed %, and fair per-active-thread bandwidth sharing with dynamic redistribution
 - Partial download resume via .part files and Range headers
 - Per-episode final-file existence guard skips download workers if the expected output already exists, protecting against stale missing-episode tasks
 - Working addon URL tracking in config (servers list)
@@ -540,7 +540,7 @@ py-stremio-cron 3          # download missing (for crontab)
 ## Testing
 
 ```bash
-# Run all tests (350 tests across 30 files)
+# Run all tests (359 tests across 30 files)
 pytest tests/ -v
 
 # Run specific test file

@@ -483,36 +483,52 @@ def download_stream_to_file(
     complete_message: str = "",
     progress_callback=None,
     bandwidth_limiter=None,
+    thread_id: int | None = None,
 ) -> None:
     """Download a direct stream URL to disk, resuming partial files when possible."""
     from pathlib import Path
+    import threading
 
     file_path = Path(filename)
     partial_path = file_path.with_name(f"{file_path.name}.part")
     existing_size = partial_path.stat().st_size if partial_path.exists() else 0
     headers = {"Range": f"bytes={existing_size}-"} if existing_size else {}
+    active_thread_id = thread_id if thread_id is not None else threading.get_ident()
+    registered_here = False
 
-    with httpx.stream("GET", download_url, timeout=300, headers=headers, follow_redirects=True) as response:
-        response.raise_for_status()
-        resumed = bool(existing_size and response.status_code == 206)
-        mode = "ab" if resumed else "wb"
-        downloaded = existing_size if resumed else 0
-        total_size = _total_size_from_headers(response.headers, downloaded)
-        _validate_response_before_download(response, file_path, partial_path, total_size)
+    if bandwidth_limiter and hasattr(bandwidth_limiter, "register_thread"):
+        is_registered = False
+        if hasattr(bandwidth_limiter, "is_thread_registered"):
+            is_registered = bandwidth_limiter.is_thread_registered(active_thread_id)
+        if not is_registered:
+            bandwidth_limiter.register_thread(active_thread_id)
+            registered_here = True
 
-        if progress_callback:
-            progress_callback(downloaded, total_size)
+    try:
+        with httpx.stream("GET", download_url, timeout=300, headers=headers, follow_redirects=True) as response:
+            response.raise_for_status()
+            resumed = bool(existing_size and response.status_code == 206)
+            mode = "ab" if resumed else "wb"
+            downloaded = existing_size if resumed else 0
+            total_size = _total_size_from_headers(response.headers, downloaded)
+            _validate_response_before_download(response, file_path, partial_path, total_size)
 
-        with open(partial_path, mode) as file:
-            for chunk in response.iter_bytes(chunk_size=8192):
-                if not chunk:
-                    continue
-                if bandwidth_limiter:
-                    bandwidth_limiter.wait_for(len(chunk))
-                file.write(chunk)
-                downloaded += len(chunk)
-                if progress_callback:
-                    progress_callback(downloaded, total_size)
+            if progress_callback:
+                progress_callback(downloaded, total_size)
+
+            with open(partial_path, mode) as file:
+                for chunk in response.iter_bytes(chunk_size=8192):
+                    if not chunk:
+                        continue
+                    if bandwidth_limiter:
+                        bandwidth_limiter.wait_for(len(chunk), thread_id=active_thread_id)
+                    file.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback:
+                        progress_callback(downloaded, total_size)
+    finally:
+        if registered_here and bandwidth_limiter:
+            bandwidth_limiter.unregister_thread(active_thread_id)
 
     partial_path.replace(file_path)
     _validate_completed_file(file_path, partial_path)

@@ -354,8 +354,10 @@ def _try_download_streams(
             }
 
         filename = build_media_filename(title, season, episode, folder_path)
+        import threading
+        thread_id = threading.get_ident()
         try:
-            download_stream_to_file(download_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
+            download_stream_to_file(download_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter, thread_id=thread_id)
             return _success_result(filename, stream, working_urls)
         except InvalidVideoDownloadError as e:
             invalid_download_errors += 1
@@ -409,8 +411,11 @@ def _retry_with_real_debrid(stream: StreamInfo, filename: str, working_urls: lis
     if not rd_url:
         return None
 
+    import threading
+    thread_id = threading.get_ident()
+
     try:
-        download_stream_to_file(rd_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter)
+        download_stream_to_file(rd_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter, thread_id=thread_id)
         return _success_result(filename, stream, working_urls)
     except Exception as e:
         from py_stremio.components.errors.error_logger import log_error

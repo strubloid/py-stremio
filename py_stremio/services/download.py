@@ -10,6 +10,7 @@ from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.configs.config_file import load_config
 from py_stremio.components.download.bandwidth_service import build_limiter
 from py_stremio.components.download.control_panel import create_control_panel
+from py_stremio.components.download.speed_probe import resolve_max_speed_mbps
 from py_stremio.components.download.processing import process_movie_folder as process_movies
 from py_stremio.components.download.processing import process_season_folder as process_series
 from py_stremio.components.library.library_scanner import Scanner, FolderType, ScannedFolder
@@ -50,14 +51,13 @@ class DownloadService:
             speed_percent = settings.INTERNET_SPEED_LIMIT if hasattr(settings, "INTERNET_SPEED_LIMIT") else getattr(settings, "INTERNET_SPEED_LIMIT", 100)
         assert speed_percent is not None, "speed_percent must resolve to int"
 
-        bandwidth_limiter = build_limiter(speed_percent, getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100))
+        max_speed_mbps = resolve_max_speed_mbps(default_mbps=getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100))
+        bandwidth_limiter = build_limiter(speed_percent, max_speed_mbps, max_workers=max_workers)
         print(f"  Threads: {max_workers} · speed: {speed_percent}%")
-        print(_c("  Press [m] for floating menu (+/- speed, w/W threads, q quit)", DIM))
 
         # Create interactive control panel
-        max_speed_mbps = getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100)
         control_panel, workers_ref, speed_ref = create_control_panel(
-            bandwidth_limiter, max_workers, speed_percent, max_speed_mbps
+            bandwidth_limiter, max_workers, speed_percent, max_speed_mbps, progress_line_count=0
         )
 
         report_folders: list[dict[str, Any]] = []
@@ -72,7 +72,21 @@ class DownloadService:
             progress_stream, restore_stdout = install_thread_stdout_filter()
         else:
             progress_stream = sys.stdout
-        progress = make_progress_printer(progress_stream)
+        
+        # Wrap progress printer to track active lines for control panel positioning
+        base_progress = make_progress_printer(progress_stream)
+        active_line_count = [0]  # mutable ref
+        
+        def progress(event: dict[str, Any]) -> None:
+            base_progress(event)
+            # Track active lines for control panel positioning
+            if event.get("type") == "episode_start":
+                active_line_count[0] += 1
+                control_panel.update_progress_lines(active_line_count[0])
+            elif event.get("type") == "episode_done":
+                active_line_count[0] = max(0, active_line_count[0] - 1)
+                control_panel.update_progress_lines(active_line_count[0])
+        
         worker_semaphore = threading.Semaphore(max_workers) if max_workers > 1 else None
 
         def folder_display(folder: ScannedFolder) -> str:

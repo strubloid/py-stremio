@@ -184,6 +184,37 @@ def test_threaded_progress_printer_renders_each_active_episode_line():
     assert "S01E10" in plain
 
 
+def test_append_only_progress_printer_emits_only_changed_episode_line():
+    stream = io.StringIO()
+    printer = _make_progress_printer(stream)
+
+    printer({
+        "type": "bytes",
+        "title": "Below Deck",
+        "season": 9,
+        "episode": 4,
+        "current": 1,
+        "total": 2,
+        "downloaded": 528,
+        "bytes_total": 528,
+    })
+    printer({
+        "type": "bytes",
+        "title": "Shark Tank",
+        "season": 15,
+        "episode": 9,
+        "current": 2,
+        "total": 2,
+        "downloaded": 250 * 1024 * 1024,
+        "bytes_total": 335 * 1024 * 1024,
+    })
+
+    lines = [line for line in stream.getvalue().splitlines() if line.strip()]
+    assert len(lines) == 2
+    assert "Below Deck" in lines[0]
+    assert "Shark Tank" in lines[1]
+
+
 def test_threaded_progress_printer_removes_completed_episode_line():
     stream = io.StringIO()
     printer = _make_progress_printer(stream)

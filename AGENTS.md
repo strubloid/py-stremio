@@ -62,7 +62,8 @@ py-stremio/
 │       │   ├── __init__.py
 │       │   ├── processing.py          # Core logic: process_season_folder / process_movie_folder
 │       │   ├── stream_download.py     # Stream URL resolution, HTTP download with resume
-│       │   ├── bandwidth_service.py   # BandwidthLimiter with per-second accounting
+│       │   ├── bandwidth_service.py   # BandwidthLimiter + FairBandwidthLimiter fair-share accounting
+│       │   ├── speed_probe.py         # Auto-detect/persist INTERNET_MAX_SPEED_MBPS when missing
 │       │   ├── discovery.py           # find_season_folders / find_movie_folders
 │       │   ├── downloader.py          # Legacy Downloader class with quality fallback
 │       │   └── provider.py            # BaseProvider, RealDebrid, Mock, Fallback providers
@@ -108,7 +109,7 @@ py-stremio/
 │           ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
 │           ├── error_reporter.py      # ErrorReporter singleton + redact_url helpers
 │           └── error_logger.py        # Legacy error logger (backward compat)
-└── tests/                             # 30 test files, 350 tests
+└── tests/                             # 30 test files, 363 tests
     ├── test_addon_enabled.py
     ├── test_addon_type_configurers.py
     ├── test_addon_validator.py
@@ -174,8 +175,8 @@ AppService.run_pipeline()
 ```
 
 - Queries Stremio addons directly (Torrentio, MediaFusion, ThePirateBay+, etc.)
-- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode); non-download/search stages render `waiting for download`, and tiny invalid/error responses under 1 MB render `sizing` instead of fake byte percentages
-- Multi-threaded download support (DOWNLOAD_THREADS, default: 2)
+- Append-only progress bars emit only the changed episode line in non-TTY output (stable numbering/no repeated full blocks) with per-episode rate limiting (~1 line/sec/episode); non-download/search stages render `waiting for download`, and tiny invalid/error responses under 1 MB render `sizing` instead of fake byte percentages
+- Multi-threaded download support (DOWNLOAD_THREADS, default: 2) with FairBandwidthLimiter per-active-download bandwidth sharing and dynamic redistribution when actual stream downloads start/finish; search/probe workers are not counted against the bandwidth share
 - **`py-stremio-cron` console entry point** — uses the same `AppService` path as `py-stremio` with cron preset defaults: 5 threads + 80% speed
 - **Interactive prompt split** — normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses preset defaults (5 threads, 80% speed) without prompts
 - Partial download resume via .part files and Range headers
@@ -270,7 +271,7 @@ ELSE
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min size for valid completed file |
 | DOWNLOAD_THREADS | 2 | Parallel download workers |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
-| INTERNET_MAX_SPEED_MBPS | 100 | Max Mbps for bandwidth calculation |
+| INTERNET_MAX_SPEED_MBPS | auto-detected once; fallback 100 | Max Mbps for bandwidth calculation; if missing from env/.env, a short speed probe appends the measured value to .env |
 | DRY_RUN | false | Test mode — no actual downloads |
 | STREMIO_ADDON_URL | None | Override addon base URL |
 | STREMIO_ADDON_URL_BASE | `https://torrentio.strem.fun` | Addon base URL when no RD key |
@@ -407,7 +408,7 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Config tests verify default creation and loading
 - Download processing tests mock the Stremio client
 - **Monkeypatch caveat**: `from X import Y` in service modules creates a permanent local binding. When tests monkeypatch `X.Y`, the local binding in the service module is unaffected if the service was already imported by a prior test. Always also monkeypatch the local binding (`py_stremio.services.<name>.<function>`) in tests that need to mock functions imported via `from ... import` in service modules.
-- **Test status**: 350 tests across 30 files, all passing (run `pytest tests/ -v`)
+- **Test status**: 363 tests across 30 files, all passing (run `pytest tests/ -v`)
 
 ## Current Status
 
@@ -416,8 +417,8 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Optional local torrent proxy support via `TORRENT_PROXY_URL`, including tracker/DHT source propagation for info-hash streams
 - Stream selection tries direct/playable Stremio URLs before info-hash-only streams to avoid slow RealDebrid magnet polling when a cached RD proxy URL is already available.
 - Language filtering no longer blocks Russian/Cyrillic-marked streams; those releases may include English audio, so the downloader tries them and relies on target-episode matching plus download validation to reject bad results.
-- Append-only progress bars with per-episode rate limiting (~1 line/sec), no ANSI cursor blocks; position counters like `(1/6)` are never rendered as byte progress (`1 B / 6 B`), tiny invalid bodies are treated as permanent failed attempts instead of retrying the whole episode repeatedly, and retry rounds stay silent after the initial `Downloading N episodes` header
-- Multi-threaded concurrent downloads with configurable workers (default: 2)
+- Append-only progress bars emit only the changed episode line in non-TTY output (stable numbering/no repeated full blocks) with per-episode rate limiting (~1 line/sec), no ANSI cursor blocks; position counters like `(1/6)` are never rendered as byte progress (`1 B / 6 B`), tiny invalid bodies are treated as permanent failed attempts instead of retrying the whole episode repeatedly, and retry rounds stay silent after the initial `Downloading N episodes` header
+- Multi-threaded concurrent downloads with configurable workers (default: 2) and fair bandwidth sharing across active stream downloads only; workers that are still searching/resolving are not counted against the bandwidth share
 - Partial download resume (.part files + Range headers)
 - Final-file existence guard prevents stale tasks from re-downloading episodes already present on disk
 - Working addon URL tracking and caching

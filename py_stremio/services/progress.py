@@ -384,12 +384,22 @@ def make_progress_printer(stream):
                 active_lines.pop(key, None)
                 if key in order:
                     order.remove(key)
-                redraw(force=True)
+                if use_ansi_block:
+                    redraw(force=True)
                 return
             is_new_line = key not in active_lines
             if is_new_line:
                 order.append(key)
             active_lines[key] = _progress_line(event, color=use_color, max_width=max_line_width)
+            if not use_ansi_block:
+                now = time.monotonic()
+                last = last_print_at.get(key)
+                force_line = is_new_line or event.get("type") == "episode_start"
+                if force_line or last is None or now - last >= min_print_interval:
+                    stream.write(f"{active_lines[key]}\n")
+                    stream.flush()
+                    last_print_at[key] = now
+                return
             redraw(force=is_new_line or event.get("type") == "episode_start")
 
     return printer

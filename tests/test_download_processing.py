@@ -100,6 +100,52 @@ def test_process_season_folder_passes_config_languages_to_search(tmp_path, monke
     assert captured["preferred_languages"] == ["english"]
 
 
+def test_process_season_folder_does_not_count_search_workers_as_active_downloads(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Shark Tank",
+        imdb_id="tt1442550",
+        season=15,
+        episode_count=2,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://torrentio.strem.fun/manifest.json"],
+    )
+    save_config(tmp_path / "download-config.json", config)
+
+    class FakeFairLimiter:
+        def __init__(self):
+            self.active = set()
+
+        def register_thread(self, thread_id):
+            self.active.add(thread_id)
+
+        def unregister_thread(self, thread_id):
+            self.active.remove(thread_id)
+
+    limiter = FakeFairLimiter()
+    active_counts_seen = []
+
+    def fake_search_and_download(**kwargs):
+        active_counts_seen.append(len(limiter.active))
+        return {
+            "success": False,
+            "error": "not downloaded in test",
+            "working_urls": [],
+            "permanent_failure": True,
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path, max_workers=2, bandwidth_limiter=limiter)
+
+    assert result["failed"] == 2
+    assert active_counts_seen == [0, 0]
+
+
 def test_process_season_folder_skips_existing_jury_duty_presents_files(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",
