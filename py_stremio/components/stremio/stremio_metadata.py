@@ -68,6 +68,13 @@ def _is_placeholder_episode(video: dict) -> bool:
     has_external_episode_id = bool(video.get("tvdb_id"))
     placeholder_episode_name = name == placeholder_name and not has_external_episode_id
     tba_name = name in {"tba", "tbd"}
+
+    # A release date in the past means the episode has aired regardless of
+    # whether Cinemeta has updated its name/description/rating yet.
+    release_date = _video_release_datetime(video)
+    if release_date is not None and release_date <= _current_datetime():
+        return False
+
     return (placeholder_episode_name or tba_name) and not has_description and rating in ("", "0", "0.0")
 
 

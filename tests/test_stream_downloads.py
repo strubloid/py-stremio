@@ -590,6 +590,299 @@ class TestSelectQualityStreamsWithLanguage:
         assert result == []
 
 
+class TestSearchCrossValidation:
+    """Defend against wrong-show downloads.
+
+    Addons occasionally return streams whose episode numbers happen to
+    match the request but whose show content is completely unrelated
+    (e.g. South Park returned for a One Piece query).  Two signals are
+    checked together: IMDB ID cross-validation rejects streams whose
+    metadata IMDB ID does not match the target, and show-title
+    containment rejects streams whose release name does not contain the
+    show title.  Together they ensure that even loose addons can not
+    leak wrong content past the filter.
+    """
+
+    def _make_stream(
+        self,
+        title: str,
+        name: str = "Torrentio",
+        url: str | None = "https://dl.test",
+        imdb_id: str | None = None,
+    ) -> StreamInfo:
+        return StreamInfo(
+            name=name,
+            title=title,
+            url=url,
+            imdb_id=imdb_id,
+        )
+
+    def test_rejects_stream_with_mismatched_imdb_id(self):
+        """Streams whose metadata IMDB ID is set but does not match are rejected."""
+        wrong_show = self._make_stream(
+            "South.Park.S01E01.1080p.WEB-DL.mkv",
+            imdb_id="tt0121955",  # South Park
+        )
+        result = stream_download._filter_streams_by_target_episode(
+            [wrong_show],
+            target_season=1,
+            target_episode=1,
+            title="One Piece",
+            target_imdb_id="tt0388629",  # One Piece
+        )
+        assert result == []
+
+    def test_keeps_stream_with_matching_imdb_id(self):
+        """Streams whose metadata IMDB ID matches the target pass."""
+        target = self._make_stream(
+            "One.Piece.S31E01.1080p.WEB-DL.mkv",
+            imdb_id="tt0388629",
+        )
+        result = stream_download._filter_streams_by_target_episode(
+            [target],
+            target_season=31,
+            target_episode=1,
+            title="One Piece",
+            target_imdb_id="tt0388629",
+        )
+        assert result == [target]
+
+    def test_keeps_stream_without_imdb_id_when_target_set(self):
+        """Streams without metadata IMDB ID are kept (defensive default).
+
+        Many addons don't include imdb_id on stream objects.  We allow
+        those through and rely on title containment + post-download
+        validation as the second line of defense.
+        """
+        stream_without_imdb = self._make_stream(
+            "One.Piece.S31E01.1080p.WEB-DL.mkv",
+            imdb_id=None,
+        )
+        result = stream_download._filter_streams_by_target_episode(
+            [stream_without_imdb],
+            target_season=31,
+            target_episode=1,
+            title="One Piece",
+            target_imdb_id="tt0388629",
+        )
+        assert result == [stream_without_imdb]
+
+    def test_rejects_wrong_show_with_matching_episode_numbers(self):
+        """South Park S31E01 must not pass for a One Piece S31E1 query."""
+        south_park = self._make_stream(
+            "South.Park.S31E01.1080p.WEB-DL.mkv",
+            imdb_id="tt0121955",
+        )
+        cop_show = self._make_stream(
+            "COPS.S31E01.1080p.WEB-DL.mkv",
+            imdb_id="tt0080317",
+        )
+        result = stream_download.select_quality_streams(
+            [south_park, cop_show],
+            "1080p",
+            target_season=31,
+            target_episode=1,
+            title="One Piece",
+            target_imdb_id="tt0388629",
+        )
+        assert south_park not in result
+        assert cop_show not in result
+
+    def test_title_check_normalizes_dots_in_stream_filename(self):
+        """Stream titles like 'one.piece.s31e01' must match 'One Piece'."""
+        target = self._make_stream(
+            "one.piece.s31e01.1080p.web-dl.mkv",
+        )
+        result = stream_download.select_quality_streams(
+            [target],
+            "1080p",
+            target_season=31,
+            target_episode=1,
+            title="One Piece",
+        )
+        assert result == [target]
+
+    def test_title_check_allows_hyphen_variants(self):
+        """Show-name matching tolerates dashes in the release name."""
+        target = self._make_stream(
+            "Bobs-Burgers.S13E13.1080p.WEB-DL.mkv",
+        )
+        result = stream_download.select_quality_streams(
+            [target],
+            "1080p",
+            target_season=13,
+            target_episode=13,
+            title="Bobs Burgers",
+        )
+        assert result == [target]
+
+    def test_title_check_rejects_completely_unrelated_show(self):
+        """A stream whose release name does not contain the show title is rejected."""
+        wrong = self._make_stream(
+            "Random.S01E01.1080p.WEB-DL.mkv",
+        )
+        result = stream_download.select_quality_streams(
+            [wrong],
+            "1080p",
+            target_season=1,
+            target_episode=1,
+            title="One Piece",
+        )
+        assert result == []
+
+    def test_imdb_id_check_does_not_block_when_no_target_imdb(self):
+        """When no target IMDB is known we don't reject streams for IMDB mismatch."""
+        stream_with_unrelated_imdb = self._make_stream(
+            "One.Piece.S31E01.1080p.WEB-DL.mkv",
+            imdb_id="tt0121955",  # some other IMDB
+        )
+        result = stream_download._filter_streams_by_target_episode(
+            [stream_with_unrelated_imdb],
+            target_season=31,
+            target_episode=1,
+            title="One Piece",
+            target_imdb_id=None,  # not known
+        )
+        # Falls back to title check; this stream would still pass it
+        assert result == [stream_with_unrelated_imdb]
+
+    def test_select_quality_streams_accepts_target_imdb_id_kwarg(self, monkeypatch):
+        """select_quality_streams must accept and forward target_imdb_id."""
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        target = self._make_stream(
+            "Bobs.Burgers.S13E13.1080p.WEB-DL.mkv",
+            imdb_id="tt2225764",
+        )
+        result = stream_download.select_quality_streams(
+            [target],
+            "1080p",
+            target_season=13,
+            target_episode=13,
+            title="Bobs Burgers",
+            target_imdb_id="tt2225764",
+        )
+        assert result == [target]
+
+
+class TestSearchAndDownloadIdFallback:
+    """Verify the search-and-download uses both IMDB-based and title-based IDs."""
+
+    def test_series_strategies_include_title_fallback(self):
+        """When IMDB is available, the title-based strategy must still be tried
+        if the IMDB-based strategy doesn't yield a successful download.
+        """
+        from py_stremio.components.stremio.stremio_client import search_and_download
+
+        attempted_strategies = []
+
+        def fake_resolve(title, imdb_id, season):
+            return "tt0388629"  # known One Piece ID
+
+        def fake_search_single_id(*, title, stremio_id, id_type, **kwargs):
+            attempted_strategies.append(stremio_id)
+            if "tt0388629" in stremio_id:
+                return {"success": False, "error": "no streams", "working_urls": []}
+            return {
+                "success": True,
+                "filename": "test.mkv",
+                "quality": "1080p",
+                "working_urls": [],
+                "successful_url": "https://example.test",
+            }
+
+        import py_stremio.components.stremio.stremio_client as stremio_client
+        monkey = __import__("pytest").MonkeyPatch()
+        monkey.setattr(stremio_client, "_resolve_imdb_id", fake_resolve)
+        monkey.setattr(stremio_client, "_search_single_id", fake_search_single_id)
+        try:
+            result = search_and_download(
+                title="One Piece",
+                season=22,
+                episode=120,
+            )
+            # Both IMDB-based and title-based should have been attempted
+            assert len(attempted_strategies) == 2
+            assert any("tt0388629" in s for s in attempted_strategies)
+            assert any("tt0388629" not in s for s in attempted_strategies)
+            assert result.get("success") is True
+        finally:
+            monkey.undo()
+
+    def test_movie_strategies_include_title_fallback(self):
+        """Movies with a known IMDB ID must also fall back to title-based."""
+        from py_stremio.components.stremio.stremio_client import search_and_download
+
+        attempted_strategies = []
+
+        def fake_resolve(title, imdb_id, season):
+            return "tt2914114"  # some movie ID
+
+        def fake_search_single_id(*, title, stremio_id, id_type, **kwargs):
+            attempted_strategies.append((id_type, stremio_id))
+            if "tt2914114" in stremio_id:
+                return {"success": False, "error": "no streams", "working_urls": []}
+            return {
+                "success": True,
+                "filename": "test.mkv",
+                "quality": "720p",
+                "working_urls": [],
+                "successful_url": "https://example.test",
+            }
+
+        import py_stremio.components.stremio.stremio_client as stremio_client
+        monkey = __import__("pytest").MonkeyPatch()
+        monkey.setattr(stremio_client, "_resolve_imdb_id", fake_resolve)
+        monkey.setattr(stremio_client, "_search_single_id", fake_search_single_id)
+        try:
+            result = search_and_download(
+                title="Bob's Burgers Movie",
+                content_type="movie",
+            )
+            assert len(attempted_strategies) == 2
+            assert result.get("success") is True
+        finally:
+            monkey.undo()
+
+
+class TestStreamInfoCarriesImdbId:
+    """Verify the StreamInfo model carries IMDB IDs from addon responses."""
+
+    def test_query_addon_parsing_extracts_imdb_id(self, monkeypatch):
+        """query_addon_for_streams must propagate imdb_id from addon responses."""
+        from py_stremio.components.addons.addon_search_service import (
+            query_addon_for_streams,
+        )
+
+        fake_response = {
+            "streams": [
+                {
+                    "name": "Comet 1080p",
+                    "url": "https://example.test/video.mkv",
+                    "title": "Show.S01E01.1080p.mkv",
+                    "imdb_id": "tt1234567",
+                },
+            ]
+        }
+
+        def fake_addon_get(url, timeout=10):
+            return fake_response
+
+        monkeypatch.setattr(
+            "py_stremio.components.addons.cloudscraper_client.addon_get",
+            fake_addon_get,
+        )
+
+        streams = query_addon_for_streams(
+            "https://example.test",
+            "series",
+            "tt1234567:1:1",
+        )
+        assert len(streams) == 1
+        assert streams[0].imdb_id == "tt1234567"
+
+
 # TestFilterStreamsByTitle removed:
 # The _filter_streams_by_title function was removed from the pipeline because
 # it caused false rejections when torrent release names didn't match the official

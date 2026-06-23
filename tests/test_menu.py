@@ -4,8 +4,9 @@ from py_stremio.components import application
 
 def test_menu_choice_two_updates_library(monkeypatch, capsys):
     calls = []
+    answers = iter(["2", "7"])
 
-    monkeypatch.setattr("builtins.input", lambda _: "2")
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
         "py_stremio.services.scanner.ScanService.run",
         lambda self: calls.append("scan") or [],
@@ -27,7 +28,7 @@ def test_menu_choice_two_updates_library(monkeypatch, capsys):
 def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch):
     calls = []
     folders = [object()]
-    answers = iter(["1", "7", "55"])
+    answers = iter(["1", "7", "55", "7"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -48,7 +49,7 @@ def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch)
 
 def test_menu_choice_three_asks_threads_and_speed_before_download(monkeypatch):
     calls = []
-    answers = iter(["3", "4", "60"])
+    answers = iter(["3", "4", "60", "7"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -62,7 +63,7 @@ def test_menu_choice_three_asks_threads_and_speed_before_download(monkeypatch):
 
 
 def test_menu_choice_one_prints_library_sync_status_before_blocking_work(monkeypatch, capsys):
-    answers = iter(["1", "2", "100"])
+    answers = iter(["1", "2", "100", "7"])
     folders = []
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))

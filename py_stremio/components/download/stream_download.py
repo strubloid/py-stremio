@@ -143,13 +143,41 @@ def _filter_streams_by_target_episode(
     streams: list,
     target_season: int | None = None,
     target_episode: int | None = None,
+    title: str | None = None,
+    target_imdb_id: str | None = None,
 ) -> list:
+    """Filter streams by episode match, IMDB ID cross-validation, and title.
+
+    When *target_imdb_id* is provided, any stream whose ``imdb_id`` field
+    is set **and** does not match is rejected (prevents wrong-show downloads
+    from misbehaving addons).  Streams without an ``imdb_id`` field are kept
+    since many addons don't supply it.
+
+    When *title* is provided, streams whose combined text does NOT contain
+    the show title are rejected.  This catches cross-show contamination
+    from addons that return wrong content under a correct IMDB ID.
+    """
     filtered = []
     for stream in streams:
         if _is_advisory_stream(stream):
             continue
         if not _matches_target_episode(stream, target_season, target_episode):
             continue
+        # IMDB ID cross-validation: if the stream has an imdb_id, reject
+        # a mismatch even if episode numbers happen to line up.
+        stream_imdb = getattr(stream, 'imdb_id', None)
+        if target_imdb_id and stream_imdb and stream_imdb != target_imdb_id:
+            continue
+        # Title containment check: reject streams whose release name
+        # doesn't contain the show title.  Normalize dots/hyphens/underscores
+        # to spaces on both sides so title-based names like
+        # "Bob's.Burgers.S13E13" still match "Bob's Burgers".
+        if title:
+            combined = _combined_stream_text(stream).lower()
+            combined_norm = re.sub(r"[._\-]", " ", combined)
+            title_norm = re.sub(r"[._\-]", " ", title.lower())
+            if title_norm not in combined_norm:
+                continue
         filtered.append(stream)
     return filtered
 
@@ -273,6 +301,7 @@ def select_quality_streams(
     target_season: int | None = None,
     target_episode: int | None = None,
     title: str | None = None,
+    target_imdb_id: str | None = None,
 ) -> list:
     """Filter out unusable streams, then return all usable ones sorted by quality
     descending (1080p > 720p > 480p > ...) so the caller can try best first
@@ -280,7 +309,11 @@ def select_quality_streams(
 
     When *title* is provided, warns about streams whose release name doesn't
     contain the show title — this helps catch IMDB-ID mismatches where an
-    addon returns a wrong show's episode under the requested ID."""
+    addon returns a wrong show's episode under the requested ID.
+
+    When *target_imdb_id* is provided, streams whose ``imdb_id`` field does
+    not match are rejected (hard validation, not a warning).
+    """
     usable = [
         s for s in streams
         if s.url or s.info_hash
@@ -292,6 +325,8 @@ def select_quality_streams(
         usable,
         target_season=target_season,
         target_episode=target_episode,
+        title=title,
+        target_imdb_id=target_imdb_id,
     )
     if not usable:
         return []

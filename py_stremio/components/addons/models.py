@@ -14,3 +14,4 @@ class StreamInfo:
     addon_url: str | None = None
     sources: list[str] | None = None
     seeders: int | None = None
+    imdb_id: str | None = None

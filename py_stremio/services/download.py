@@ -27,6 +27,31 @@ def _c(text: str, color: str) -> str:
     return f"{color}{text}{RESET}"
 
 
+class DynamicLimit:
+    """A per-folder concurrency limit that reads a mutable ref for dynamic adjustment.
+
+    When ``workers_ref[0]`` increases, new workers are allowed in immediately.
+    When it decreases, the limit shrinks gradually as active workers finish.
+    Supports ``.acquire()`` / ``.release()`` interface (same as ``threading.Semaphore``).
+    """
+
+    def __init__(self, workers_ref: list[int]):
+        self._ref = workers_ref
+        self._active = 0
+        self._cond = threading.Condition(threading.Lock())
+
+    def acquire(self) -> None:
+        with self._cond:
+            while self._active >= self._ref[0]:
+                self._cond.wait()
+            self._active += 1
+
+    def release(self) -> None:
+        with self._cond:
+            self._active = max(0, self._active - 1)
+            self._cond.notify()
+
+
 class DownloadService:
     """Download missing episodes/movies across folders with parallel support."""
 
@@ -46,19 +71,21 @@ class DownloadService:
             folders = self.scanner.scan()
         folders = self._dedupe_duplicate_series_seasons(folders)
 
-        print(_c("\n⬇ Downloads", ACCENT))
         if speed_percent is None:
             speed_percent = settings.INTERNET_SPEED_LIMIT if hasattr(settings, "INTERNET_SPEED_LIMIT") else getattr(settings, "INTERNET_SPEED_LIMIT", 100)
         assert speed_percent is not None, "speed_percent must resolve to int"
 
         max_speed_mbps = resolve_max_speed_mbps(default_mbps=getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100))
         bandwidth_limiter = build_limiter(speed_percent, max_speed_mbps, max_workers=max_workers)
-        print(f"  Threads: {max_workers} · speed: {speed_percent}%")
 
-        # Create interactive control panel
-        control_panel, workers_ref, speed_ref = create_control_panel(
-            bandwidth_limiter, max_workers, speed_percent, max_speed_mbps, progress_line_count=0
+        # Create interactive bottom status bar FIRST — sets scroll region
+        # so all subsequent output scrolls above the reserved bottom line.
+        status_bar, workers_ref, speed_ref = create_control_panel(
+            bandwidth_limiter, max_workers, speed_percent, max_speed_mbps
         )
+
+        print(_c("\n⬇ Downloads", ACCENT))
+        print(f"  Threads: {max_workers} · speed: {speed_percent}%")
 
         report_folders: list[dict[str, Any]] = []
         total_downloaded = 0
@@ -73,21 +100,34 @@ class DownloadService:
         else:
             progress_stream = sys.stdout
         
-        # Wrap progress printer to track active lines for control panel positioning
+        # Wrap progress printer to track active lines for status bar stats
         base_progress = make_progress_printer(progress_stream)
         active_line_count = [0]  # mutable ref
+        active_rates: dict[tuple, float] = {}  # key -> rate_bps for summing
         
         def progress(event: dict[str, Any]) -> None:
             base_progress(event)
-            # Track active lines for control panel positioning
+            key = (event.get("title"), event.get("season"), event.get("episode"))
             if event.get("type") == "episode_start":
                 active_line_count[0] += 1
-                control_panel.update_progress_lines(active_line_count[0])
             elif event.get("type") == "episode_done":
                 active_line_count[0] = max(0, active_line_count[0] - 1)
-                control_panel.update_progress_lines(active_line_count[0])
+                active_rates.pop(key, None)
+            elif event.get("type") == "bytes":
+                rate = event.get("rate_bps", 0) or 0
+                if rate:
+                    active_rates[key] = rate
+            # Sum the rate across all active downloads for a meaningful overall rate
+            total_rate = sum(active_rates.values())
+            total = event.get("total", 0)
+            current = event.get("current", 0)
+            status_bar.update_stats(
+                active=active_line_count[0],
+                remaining=total - current if total else 0,
+                rate_bps=total_rate,
+            )
         
-        worker_semaphore = threading.Semaphore(max_workers) if max_workers > 1 else None
+        dynamic_limit = DynamicLimit(workers_ref)
 
         def folder_display(folder: ScannedFolder) -> str:
             display_name = folder.path.parent.name if folder.folder_type == FolderType.SERIES else folder.path.name
@@ -113,7 +153,7 @@ class DownloadService:
                 progress_callback=progress,
                 max_workers=per_folder_workers,
                 bandwidth_limiter=bandwidth_limiter,
-                worker_semaphore=worker_semaphore,
+                worker_semaphore=dynamic_limit,
             )
 
         def record_result(folder: ScannedFolder, result: dict[str, Any]) -> None:
@@ -194,7 +234,7 @@ class DownloadService:
             return report
         finally:
             restore_thread_stdout_filter(restore_stdout)
-            control_panel.stop()
+            status_bar.stop()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -257,7 +297,7 @@ class DownloadService:
         progress_callback=None,
         max_workers: int = 1,
         bandwidth_limiter=None,
-        worker_semaphore: threading.Semaphore | None = None,
+        worker_semaphore: threading.Semaphore | DynamicLimit | None = None,
     ) -> dict[str, Any]:
         processor = process_series if folder.folder_type == FolderType.SERIES else process_movies
         signature = inspect.signature(processor).parameters

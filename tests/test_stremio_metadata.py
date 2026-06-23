@@ -243,6 +243,10 @@ def test_get_current_year_series_seasons_filters_cinemeta_placeholder_season(mon
 
     monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
     monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_imdb_max_season", lambda imdb_id: 4)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio.stremio_metadata._current_datetime",
+        lambda: datetime(2025, 12, 31, tzinfo=timezone.utc),
+    )
 
     seasons = get_current_year_series_seasons("Bleach Thousand-Year Blood War", 2026)
 
@@ -342,4 +346,55 @@ def test_get_series_metadata_marks_unreleased_tba_season_missing(monkeypatch):
         "episode_count": None,
         "available_episodes": [],
         "season_exists": False,
+    }
+
+
+def test_get_series_metadata_counts_tba_episodes_that_have_already_aired(monkeypatch):
+    """An episode with name='TBA', no description, rating='0' but a release
+    date that has already passed should be counted as available. Cinemeta
+    sometimes lags behind actual airdates by several days for name/description
+    population — the release date check overrides the empty placeholder heuristic."""
+    def fake_get(url, timeout, **kwargs):
+        if "/catalog/" in url:
+            return FakeResponse({"metas": [{"imdb_id": "tt28304310", "name": "90 Day: The Last Resort"}]})
+        return FakeResponse(
+            {
+                "meta": {
+                    "imdb_id": "tt28304310",
+                    "name": "90 Day: The Last Resort",
+                    "videos": [
+                        {"season": 3, "episode": 1, "name": "Last Chance for a Fairytale",
+                         "overview": "Some description", "rating": "7.5",
+                         "released": "2026-06-02T04:00:00.000Z"},
+                        {"season": 3, "episode": 2, "name": "Last Crown Standing",
+                         "overview": "Another description", "rating": "7.0",
+                         "released": "2026-06-09T04:00:00.000Z"},
+                        # Already aired but Cinemeta hasn't populated data yet
+                        {"season": 3, "episode": 3, "name": "TBA",
+                         "overview": "", "rating": "0",
+                         "released": "2026-06-16T04:00:00.000Z"},
+                        # Not yet aired — should remain filtered out
+                        {"season": 3, "episode": 4, "name": "TBA",
+                         "overview": "", "rating": "0",
+                         "released": "2026-06-23T04:00:00.000Z"},
+                    ],
+                }
+            }
+        )
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    # Mock current date to after E03 aired but before E04
+    monkeypatch.setattr(
+        "py_stremio.components.stremio.stremio_metadata._current_datetime",
+        lambda: datetime(2026, 6, 19, tzinfo=timezone.utc),
+    )
+
+    metadata = get_series_metadata("90 Day: The Last Resort", 3)
+
+    assert metadata == {
+        "imdb_id": "tt28304310",
+        "title": "90 Day: The Last Resort",
+        "episode_count": 3,
+        "available_episodes": [1, 2, 3],
+        "season_exists": True,
     }

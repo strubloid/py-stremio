@@ -17,7 +17,7 @@ from py_stremio.components.errors import print_error_summary
 from py_stremio.components.library.library_scanner import ScannedFolder
 from py_stremio.services.download import DownloadService
 from py_stremio.services.metadata import MetadataService
-from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, RESET
+from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, DIM, RESET
 from py_stremio.services.scanner import ScanService
 from py_stremio.utils.cancellation import clear_shutdown, request_shutdown
 
@@ -187,65 +187,56 @@ class AppService:
             self._interrupted()
 
     def _run_menu(self) -> None:
+        # Banner + menu printed ONCE at the top, never cleared.
         self._banner()
         self._menu()
-        choice = input(_c("Select 1-6 › ", ACCENT)).strip()
 
-        if choice == "1" or choice == "":
-            
-            ## asking for the max workers
-            max_workers, speed_percent = self._ask_download_options()
-            
-            ## scanning folders
-            self._phase("\n🔎 Library sync", "scanning folders and refreshing metadata...")
-            folders = self.scanner.run_with_metadata(self.metadata, quiet=False)
-            self._phase("", f"found {len(folders)} managed folder(s)")
-            
-            ## downloading missing items
-            self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed...")
-            self.downloader.run(
-                folders,
-                quiet=True,
-                max_workers=max_workers,
-                speed_percent=speed_percent,
-            )
+        while True:
+            choice = input(_c("Select 1-7 › ", ACCENT)).strip()
 
-        elif choice == "2":
-            
-            ## updating the library metadata
-            print(_c("\n📚 Update library", ACCENT))
-            folders = self.scanner.run()
-            self.metadata.run(folders=folders, quiet=False)
+            if choice == "7" or choice == "":
+                print("Bye.")
+                break
 
-        elif choice == "3":
-            ## downloading missing items
-            max_workers, speed_percent = self._ask_download_options()
-            self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed...")
-            self.downloader.run(
-                quiet=True,
-                max_workers=max_workers,
-                speed_percent=speed_percent,
-            )
+            if choice not in ("1", "2", "3", "4", "5", "6"):
+                print(_c("Unknown option. Choose 1-7.", RED))
+                continue
 
-        elif choice == "4":
-            print(_c("\n🔍 Addon Discovery", ACCENT))
-            discover_new_addons()
+            if choice == "1":
+                max_workers, speed_percent = self._ask_download_options()
+                self._phase("\n🔎 Library sync", "scanning folders and refreshing metadata...")
+                folders = self.scanner.run_with_metadata(self.metadata, quiet=False)
+                self._phase("", f"found {len(folders)} managed folder(s)")
+                self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed...")
+                self.downloader.run(folders=folders, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
 
-        elif choice == "5":
-            ## validating addon URLs
-            self._phase("\n🛠  Validate addon URLs", "testing addons before download...")
-            validate_and_update()
+            elif choice == "2":
+                self._phase("\n📚 Update library", "scanning and refreshing metadata...")
+                folders = self.scanner.run()
+                self.metadata.run(folders=folders, quiet=False)
 
-        elif choice == "6":
-            ## experimental addons
-            self._phase("\n🧪 Experimental Addons", "managing experimental addons...")
-            self._menu_experimental_addons()
+            elif choice == "3":
+                max_workers, speed_percent = self._ask_download_options()
+                self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed...")
+                self.downloader.run(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
 
-        elif choice == "7" or choice == "6":
-            print("Bye.")
+            elif choice == "4":
+                self._phase("\n🔍 Addon Discovery", "scraping and testing addon URLs...")
+                discover_new_addons()
 
-        else:
-            print(_c("Unknown option. Choose 1-7.", RED))
+            elif choice == "5":
+                self._phase("\n🛠  Validate addon URLs", "testing addons before download...")
+                validate_and_update()
+
+            elif choice == "6":
+                self._phase("\n🧪 Experimental Addons", "managing experimental addons...")
+                self._menu_experimental_addons()
+
+            # After the action completes, print the menu again below the output
+            # so the user can immediately choose the next step without any
+            # show/hide or "Press Enter" ceremony.
+            print()
+            self._menu()
 
     # ------------------------------------------------------------------
     # UI helpers
@@ -332,4 +323,3 @@ class AppService:
             print(f"  No experimental addons loaded")
             print(f"  Add URLs to {EXPERIMENTAL_FILE} at project root")
             print("  (one per line, '#' for comments)")
-        input("\n  Press Enter to return to menu › ")

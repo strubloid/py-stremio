@@ -196,19 +196,23 @@ class BandwidthLimiter:
             self._bytes_in_window = 0
 
 
-def build_limiter(percent: int, max_speed_mbps: float, max_workers: int = 1) -> FairBandwidthLimiter | BandwidthLimiter | None:
+def build_limiter(percent: int, max_speed_mbps: float, max_workers: int = 1) -> FairBandwidthLimiter | BandwidthLimiter:
     """Build a limiter from percentage of configured max Mbps.
 
-    percent=100 means no limiting. max_speed_mbps is megabits/sec.
-    Uses FairBandwidthLimiter when max_workers > 1 for fair sharing.
+    Always returns a real limiter object so it can be adjusted at runtime.
+    At 100% the limiter has ``total_bytes_per_second=0``, meaning ``wait_for``
+    returns immediately (no throttling).  When speed is lowered below 100%
+    the caller updates the limiter via ``update_total_limit()`` and the
+    same object starts throttling.
     """
     clamped_percent = max(0, min(100, int(percent)))
-    if clamped_percent >= 100 or max_speed_mbps <= 0:
-        return None
 
-    bytes_per_second = int((max_speed_mbps * 1_000_000 / 8) * (clamped_percent / 100))
+    if clamped_percent >= 100 or max_speed_mbps <= 0:
+        total_bytes_per_second = 0
+    else:
+        total_bytes_per_second = int((max_speed_mbps * 1_000_000 / 8) * (clamped_percent / 100))
 
     if max_workers > 1:
-        return FairBandwidthLimiter(total_bytes_per_second=max(1, bytes_per_second))
+        return FairBandwidthLimiter(total_bytes_per_second=total_bytes_per_second)
     else:
-        return BandwidthLimiter(bytes_per_second=max(1, bytes_per_second))
+        return BandwidthLimiter(bytes_per_second=total_bytes_per_second)

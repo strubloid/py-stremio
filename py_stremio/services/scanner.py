@@ -69,6 +69,12 @@ class ScanService:
                 season = int(season_info.get("season") or 0)
                 if season <= latest_existing or season in existing:
                     continue
+                # Guard against placeholder/future seasons with too few
+                # episodes listed (Cinemeta may return S04E01 placeholder for
+                # an announced season that hasn't actually aired).
+                episode_count = season_info.get("episode_count") or 0
+                if episode_count < 1:
+                    continue
                 season_path = series_path / f"s{season:02d}"
                 season_path.mkdir(parents=True, exist_ok=True)
                 folder = scanner._create_series_folder(season_path)

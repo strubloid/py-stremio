@@ -56,6 +56,7 @@ py-stremio/
 │       ├── utils.py                   # sanitize_filename, parse_episode_number, parse_season_from_folder
 │       ├── output.py                  # Thread-aware stdout filtering for parallel downloads
 │       ├── bandwidth.py               # BandwidthLimiter + FairBandwidthLimiter fair-share accounting
+│       ├── speed_probe.py             # Auto-detect/persist INTERNET_MAX_SPEED_MBPS when missing
 │       ├── download_processing.py     # Core logic: process_season_folder / process_movie_folder
 │       ├── download_manager.py        # CLI for legacy config/state-driven download path
 │       ├── download_discovery.py      # find_season_folders / find_movie_folders
@@ -170,7 +171,7 @@ py-stremio/
 │                   ├── YouTubeProAddon.py
 │                   ├── FShareAddon.py
 │                   └── ConsumetAddon.py
-├── tests/                             # 30 test files, 359 tests
+├── tests/                             # 30 test files, 363 tests
 │   ├── test_addon_validator.py
 │   ├── test_application.py
 │   ├── test_bandwidth.py
@@ -217,9 +218,9 @@ Scanner.scan()
 ```
 
 - Queries Stremio addons concurrently (10 at a time via ThreadPoolExecutor)
-- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode); non-download phases show `waiting for download` instead of fake byte percentages, tiny invalid/error responses under 1 MB show `sizing` rather than a misleading 100% bar, and all-invalid tiny responses mark the episode permanently failed for the run instead of retrying the same bad sources repeatedly
+- Append-only progress bars emit only the changed episode line in non-TTY output (stable numbering/no repeated full blocks) with per-episode rate limiting (~1 line/sec/episode); non-download phases show `waiting for download` instead of fake byte percentages, tiny invalid/error responses under 1 MB show `sizing` rather than a misleading 100% bar, and all-invalid tiny responses mark the episode permanently failed for the run instead of retrying the same bad sources repeatedly
 - Duplicate series-season folders with the same IMDb/title identity + season are deduplicated before overview/download processing, preferring folders that already contain media files
-- Multi-threaded download support with configurable workers, speed %, and fair per-active-thread bandwidth sharing with dynamic redistribution
+- Multi-threaded download support with configurable workers, speed %, and fair per-active-stream-download bandwidth sharing with dynamic redistribution; search/probe workers are not counted against the bandwidth share
 - Partial download resume via .part files and Range headers
 - Per-episode final-file existence guard skips download workers if the expected output already exists, protecting against stale missing-episode tasks
 - Working addon URL tracking in config (servers list)
@@ -524,7 +525,7 @@ py-stremio-cron 3          # download missing (for crontab)
 | DOWNLOAD_THREADS | 2 | Parallel download workers |
 | METADATA_CACHE_HOURS | 24 | Full-run metadata cache TTL; option 2 / `--metadata` forces refresh |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
-| INTERNET_MAX_SPEED_MBPS | 100 | Max Mbps for bandwidth calculation |
+| INTERNET_MAX_SPEED_MBPS | auto-detected once; fallback 100 | Max Mbps for bandwidth calculation; if missing from env/.env, a short speed probe appends the measured value to .env |
 | DRY_RUN | false | Test mode — no actual downloads |
 | STREMIO_ADDON_URL | None | Override addon base URL |
 | STREMIO_ADDON_URL_BASE | `https://torrentio.strem.fun` | Addon base URL when no RD key |
@@ -540,7 +541,7 @@ py-stremio-cron 3          # download missing (for crontab)
 ## Testing
 
 ```bash
-# Run all tests (359 tests across 30 files)
+# Run all tests (363 tests across 30 files)
 pytest tests/ -v
 
 # Run specific test file
@@ -592,8 +593,8 @@ Uses regex patterns in `media_files.parse_episode_number()`:
 - Quality fallback via descending sort (4K → 1080p → 720p → 480p → 360p)
 - Minimum file size guard against placeholder/trailer files
 - Final-file existence guard prevents stale tasks from re-downloading episodes already present on disk
-- Append-only progress bars with per-episode rate limiting (~1 line/sec/episode); non-download phases show `waiting for download` instead of fake byte percentages, tiny invalid/error responses under 1 MB show `sizing` rather than a misleading 100% bar, and all-invalid tiny responses mark the episode permanently failed for the run instead of retrying the same bad sources repeatedly
-- Multi-threaded concurrent downloads with thread-aware output
+- Append-only progress bars emit only the changed episode line in non-TTY output (stable numbering/no repeated full blocks) with per-episode rate limiting (~1 line/sec/episode); non-download phases show `waiting for download` instead of fake byte percentages, tiny invalid/error responses under 1 MB show `sizing` rather than a misleading 100% bar, and all-invalid tiny responses mark the episode permanently failed for the run instead of retrying the same bad sources repeatedly
+- Multi-threaded concurrent downloads with thread-aware output and fair bandwidth sharing across active stream downloads only
 - Partial download resume (.part files + Range headers)
 - Working addon URL tracking and caching
 - Metadata auto-fetch via Cinemeta + IMDb TSV dataset

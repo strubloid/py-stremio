@@ -124,6 +124,10 @@ def search_and_download(
     """
     movie_mode = content_type == "movie" or (content_type == "auto" and not season)
 
+    # Resolve IMDB ID early so it's available for cross-validation
+    # in all code paths below (both movie and series strategies).
+    effective_imdb = _resolve_imdb_id(title, imdb_id, season)
+
     if movie_mode:
         id_type = "movie"
         # Build ordered search strategies:
@@ -132,7 +136,6 @@ def search_and_download(
         strategies: list[tuple[str, str, str]] = []
 
         # Try to use/provide an IMDB ID — most addons need it for real streams
-        effective_imdb = imdb_id or _resolve_imdb_id(title, None, None)
         if effective_imdb:
             sid = build_stremio_id(effective_imdb, title, None, None)
             strategies.append((sid, "movie", f"IMDB ID {effective_imdb}"))
@@ -142,10 +145,16 @@ def search_and_download(
         if not strategies or strategies[0][0] != sid_fallback:
             strategies.append((sid_fallback, "movie", f"title '{title}'"))
     else:
-        imdb_id = _resolve_imdb_id(title, imdb_id, season)
         id_type = "series"
-        stremio_id = build_stremio_id(imdb_id, title, season, episode)
-        strategies = [(stremio_id, "series", f"series S{season}E{episode}")]
+        strategies: list[tuple[str, str, str]] = []
+        # Primary: IMDB-based ID (most accurate for addon lookups)
+        if effective_imdb:
+            sid = build_stremio_id(effective_imdb, title, season, episode)
+            strategies.append((sid, "series", f"series S{season}E{episode} (IMDB)"))
+        # Fallback: title-based ID (for addons that don't handle IMDB format)
+        sid_fallback = build_stremio_id(None, title, season, episode)
+        if not strategies or strategies[0][0] != sid_fallback:
+            strategies.append((sid_fallback, "series", f"series S{season}E{episode} (title)"))
 
     last_result = None
     for stremio_id, current_type, description in strategies:
@@ -163,6 +172,7 @@ def search_and_download(
             bandwidth_limiter=bandwidth_limiter,
             stage_tracker=stage_tracker,
             skip_full_search=skip_full_search,
+            imdb_id=effective_imdb,
         )
         last_result = result
         if result.get("success"):
@@ -186,6 +196,7 @@ def search_and_download(
                 bandwidth_limiter=bandwidth_limiter,
                 experimental_urls=experimental_addons,
                 stage_tracker=stage_tracker,
+                imdb_id=effective_imdb,
             )
             if exp_result.get("success"):
                 return exp_result
@@ -207,6 +218,7 @@ def _search_single_id(
     bandwidth_limiter=None,
     stage_tracker: StageTracker | None = None,
     skip_full_search: bool = False,
+    imdb_id: str | None = None,
 ) -> dict:
     """Search addons for a single identifier and try to download."""
 
@@ -231,6 +243,7 @@ def _search_single_id(
             preferred_languages=preferred_languages,
             progress_callback=progress_callback,
             bandwidth_limiter=bandwidth_limiter,
+            imdb_id=imdb_id,
         )
         if cached_result.get("success"):
             return cached_result
@@ -260,6 +273,7 @@ def _search_single_id(
             preferred_languages=preferred_languages,
             progress_callback=progress_callback,
             bandwidth_limiter=bandwidth_limiter,
+            imdb_id=imdb_id,
         )
         if remaining_result.get("success"):
             return remaining_result
@@ -299,6 +313,7 @@ def _search_single_id(
         preferred_languages=preferred_languages,
         progress_callback=progress_callback,
         bandwidth_limiter=bandwidth_limiter,
+        imdb_id=imdb_id,
     )
 
 
@@ -313,6 +328,7 @@ def _try_download_streams(
     preferred_languages: list[str] | None = None,
     progress_callback=None,
     bandwidth_limiter=None,
+    imdb_id: str | None = None,
 ) -> dict:
     if not streams:
         return {"success": False, "error": "No streams found", "working_urls": working_urls}
@@ -324,6 +340,7 @@ def _try_download_streams(
         target_season=season,
         target_episode=episode,
         title=title,
+        target_imdb_id=imdb_id,
     )
     if not streams_to_try:
         return {
@@ -448,6 +465,7 @@ def _try_experimental_addons(
     bandwidth_limiter=None,
     experimental_urls: list[str] | None = None,
     stage_tracker: StageTracker | None = None,
+    imdb_id: str | None = None,
 ) -> dict:
     """Query experimental addons and attempt download for one episode.
 
@@ -481,4 +499,5 @@ def _try_experimental_addons(
         preferred_languages=preferred_languages,
         progress_callback=progress_callback,
         bandwidth_limiter=bandwidth_limiter,
+        imdb_id=imdb_id,
     )

@@ -36,6 +36,7 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
                     filename=(stream.get("behaviorHints") or {}).get("filename"),
                     addon_url=normalize_manifest_url(addon_url),
                     seeders=parsed_seeders,
+                    imdb_id=stream.get("imdb_id"),
                 )
             )
     except Exception as exc:

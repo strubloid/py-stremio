@@ -15,7 +15,14 @@ def test_build_limiter_uses_percentage_of_max_speed_mbps():
 
 
 def test_build_limiter_disables_at_100_percent():
-    assert build_limiter(percent=100, max_speed_mbps=200) is None
+    limiter = build_limiter(percent=100, max_speed_mbps=200)
+    assert limiter is not None
+    # 100% speed returns a limiter with 0 bps (no throttling), always
+    # ready to be adjusted downward at runtime.
+    if isinstance(limiter, FairBandwidthLimiter):
+        assert limiter.total_bytes_per_second == 0
+    else:
+        assert limiter.bytes_per_second == 0
 
 
 def test_limiter_sleeps_when_window_exceeds_budget(monkeypatch):
