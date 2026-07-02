@@ -644,6 +644,16 @@ def process_season_folder(
             else:
                 _set_current_episode(task.config, task.config_path, episode_num + 1)
         else:
+            disabled_urls = unique_manifest_urls(result.get("disabled_urls"))
+            if disabled_urls:
+                with config_lock:
+                    new_disabled = unique_manifest_urls(disabled_urls + task.config.disabled_servers)
+                    if new_disabled != unique_manifest_urls(task.config.disabled_servers):
+                        task.config.disabled_servers = new_disabled
+                        save_config(task.config_path, task.config)
+                with servers_lock:
+                    disabled_set = set(new_disabled)
+                    task.servers = [s for s in task.servers if s not in disabled_set]
             failure_reason = result.get("error", "failed")
             task.state.mark_failed(f"episode_{episode_num}", failure_reason, 1)
             failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {failure_reason}")

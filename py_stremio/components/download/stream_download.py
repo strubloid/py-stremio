@@ -8,6 +8,7 @@ import re
 from py_stremio.components.addons.models import StreamInfo
 from py_stremio.components.debrid.real_debrid_client import resolve_torrent_with_debrid
 from py_stremio.components.configs.app_settings import settings
+from py_stremio.components.stremio.stremio_url import unique_manifest_urls
 
 RD_PROXY_PREFIX = "https://torrentio.strem.fun/resolve/"
 # Also match the direct realdebrid=<key> format
@@ -133,10 +134,69 @@ def _matches_target_episode(stream, target_season: int | None, target_episode: i
     }
     return any(token in compact for token in episode_tokens)
 
-# _matches_show_title and _filter_streams_by_title removed:
-# The IMDb ID uniquely identifies the show, and _filter_streams_by_target_episode
-# already validates episode matching. Title filtering caused false rejections due
-# to torrent naming variations (e.g., "90 Day Fiancé" vs "90 Day The Single Life").
+# Title matching is intentionally conservative: release names must contain the
+# requested show title after separator normalization. This blocks cross-show
+# leakage from loose title-based addon searches before any download starts.
+
+
+def _normalized_title_text(text: str) -> str:
+    return re.sub(r"[._\-]+", " ", text.lower()).strip()
+
+
+def _matches_show_title(stream, title: str | None) -> bool:
+    if not title:
+        return True
+    combined_norm = _normalized_title_text(_combined_stream_text(stream))
+    title_norm = _normalized_title_text(title)
+    return title_norm in combined_norm
+
+
+def _stream_has_target_identity_mismatch(
+    stream,
+    target_season: int | None = None,
+    target_episode: int | None = None,
+    title: str | None = None,
+    target_imdb_id: str | None = None,
+) -> bool:
+    """Return True when a stream explicitly points at different content.
+
+    This is intentionally stricter than normal filtering for blacklisting: an
+    addon is considered bad when it returns an explicit wrong IMDB ID, or when
+    it returns the requested S/E number under a different show title. Generic
+    noise that does not even match the target episode is filtered out but not
+    used as a blacklist signal.
+    """
+    if _is_advisory_stream(stream):
+        return False
+    stream_imdb = getattr(stream, "imdb_id", None)
+    if target_imdb_id and stream_imdb and stream_imdb != target_imdb_id:
+        return True
+    if title and _matches_target_episode(stream, target_season, target_episode):
+        return not _matches_show_title(stream, title)
+    return False
+
+
+def target_mismatch_addon_urls(
+    streams: list,
+    target_season: int | None = None,
+    target_episode: int | None = None,
+    title: str | None = None,
+    target_imdb_id: str | None = None,
+) -> list[str]:
+    """Return addon URLs that supplied streams for the wrong target media."""
+    urls = []
+    for stream in streams:
+        if not (getattr(stream, "url", None) or getattr(stream, "info_hash", None)):
+            continue
+        if _stream_has_target_identity_mismatch(
+            stream,
+            target_season=target_season,
+            target_episode=target_episode,
+            title=title,
+            target_imdb_id=target_imdb_id,
+        ):
+            urls.append(getattr(stream, "addon_url", None))
+    return unique_manifest_urls(urls)
 
 
 def _filter_streams_by_target_episode(
@@ -146,38 +206,24 @@ def _filter_streams_by_target_episode(
     title: str | None = None,
     target_imdb_id: str | None = None,
 ) -> list:
-    """Filter streams by episode match, IMDB ID cross-validation, and title.
+    """Filter streams by show identity and target episode.
 
-    When *target_imdb_id* is provided, any stream whose ``imdb_id`` field
-    is set **and** does not match is rejected (prevents wrong-show downloads
-    from misbehaving addons).  Streams without an ``imdb_id`` field are kept
-    since many addons don't supply it.
-
-    When *title* is provided, streams whose combined text does NOT contain
-    the show title are rejected.  This catches cross-show contamination
-    from addons that return wrong content under a correct IMDB ID.
+    Title and IMDB checks run before the episode-number check so cross-show
+    results with coincidental S/E numbering can never reach download attempts.
+    Streams without an ``imdb_id`` field are kept unless their title metadata
+    clearly points at a different show.
     """
     filtered = []
     for stream in streams:
         if _is_advisory_stream(stream):
             continue
-        if not _matches_target_episode(stream, target_season, target_episode):
-            continue
-        # IMDB ID cross-validation: if the stream has an imdb_id, reject
-        # a mismatch even if episode numbers happen to line up.
-        stream_imdb = getattr(stream, 'imdb_id', None)
+        stream_imdb = getattr(stream, "imdb_id", None)
         if target_imdb_id and stream_imdb and stream_imdb != target_imdb_id:
             continue
-        # Title containment check: reject streams whose release name
-        # doesn't contain the show title.  Normalize dots/hyphens/underscores
-        # to spaces on both sides so title-based names like
-        # "Bob's.Burgers.S13E13" still match "Bob's Burgers".
-        if title:
-            combined = _combined_stream_text(stream).lower()
-            combined_norm = re.sub(r"[._\-]", " ", combined)
-            title_norm = re.sub(r"[._\-]", " ", title.lower())
-            if title_norm not in combined_norm:
-                continue
+        if not _matches_show_title(stream, title):
+            continue
+        if not _matches_target_episode(stream, target_season, target_episode):
+            continue
         filtered.append(stream)
     return filtered
 

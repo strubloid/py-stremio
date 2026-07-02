@@ -116,8 +116,14 @@ def load_config(folder_path: Path) -> tuple[DownloadConfig, Path]:
         config = get_default_config(folder_path)
         save_config(config_path, config)
         return config, config_path
-    with open(config_path) as f:
-        data = json.load(f)
+    try:
+        with open(config_path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        # File exists but is empty / corrupted — recreate with defaults
+        config = get_default_config(folder_path)
+        save_config(config_path, config)
+        return config, config_path
     quality_data = data.pop("quality", None)
     quality = QualitySettings(**quality_data) if quality_data else QualitySettings()
     # Series require episode tracking. Movies must stay at 0 — never bump them.

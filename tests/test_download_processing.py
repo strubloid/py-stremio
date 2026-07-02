@@ -511,6 +511,45 @@ def test_process_season_folder_preserves_servers_when_no_download_succeeds(tmp_p
     assert saved["servers"] == ["https://previously-working-addon"]
 
 
+def test_process_season_folder_disables_wrong_show_server_from_result(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="One Piece",
+        imdb_id="tt0388629",
+        season=31,
+        episode_count=1,
+        quality=QualitySettings(preferred="1080p"),
+        servers=["https://bad-addon.test", "https://backup-addon.test"],
+    )
+    save_config(tmp_path / "download-config.json", config)
+
+    def fake_search_and_download(**kwargs):
+        return {
+            "success": False,
+            "error": "No downloadable streams found after filtering",
+            "working_urls": [],
+            "disabled_urls": ["https://bad-addon.test/manifest.json"],
+            "permanent_failure": True,
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.settings",
+        SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=0, MAX_DOWNLOAD_ATTEMPTS=1),
+    )
+
+    result = process_season_folder(tmp_path)
+
+    with open(tmp_path / "download-config.json") as f:
+        saved = json.load(f)
+    assert result["failed"] == 1
+    assert saved["disabled_servers"] == ["https://bad-addon.test"]
+    assert saved["servers"] == ["https://bad-addon.test", "https://backup-addon.test"]
+
+
 def test_process_season_folder_skips_unverified_season_without_episode_count(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",

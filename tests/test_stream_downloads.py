@@ -148,6 +148,22 @@ def test_parse_streams_prefers_explicit_info_hash_and_file_idx():
     assert streams[0].file_idx == 4
 
 
+def test_parse_streams_extracts_imdb_id_and_seeders():
+    addon = UrlAddon("https://example.test")
+    streams = addon.parse_streams([
+        {
+            "name": "Direct",
+            "url": "https://example.test/video.mkv",
+            "title": "One.Piece.S31E01.1080p.mkv",
+            "seeders": "42",
+            "behaviorHints": {"imdbId": "tt0388629"},
+        }
+    ])
+
+    assert streams[0].seeders == 42
+    assert streams[0].imdb_id == "tt0388629"
+
+
 def test_parse_streams_preserves_tracker_sources_for_local_torrent_proxy():
     addon = UrlAddon("https://torrentsdb.com")
     streams = addon.parse_streams([
@@ -730,6 +746,21 @@ class TestSearchCrossValidation:
         )
         assert result == []
 
+    def test_target_mismatch_addon_urls_flags_wrong_show_servers(self):
+        wrong = self._make_stream(
+            "South.Park.S31E01.1080p.WEB-DL.mkv",
+            imdb_id="tt0121955",
+        )
+        wrong.addon_url = "https://bad-addon.test/manifest.json"
+        result = stream_download.target_mismatch_addon_urls(
+            [wrong],
+            target_season=31,
+            target_episode=1,
+            title="One Piece",
+            target_imdb_id="tt0388629",
+        )
+        assert result == ["https://bad-addon.test"]
+
     def test_imdb_id_check_does_not_block_when_no_target_imdb(self):
         """When no target IMDB is known we don't reject streams for IMDB mismatch."""
         stream_with_unrelated_imdb = self._make_stream(
@@ -883,7 +914,5 @@ class TestStreamInfoCarriesImdbId:
         assert streams[0].imdb_id == "tt1234567"
 
 
-# TestFilterStreamsByTitle removed:
-# The _filter_streams_by_title function was removed from the pipeline because
-# it caused false rejections when torrent release names didn't match the official
-# show title. The IMDb ID + episode filter are sufficient to ensure correct content.
+# Title filtering is kept in the active pipeline because loose addon searches can
+# return streams from unrelated shows with the same S/E number.

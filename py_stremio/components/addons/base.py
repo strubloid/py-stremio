@@ -48,6 +48,8 @@ class BaseAddon(ABC):
                 filename=(stream.get("behaviorHints") or {}).get("filename"),
                 addon_url=self.get_url(None),
                 sources=stream.get("sources"),
+                seeders=_stream_seeders(stream),
+                imdb_id=_stream_imdb_id(stream),
             )
             for stream in streams_data
             if _is_downloadable_stream_candidate(stream)
@@ -130,6 +132,27 @@ def _stream_file_idx(stream: dict) -> int | None:
             return None
 
     return _torrentio_resolve_parts(stream.get("url"))[1]
+
+
+def _stream_seeders(stream: dict) -> int | None:
+    seeders_raw = stream.get("seeders") or stream.get("peers")
+    if seeders_raw is None:
+        return None
+    try:
+        return int(seeders_raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _stream_imdb_id(stream: dict) -> str | None:
+    behavior_hints = stream.get("behaviorHints") or {}
+    imdb_id = (
+        stream.get("imdb_id")
+        or stream.get("imdbId")
+        or behavior_hints.get("imdb_id")
+        or behavior_hints.get("imdbId")
+    )
+    return str(imdb_id) if imdb_id else None
 
 
 def _torrentio_resolve_parts(url: str | None) -> tuple[str | None, int | None]:

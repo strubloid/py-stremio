@@ -26,6 +26,7 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
                 parsed_seeders = int(seeders_raw) if seeders_raw is not None else None
             except (ValueError, TypeError):
                 parsed_seeders = None
+            behavior_hints = stream.get("behaviorHints") or {}
             streams.append(
                 StreamInfo(
                     name=stream.get("name", "unknown"),
@@ -33,10 +34,15 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
                     info_hash=stream.get("infoHash"),
                     file_idx=stream.get("fileIdx"),
                     title=stream.get("title"),
-                    filename=(stream.get("behaviorHints") or {}).get("filename"),
+                    filename=behavior_hints.get("filename"),
                     addon_url=normalize_manifest_url(addon_url),
                     seeders=parsed_seeders,
-                    imdb_id=stream.get("imdb_id"),
+                    imdb_id=(
+                        stream.get("imdb_id")
+                        or stream.get("imdbId")
+                        or behavior_hints.get("imdb_id")
+                        or behavior_hints.get("imdbId")
+                    ),
                 )
             )
     except Exception as exc:

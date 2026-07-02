@@ -24,6 +24,7 @@ from py_stremio.components.download.stream_download import (
     download_stream_to_file,
     resolve_stream_download_url,
     select_quality_streams,
+    target_mismatch_addon_urls,
 )
 
 
@@ -343,10 +344,18 @@ def _try_download_streams(
         target_imdb_id=imdb_id,
     )
     if not streams_to_try:
+        disabled_urls = target_mismatch_addon_urls(
+            streams,
+            target_season=season,
+            target_episode=episode,
+            title=title,
+            target_imdb_id=imdb_id,
+        )
         return {
             "success": False,
             "error": "No downloadable streams found after filtering",
             "working_urls": [],
+            "disabled_urls": disabled_urls,
             "permanent_failure": True,
         }
 
