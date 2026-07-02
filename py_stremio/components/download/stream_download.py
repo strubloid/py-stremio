@@ -120,19 +120,88 @@ def _is_advisory_stream(stream) -> bool:
 
 
 def _matches_target_episode(stream, target_season: int | None, target_episode: int | None) -> bool:
+    """Return True unless the stream text contains a contradicting S/E token.
+
+    A stream is accepted when:
+      - its text contains the requested S/E token, OR
+      - its text contains a season-only token (``s23``) when no
+        episode token is present (season packs), OR
+      - its text has no S/E token AND no finished-release markers
+        (info-hash-only addons whose text is just an addon/quality
+        label like ``"CIN 4K"``).
+
+    A stream whose text contains finished-release markers (year,
+    resolution, format keywords) but no matching S/E is rejected, since
+    it is clearly a different release.
+    """
     if target_season is None or target_episode is None:
         return True
     text = _combined_stream_text(stream)
     compact = re.sub(r"[^a-z0-9]", "", text.lower())
     season = int(target_season)
     episode = int(target_episode)
-    episode_tokens = {
+    target_tokens = {
         f"s{season:02d}e{episode:02d}",
         f"s{season}e{episode:02d}",
         f"s{season:02d}e{episode}",
         f"season{season}episode{episode}",
     }
-    return any(token in compact for token in episode_tokens)
+    season_only = f"s{season:02d}"
+    any_se = re.findall(r"s\d{1,2}e\d{1,2}", compact)
+    has_any_se_token = bool(any_se)
+    has_matching_token = any(token in compact for token in target_tokens)
+    has_matching_season_only = season_only in compact and not has_any_se_token
+    if has_matching_token or has_matching_season_only:
+        return True
+    # No S/E token in text — only safe to accept when the text lacks
+    # finished-release markers.  If it has a year, a resolution token,
+    # or a release-format keyword, it is clearly a different release
+    # and must be rejected.
+    if not has_any_se_token:
+        return not _looks_like_finished_release(text)
+    # S/E token in text but none match — contradicting episode, reject.
+    return False
+
+
+# Markers that, when all present together, indicate the text is a
+# finished release (movie, full show pack, standalone episode pack)
+# rather than an info-hash label.  We require multiple signals to
+# coexist — a single codec or audio marker is not enough, since
+# info-hash-only addons often include those as torrent description
+# flavor in the title without any show-name or S/E information.
+_FINISHED_RELEASE_YEAR = re.compile(r"\b(19|20)\d{2}\b")
+_FINISHED_RELEASE_RESOLUTION = re.compile(r"\b(480|720|1080|2160|1440|4320)p\b", re.I)
+_FINISHED_RELEASE_FORMAT = re.compile(
+    r"\b(bluray|blu-ray|bd-?rip|brrip|web-?dl|web-?rip|hdrip|dvdrip|hdtv|pdtv|remux|complete)\b",
+    re.I,
+)
+_FINISHED_RELEASE_KEYWORDS = re.compile(
+    r"\b(movie|ova|special|collection|trilogy|extended|remastered|criterion|theatrical|uncut|repack|proper|internal)\b",
+    re.I,
+)
+
+
+def _looks_like_finished_release(text: str) -> bool:
+    """Return True when *text* contains markers typical of a finished release.
+
+    A finished release typically pairs a release year with a resolution
+    and a format keyword.  We require at least two of the four
+    marker groups to fire so that info-hash-only addons (which often
+    include a single codec or audio token as torrent description
+    flavor) are not misclassified as finished releases.
+    """
+    if not text:
+        return False
+    signals = 0
+    if _FINISHED_RELEASE_YEAR.search(text):
+        signals += 1
+    if _FINISHED_RELEASE_RESOLUTION.search(text):
+        signals += 1
+    if _FINISHED_RELEASE_FORMAT.search(text):
+        signals += 1
+    if _FINISHED_RELEASE_KEYWORDS.search(text):
+        signals += 1
+    return signals >= 2
 
 # Title matching is intentionally conservative: release names must contain the
 # requested show title after separator normalization. This blocks cross-show
@@ -143,10 +212,53 @@ def _normalized_title_text(text: str) -> str:
     return re.sub(r"[._\-]+", " ", text.lower()).strip()
 
 
+# Tokens that are pure addon labels, quality/resolution markers, or
+# generic descriptors — never show titles.  When a stream's release
+# text contains ONLY these (and no recognizable show-name words) it
+# has no title signal to evaluate, so the show-title check should
+# pass and the episode-number check becomes authoritative.  This is
+# what allows info-hash-only addons like CIN (whose name is just
+# ``"CIN 4K"``) to reach the episode filter.
+_NON_TITLE_TOKENS = {
+    "4k", "8k", "1080p", "720p", "480p", "2160p", "1440p",
+    "bluray", "blu", "ray", "web", "dl", "webrip", "web-dl",
+    "hdrip", "dvdrip", "brrip", "hdtv", "pdtv", "cam", "ts",
+    "x264", "x265", "h264", "h265", "h265", "h", "265", "264",
+    "aac", "ac3", "dts", "truehd", "atmos", "opus", "mp3",
+    "remux", "uhd", "hdr", "hdr10", "dv", "hdr10plus", "hlg",
+    "10bit", "8bit", "hevc", "avc", "k", "x", "gb", "mb",
+    "multi", "audio", "subs", "sub", "dub", "dubbed",
+    "proper", "repack", "internal", "extended", "theatrical",
+    "imax", "directors", "cut", "version",
+    "cin", "rd", "torrentio", "torrent", "stream", "addon",
+    "amazon", "netflix", "hulu", "disney", "hbo", "max",
+    "torrent", "gb", "mb",
+}
+
+
+def _has_show_title_signal(normalized_text: str) -> bool:
+    """Return True when the text contains at least one alphabetic token
+    that is not a pure quality/resolution/format descriptor.
+    """
+    if not normalized_text:
+        return False
+    # Strip digits and quality-suffix noise so "1080p" becomes "" and
+    # "4k" becomes "k" (which is in _NON_TITLE_TOKENS).  This avoids
+    # false-positive title signals from pure technical markers.
+    cleaned = re.sub(r"\d+[a-z]*", " ", normalized_text)
+    tokens = re.findall(r"[a-z]+", cleaned)
+    return any(token not in _NON_TITLE_TOKENS for token in tokens)
+
+
 def _matches_show_title(stream, title: str | None) -> bool:
     if not title:
         return True
     combined_norm = _normalized_title_text(_combined_stream_text(stream))
+    if not _has_show_title_signal(combined_norm):
+        # Stream has no recognizable show name (typical for info-hash
+        # addons whose label is just the addon/quality text).  Let the
+        # episode-number check be the authoritative filter instead.
+        return True
     title_norm = _normalized_title_text(title)
     return title_norm in combined_norm
 
@@ -162,9 +274,11 @@ def _stream_has_target_identity_mismatch(
 
     This is intentionally stricter than normal filtering for blacklisting: an
     addon is considered bad when it returns an explicit wrong IMDB ID, or when
-    it returns the requested S/E number under a different show title. Generic
-    noise that does not even match the target episode is filtered out but not
-    used as a blacklist signal.
+    it returns the requested S/E number under a different show title. Streams
+    with no recognizable show-name signal (info-hash-only addons whose text is
+    just the addon/quality label) are not blacklisted — the episode-number
+    match is the only available signal for those, and a match there means the
+    torrent is plausibly the requested episode.
     """
     if _is_advisory_stream(stream):
         return False
@@ -208,10 +322,18 @@ def _filter_streams_by_target_episode(
 ) -> list:
     """Filter streams by show identity and target episode.
 
-    Title and IMDB checks run before the episode-number check so cross-show
-    results with coincidental S/E numbering can never reach download attempts.
-    Streams without an ``imdb_id`` field are kept unless their title metadata
-    clearly points at a different show.
+    A stream is kept when BOTH checks pass:
+      - show-title: stream text names the requested show, OR has no
+        title signal at all (info-hash-only addons like CIN whose text
+        is a generic label such as ``"CIN 4K"``)
+      - episode-number: stream text contains the requested S/E token,
+        OR has no S/E token in its text (incomplete metadata)
+
+    Both checks failing for the same stream means we have positive
+    evidence it is the wrong content (e.g. ``Random.S01E01`` for a
+    One Piece S1E1 request), and the stream is rejected. Advisory
+    (non-video) streams are always rejected. IMDB ID disagreement is
+    a hard reject.
     """
     filtered = []
     for stream in streams:

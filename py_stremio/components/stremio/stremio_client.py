@@ -334,6 +334,17 @@ def _try_download_streams(
     if not streams:
         return {"success": False, "error": "No streams found", "working_urls": working_urls}
 
+    # Always identify addons that returned streams for the wrong show, so
+    # they can be proactively blacklisted even when some streams pass
+    # filtering but ultimately fail to download.
+    all_disabled_urls = target_mismatch_addon_urls(
+        streams,
+        target_season=season,
+        target_episode=episode,
+        title=title,
+        target_imdb_id=imdb_id,
+    )
+
     streams_to_try = select_quality_streams(
         streams,
         preferred_quality,
@@ -344,18 +355,11 @@ def _try_download_streams(
         target_imdb_id=imdb_id,
     )
     if not streams_to_try:
-        disabled_urls = target_mismatch_addon_urls(
-            streams,
-            target_season=season,
-            target_episode=episode,
-            title=title,
-            target_imdb_id=imdb_id,
-        )
         return {
             "success": False,
             "error": "No downloadable streams found after filtering",
             "working_urls": [],
-            "disabled_urls": disabled_urls,
+            "disabled_urls": all_disabled_urls,
             "permanent_failure": True,
         }
 
@@ -415,6 +419,7 @@ def _try_download_streams(
         "success": False,
         "error": f"All streams failed. Last error: {last_error}",
         "working_urls": working_urls,
+        "disabled_urls": all_disabled_urls,
         "permanent_failure": permanent_failure,
     }
 

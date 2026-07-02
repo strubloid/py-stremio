@@ -914,5 +914,85 @@ class TestStreamInfoCarriesImdbId:
         assert streams[0].imdb_id == "tt1234567"
 
 
+class TestInfoHashOnlyStreamFiltering:
+    """CIN and similar addons return info-hash streams whose name/title is
+    a generic label (``"CIN 4K"``) with no show name or S/E pattern.
+    The episode filter must still accept them when the request context
+    is present, and reject them when it isn't.
+    """
+
+    def test_cin_infohash_stream_passes_for_correct_season_episode(self):
+        """CIN-style info-hash stream is kept when the target S/E is supplied."""
+        from py_stremio.components.addons.models import StreamInfo
+
+        cin_stream = StreamInfo(
+            name="CIN 4K",
+            title=None,
+            url=None,
+            info_hash="598974fc04f0344822b34411a2d9f0a5219d47b1",
+            file_idx=0,
+            sources=[
+                "tracker:udp://tracker.opentrackr.org:1337/announce",
+                "dht:598974fc04f0344822b34411a2d9f0a5219d47b1",
+            ],
+            filename=None,
+            addon_name="CIN",
+            addon_url="https://cinnn.vercel.app/manifest.json",
+        )
+        result = stream_download.select_quality_streams(
+            [cin_stream],
+            "1080p",
+            target_season=23,
+            target_episode=3,
+            title="One Piece",
+            target_imdb_id="tt0388629",
+        )
+        assert result == [cin_stream]
+
+    def test_cin_infohash_stream_rejected_when_no_target_season(self):
+        """Without a target S/E the episode check can't validate, and the
+        stream has no title signal — it should still pass (per the
+        'no-signal' rule) because we have no contradicting evidence.
+        """
+        from py_stremio.components.addons.models import StreamInfo
+
+        cin_stream = StreamInfo(
+            name="CIN 4K",
+            title=None,
+            url=None,
+            info_hash="598974fc04f0344822b34411a2d9f0a5219d47b1",
+            file_idx=0,
+            sources=["dht:598974fc04f0344822b34411a2d9f0a5219d47b1"],
+            filename=None,
+            addon_name="CIN",
+            addon_url="https://cinnn.vercel.app/manifest.json",
+        )
+        result = stream_download._filter_streams_by_target_episode(
+            [cin_stream],
+            title="One Piece",
+        )
+        assert result == [cin_stream]
+
+    def test_infohash_stream_with_wrong_title_still_rejected(self):
+        """A stream with a contradicting show name must still be rejected,
+        even when the metadata lacks a clear S/E token.
+        """
+        from py_stremio.components.addons.models import StreamInfo
+
+        wrong = StreamInfo(
+            name="South Park 1080p",
+            title="South.Park.S23E03.1080p.WEB-DL.mkv",
+            url="https://dl.test/file.mkv",
+            addon_name="Bad",
+        )
+        result = stream_download._filter_streams_by_target_episode(
+            [wrong],
+            target_season=23,
+            target_episode=3,
+            title="One Piece",
+        )
+        assert result == []
+
+
 # Title filtering is kept in the active pipeline because loose addon searches can
 # return streams from unrelated shows with the same S/E number.
