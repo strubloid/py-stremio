@@ -69,13 +69,20 @@ def _is_placeholder_episode(video: dict) -> bool:
     placeholder_episode_name = name == placeholder_name and not has_external_episode_id
     tba_name = name in {"tba", "tbd"}
 
-    # A release date in the past means the episode has aired regardless of
-    # whether Cinemeta has updated its name/description/rating yet.
+    # Rows named exactly "Episode #N.M" are a Cinemeta convention for an
+    # announced season that has no real episode data yet. The release date
+    # on these rows is a placeholder stamp (often 2026-01-01 or similar) and
+    # is not a real air-date signal. Always treat them as placeholders.
+    if placeholder_episode_name and not has_description and rating in ("", "0", "0.0"):
+        return True
+
+    # For TBA/TBD rows, a release date in the past means the episode has
+    # aired even if Cinemeta hasn't updated the name/description/rating yet.
     release_date = _video_release_datetime(video)
     if release_date is not None and release_date <= _current_datetime():
         return False
 
-    return (placeholder_episode_name or tba_name) and not has_description and rating in ("", "0", "0.0")
+    return tba_name and not has_description and rating in ("", "0", "0.0")
 
 
 def _is_available_episode(video: dict) -> bool:

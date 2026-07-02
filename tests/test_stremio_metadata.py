@@ -253,6 +253,95 @@ def test_get_current_year_series_seasons_filters_cinemeta_placeholder_season(mon
     assert seasons == []
 
 
+def test_get_current_year_series_seasons_filters_placeholder_season_with_stale_release_date(monkeypatch):
+    """Regression for the Bleach TYBW case: Cinemeta returns a placeholder
+    S4E1 with name='Episode #4.1', no description, rating '0', and a stale
+    release date in the past. Even though _is_placeholder_episode returns
+    False (release date is past), the season has *no* real episodes — so the
+    season is announced but has not started airing and must not be created.
+    """
+    from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
+
+    def fake_get(url, timeout, **kwargs):
+        if "/catalog/" in url:
+            return FakeResponse({"metas": [{"imdb_id": "tt14986406", "name": "Bleach: Thousand-Year Blood War"}]})
+        return FakeResponse(
+            {
+                "meta": {
+                    "imdb_id": "tt14986406",
+                    "name": "Bleach: Thousand-Year Blood War",
+                    "videos": [
+                        {
+                            "season": 4,
+                            "episode": 1,
+                            "name": "Episode #4.1",
+                            "overview": "",
+                            "rating": "0",
+                            "released": "2026-01-01T00:00:00.000Z",
+                        },
+                    ],
+                }
+            }
+        )
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_imdb_max_season", lambda imdb_id: 4)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio.stremio_metadata._current_datetime",
+        lambda: datetime(2026, 7, 2, tzinfo=timezone.utc),
+    )
+
+    seasons = get_current_year_series_seasons("Bleach Thousand-Year Blood War", 2026)
+
+    assert seasons == []
+
+
+def test_get_series_metadata_filters_placeholder_season_with_stale_release_date(monkeypatch):
+    """Regression for the Bleach TYBW case at the per-season metadata level.
+    A season whose only Cinemeta row is a placeholder with a stale past
+    release date must report season_exists=False, even though the row itself
+    is treated as 'aired' by _is_placeholder_episode's date bypass.
+    """
+    def fake_get(url, timeout, **kwargs):
+        if "/catalog/" in url:
+            return FakeResponse({"metas": [{"imdb_id": "tt14986406", "name": "Bleach: Thousand-Year Blood War"}]})
+        return FakeResponse(
+            {
+                "meta": {
+                    "imdb_id": "tt14986406",
+                    "name": "Bleach: Thousand-Year Blood War",
+                    "videos": [
+                        {
+                            "season": 4,
+                            "episode": 1,
+                            "name": "Episode #4.1",
+                            "overview": "",
+                            "rating": "0",
+                            "released": "2026-01-01T00:00:00.000Z",
+                        },
+                    ],
+                }
+            }
+        )
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_imdb_max_season", lambda imdb_id: 4)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio.stremio_metadata._current_datetime",
+        lambda: datetime(2026, 7, 2, tzinfo=timezone.utc),
+    )
+
+    metadata = get_series_metadata("Bleach Thousand-Year Blood War", 4)
+
+    assert metadata == {
+        "imdb_id": "tt14986406",
+        "title": "Bleach: Thousand-Year Blood War",
+        "episode_count": None,
+        "available_episodes": [],
+        "season_exists": False,
+    }
+
+
 def test_get_current_year_series_seasons_filters_unreleased_tba_season(monkeypatch):
     from py_stremio.components.stremio.stremio_metadata import get_current_year_series_seasons
 
