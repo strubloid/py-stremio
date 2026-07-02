@@ -993,6 +993,107 @@ class TestInfoHashOnlyStreamFiltering:
         )
         assert result == []
 
+    def test_cin_infohash_stream_with_release_group_passes(self):
+        """CIN info-hash streams with a release-group token in the title
+        (e.g. "MeGusta", "EDITH", "TRB") must still pass the filter.
+        Release-group names are torrent technical metadata, not show
+        names — they must not be treated as title signals that would
+        cause the filter to reject the stream.
+
+        Regression: 90 Day Fiance S12E8 was being rejected because the
+        filter counted "MeGusta" as a show-title signal and then failed
+        to find "90 Day Fiance" in the torrent description.
+        """
+        from py_stremio.components.addons.models import StreamInfo
+
+        cin_stream = StreamInfo(
+            name="CIN 📺 1080p",
+            title="🧲 Torrent\n🎞️ x265\n💾 1.17 GB • 🌱 41\n🛠️ MeGusta",
+            url=None,
+            info_hash="8b71f3ea0ef0c3da4f7dc3cae58f9955e54c01db",
+            file_idx=0,
+            sources=["dht:8b71f3ea0ef0c3da4f7dc3cae58f9955e54c01db"],
+            filename=None,
+            addon_name="CIN",
+            addon_url="https://cinnn.vercel.app/manifest.json",
+        )
+        result = stream_download.select_quality_streams(
+            [cin_stream],
+            "1080p",
+            target_season=12,
+            target_episode=8,
+            title="90 Day Fiance",
+            target_imdb_id="tt3469050",
+        )
+        assert result == [cin_stream]
+
+    def test_accented_title_matches_unaccented_stream(self):
+        """Title check must be diacritics-insensitive.
+
+        Regression: 90 Day Fiance S12E8 was being rejected with
+        "No downloadable streams found after filtering" when the
+        user's folder title was "90 Day Fiancé" (with the é) because
+        torrent release names drop the accent ("90.Day.Fiance"), so
+        the substring match failed.  Most scene releases drop accents
+        from foreign-language words, so the title comparison must
+        normalise both sides.
+        """
+        from py_stremio.components.addons.models import StreamInfo
+
+        kod_stream = StreamInfo(
+            name="KOD | 720P",
+            title="90.Day.Fiance.S12E08.720p.HEVC.x265-MeGusta\n👤 69 💾 780.34 MB ⚙️ TorrentGalaxy",
+            info_hash="01c477b01ed57fecb3e4673ed3711a1e3053b986",
+            file_idx=0,
+            filename="90.Day.Fiance.S12E08.720p.HEVC.x265-MeGusta.mkv",
+            addon_name="KOD",
+            addon_url="https://kod-three.vercel.app/manifest.json",
+        )
+        for title in (
+            "90 Day Fiancé",
+            "90 day fiancé",
+            "90 Day FIANCÉ",
+            "90  Day  Fiancé",  # double spaces
+            " 90 Day Fiancé ",  # surrounding whitespace
+        ):
+            result = stream_download.select_quality_streams(
+                [kod_stream],
+                "1080p",
+                target_season=12,
+                target_episode=8,
+                title=title,
+                target_imdb_id="tt3469050",
+            )
+            assert result == [kod_stream], f"title={title!r} got {len(result)} streams"
+
+    def test_accented_wrong_show_still_rejected(self):
+        """Diacritics-insensitive title matching must not weaken the
+        wrong-show defense.  An accented title for a show that is NOT
+        present in the stream text must still cause the stream to be
+        rejected.
+        """
+        from py_stremio.components.addons.models import StreamInfo
+
+        op_stream = StreamInfo(
+            name="KOD | 720P",
+            title="One.Piece.S12E08.720p.HEVC.x265-MeGusta",
+            info_hash="abc",
+            file_idx=0,
+            filename="One.Piece.S12E08.720p.HEVC.x265-MeGusta.mkv",
+            addon_name="KOD",
+            addon_url="https://kod-three.vercel.app/manifest.json",
+        )
+        # "90 Day Fiancé" should NOT match "One Piece"
+        result = stream_download.select_quality_streams(
+            [op_stream],
+            "1080p",
+            target_season=12,
+            target_episode=8,
+            title="90 Day Fiancé",
+            target_imdb_id="tt3469050",
+        )
+        assert result == []
+
 
 # Title filtering is kept in the active pipeline because loose addon searches can
 # return streams from unrelated shows with the same S/E number.

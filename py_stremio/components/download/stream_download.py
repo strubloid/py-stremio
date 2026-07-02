@@ -212,6 +212,22 @@ def _normalized_title_text(text: str) -> str:
     return re.sub(r"[._\-]+", " ", text.lower()).strip()
 
 
+def _strip_accents(text: str) -> str:
+    """Remove diacritics (combining marks) from *text*.
+
+    Most scene torrent releases drop accents from foreign-language
+    words in their release names — ``"Fiancé"`` becomes ``"Fiance"``,
+    ``"Pokémon"`` becomes ``"Pokemon"``.  A user-supplied folder
+    title that keeps the original accent must still match these
+    unaccented release names, otherwise the title check will
+    silently reject every legitimate stream for the show.
+    """
+    import unicodedata
+
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
 # Tokens that are pure addon labels, quality/resolution markers, or
 # generic descriptors — never show titles.  When a stream's release
 # text contains ONLY these (and no recognizable show-name words) it
@@ -233,6 +249,22 @@ _NON_TITLE_TOKENS = {
     "cin", "rd", "torrentio", "torrent", "stream", "addon",
     "amazon", "netflix", "hulu", "disney", "hbo", "max",
     "torrent", "gb", "mb",
+    # Common torrent release-group names.  These are technical
+    # metadata, never show titles, and are frequently appended to
+    # addon info-hash descriptions (MeGusta, EDITH, TRB, Kitsune,
+    # RARBG, YIFY, EVO, NTb, PSA, CtrlHD, ...).  Keeping them out
+    # of the title-signal set prevents streams like CIN's
+    # "CIN 1080p ... 🛠 MeGusta" from being treated as having a
+    # title signal just because the release-group token is alphabetic.
+    "megusta", "edith", "trb", "kitsune", "rarbg", "yify", "evo",
+    "ntb", "psa", "ctrlhd", "rovers", "fov", "dimension", "killers",
+    "lol", "asap", "fleet", "sva", "exporthd", "bajskorv", "bia",
+    "cmrg", "ntb", "rmteam", "yestv", "eztv", "torrentgalaxy",
+    "tgx", "deflate", "inflate", "sigma", "xrg", "honey", "sir",
+    "ion10", "roversweb", "playhd", "playweb", "psa", "w4f", "web",
+    "edith", "robin", "morc", "noir", "dna", "orbit", "luminous",
+    "crimson", "archie", "morpheus", "public", "ski", "dm", "dvd",
+    "blu", "ray", "complete", "final", "alt", "ext", "int",
 }
 
 
@@ -251,15 +283,43 @@ def _has_show_title_signal(normalized_text: str) -> bool:
 
 
 def _matches_show_title(stream, title: str | None) -> bool:
+    """Return True unless the stream text names a different show.
+
+    Symmetric with ``_matches_target_episode``: a stream is rejected
+    only when it has positive evidence of being the wrong content.
+    Here, "positive evidence" means the text contains a show-name-like
+    word that disagrees with the requested title.  Streams whose text
+    has no title signal at all (info-hash-only addons, release-group
+    names, codec/quality markers, generic addon labels like ``"CIN
+    4K"``) are passed through — the episode check is the authoritative
+    filter for those.
+
+    The previous asymmetric design — "stream must contain the target
+    show name" — over-matched addon labels, codec tokens, and release
+    group names (MeGusta, EDITH, etc.) as title signals, causing it
+    to incorrectly reject legitimate info-hash streams that simply
+    lacked an in-text show identifier.
+
+    Title comparison is diacritics-insensitive: ``"90 Day Fiancé"`` in
+    the user's folder config matches ``"90 Day Fiance"`` in the
+    torrent release name.  Most scene releases drop accents from
+    foreign-language words, and rejecting the stream because of a
+    missing accent would cause the title check to silently fail for
+    any accented show.
+    """
     if not title:
         return True
     combined_norm = _normalized_title_text(_combined_stream_text(stream))
     if not _has_show_title_signal(combined_norm):
-        # Stream has no recognizable show name (typical for info-hash
-        # addons whose label is just the addon/quality text).  Let the
-        # episode-number check be the authoritative filter instead.
+        # No recognisable show-name word in the text.  Treat as
+        # "no title signal" and defer to the episode check.
         return True
-    title_norm = _normalized_title_text(title)
+    # Collapse any multi-space whitespace from the user's title config
+    # to a single space, then strip accents.  This makes "90  Day
+    # Fiance" (double space) and "90 Day Fiancé" (with accent) both
+    # match the unaccented, single-spaced release name.
+    title_norm = _strip_accents(re.sub(r"\s+", " ", _normalized_title_text(title)))
+    combined_norm = _strip_accents(re.sub(r"\s+", " ", combined_norm))
     return title_norm in combined_norm
 
 
