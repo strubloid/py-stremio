@@ -4,9 +4,19 @@ The bar lives on the terminal's LAST line, protected by a scroll region so
 content scrolls above it.  Keyboard controls work without any toggle::
 
     ═══ Speed: 100% · 300 Mbps  T:4  [+/-]spd [s]pre [w/W]thr [t]pre [q]quit  ═══  ∷  2 active · 7.7 KB/s ═══
-"""
+
+Terminal state management
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The module tracks the tty raw/cbreak mode state so cleanup can always
+restore the terminal, even if a ``KeyboardInterrupt`` hits between
+``tty.setcbreak`` and ``stop()``.  Always call ``cleanup_terminal()``
+before exiting (the app layer registers it via ``atexit``)."""
+
 from __future__ import annotations
 
+import atexit
+import os
 import re
 import shutil
 import sys
@@ -21,6 +31,49 @@ YELLOW = "\033[93m"
 RED = "\033[91m"
 DIM = "\033[2m"
 RESET = "\033[0m"
+
+# ── Global terminal state tracking ─────────────────────────────────────
+# These are set/cleared by StatusBar._listen_loop and checked by
+# cleanup_terminal().  atexit registration ensures restore happens even
+# on a bare KeyboardInterrupt.
+
+_tty_fd: int | None = None
+_tty_old_attrs: Any = None
+
+
+def cleanup_terminal() -> None:
+    """Restore terminal to a clean state after py-stremio exits.
+
+    Must be safe to call multiple times (idempotent).  Handles:
+    - Scroll region reset
+    - Cursor show
+    - termios restore  (if raw/cbreak was active)
+    - Clear any leftover status bar line
+    """
+    global _tty_fd, _tty_old_attrs
+
+    _reset_scroll_region()
+    # Ensure cursor is visible
+    sys.stdout.write("\033[?25h")
+    # Clear the bottom line (status bar residue) and reset attributes
+    _, term_height = shutil.get_terminal_size(fallback=(100, 24))
+    sys.stdout.write(f"\033[{term_height};1H\033[K")
+    sys.stdout.write("\033[0m")
+    sys.stdout.flush()
+
+    # Restore termios if it was captured (lifted from StatusBar)
+    if _tty_fd is not None and _tty_old_attrs is not None:
+        import termios as _termios
+        try:
+            _termios.tcsetattr(_tty_fd, _termios.TCSADRAIN, _tty_old_attrs)
+        except (OSError, IOError, _termios.error):
+            pass
+    _tty_fd = None
+    _tty_old_attrs = None
+
+
+# Register once at module import — will always run on exit.
+atexit.register(cleanup_terminal)
 
 
 def _c(text: str, color: str) -> str:
@@ -240,16 +293,25 @@ class StatusBar:
     # ── Key handling ──────────────────────────────────────────────────────
 
     def _listen_loop(self) -> None:
-        """Daemon thread: listen for keyboard input."""
+        """Daemon thread: listen for keyboard input.
+
+        Saves the tty attributes in the module-level globals so
+        ``cleanup_terminal()`` (registered via ``atexit``) can always
+        restore them, even if this thread is killed mid-flight.
+        """
         import select
         import termios
         import tty
+
+        global _tty_fd, _tty_old_attrs
 
         fd = None
         old_settings = None
         try:
             fd = sys.stdin.fileno()
             old_settings = termios.tcgetattr(fd)
+            _tty_fd = fd
+            _tty_old_attrs = old_settings
             tty.setcbreak(fd)
             while self._running:
                 if select.select([sys.stdin], [], [], 0.1)[0]:
@@ -265,6 +327,8 @@ class StatusBar:
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                 except (OSError, IOError):
                     pass
+            _tty_fd = None
+            _tty_old_attrs = None
 
     def _handle_key(self, ch: str) -> None:
         if ch.lower() == "q":

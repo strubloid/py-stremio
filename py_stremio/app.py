@@ -13,6 +13,7 @@ import sys
 from py_stremio.components.addons.addon_validator import validate_and_update
 from py_stremio.components.collect import discover_new_addons
 from py_stremio.components.configs.app_settings import settings
+from py_stremio.components.download.control_panel import cleanup_terminal
 from py_stremio.components.errors import print_error_summary
 from py_stremio.components.library.library_scanner import ScannedFolder
 from py_stremio.services.download import DownloadService
@@ -195,6 +196,7 @@ class AppService:
             choice = input(_c("Select 1-7 › ", ACCENT)).strip()
 
             if choice == "7" or choice == "":
+                cleanup_terminal()
                 print("Bye.")
                 break
 

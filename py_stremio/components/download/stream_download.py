@@ -839,8 +839,25 @@ def download_stream_to_file(
         if registered_here and bandwidth_limiter:
             bandwidth_limiter.unregister_thread(active_thread_id)
 
-    partial_path.replace(file_path)
-    _validate_completed_file(file_path, partial_path)
+    # Detect content-length mismatch: server claimed more bytes than it sent
+    # (premature close, truncated response, or spoofed headers).
+    # Check BEFORE renaming so the .part file is still present for retry.
+    if total_size > 0 and downloaded < total_size:
+        _delete_invalid_download(file_path, partial_path)
+        raise InvalidVideoDownloadError(
+            f"Server promised {total_size} bytes but sent only {downloaded} "
+            f"for {file_path.name}"
+        )
+
+    # Rename .part → final file inside a try block so that if validation
+    # raises (file too small), the incomplete file is deleted before
+    # propagating, preventing it from surviving a retry failure.
+    try:
+        partial_path.replace(file_path)
+        _validate_completed_file(file_path, partial_path)
+    except InvalidVideoDownloadError:
+        _delete_invalid_download(file_path, partial_path)
+        raise
 
     if complete_message:
         print(complete_message, flush=True)

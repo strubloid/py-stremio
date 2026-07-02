@@ -14,7 +14,7 @@ from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.state.app_state import load_state, save_state, DownloadState
 from py_stremio.components.stremio.stremio_client import StageTracker, search_and_download
 from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
-from py_stremio.components.download.stream_download import build_media_filename
+from py_stremio.components.download.stream_download import build_media_filename, _minimum_completed_video_bytes
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
 from py_stremio.components.addons.addon_search_service import preflight_discover_working_addons
 from py_stremio.components.stremio.stremio_ids import build_stremio_id
@@ -228,18 +228,30 @@ def _do_download_one_episode(
     # reconciled.
     generated_filename = _generated_episode_filename(task.folder_path, task.config, task.season, episode_num)
     if (task.folder_path / generated_filename).exists():
-        if not task.state.is_downloaded(generated_filename):
-            task.state.add_download(generated_filename, task.quality, "stremio")
-        return {
-            "episode": episode_num,
-            "result": {
-                "success": False,
-                "skipped": True,
-                "reason": "already exists",
-                "filename": generated_filename,
-                "working_urls": [],
-            },
-        }
+        # Validate existing file before skipping: if it's too small, it's
+        # likely an incomplete download from a previous failed run and must
+        # be re-downloaded instead of silently skipped.
+        existing_path = task.folder_path / generated_filename
+        existing_size = existing_path.stat().st_size
+        min_bytes = _minimum_completed_video_bytes()
+        if min_bytes > 0 and existing_size < min_bytes:
+            print(f"    S{task.season:02d}E{episode_num:02d}: existing file "
+                  f"is only {existing_size / 1024 / 1024:.1f} MB "
+                  f"(min {min_bytes / 1024 / 1024:.0f} MB) — re-downloading")
+            existing_path.unlink(missing_ok=True)
+        else:
+            if not task.state.is_downloaded(generated_filename):
+                task.state.add_download(generated_filename, task.quality, "stremio")
+            return {
+                "episode": episode_num,
+                "result": {
+                    "success": False,
+                    "skipped": True,
+                    "reason": "already exists",
+                    "filename": generated_filename,
+                    "working_urls": [],
+                },
+            }
 
     last_downloaded_bytes = 0
     last_total_bytes = 0

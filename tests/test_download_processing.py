@@ -197,7 +197,7 @@ def test_download_episode_task_skips_existing_final_file_even_if_task_is_stale(t
     )
     config_path = tmp_path / "download-config.json"
     save_config(config_path, config)
-    (tmp_path / "Jury Duty Presents_s02e01.mkv").write_bytes(b"already here")
+    (tmp_path / "Jury Duty Presents_s02e01.mkv").write_bytes(b"x" * (101 * 1024 * 1024))  # above 100MB min
     task = SeasonFolderTask(
         folder_path=tmp_path,
         config_path=config_path,

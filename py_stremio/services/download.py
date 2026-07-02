@@ -234,8 +234,11 @@ class DownloadService:
             return report
         finally:
             restore_thread_stdout_filter(restore_stdout)
-            status_bar.stop()
-
+            if 'status_bar' in dir():
+                status_bar.stop()
+            else:
+                from py_stremio.components.download.control_panel import _reset_scroll_region as _rsr
+                _rsr()
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
