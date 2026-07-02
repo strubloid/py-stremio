@@ -18,7 +18,7 @@ py-stremio/
 ├── pyproject.toml                     # Package config with hatch
 ├── .env.example                       # Environment template
 ├── README.md                          # User documentation
-├── project.md                         # Technical documentation
+├── docs/project.md                         # Technical documentation
 ├── AGENTS.md                          # This file - agent context
 ├── addons.txt                         # Custom addon URLs (optional)
 ├── py_stremio/                        # Package root
