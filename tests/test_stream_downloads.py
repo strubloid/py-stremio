@@ -45,6 +45,46 @@ class FakeDownloadResponse:
         yield self.body
 
 
+class _StallingResponse:
+    """Simulates a torrent proxy that returned some bytes and then stalled.
+
+    The body iterator yields a single chunk (so the download makes
+    progress past the ``sizing`` phase) and then blocks on
+    ``stall_event`` indefinitely.  Used to exercise the
+    ``StreamStallError`` translation in ``download_stream_to_file``:
+    when ``httpx.ReadTimeout`` fires on the slow iterator, the
+    function must convert it into our domain-specific error and clean
+    up the partial file.
+    """
+
+    def __init__(self, first_chunk: bytes, headers: dict, total_size: int, *, stall_event):
+        self.first_chunk = first_chunk
+        self.headers = headers
+        self.status_code = 200
+        self._total_size = total_size
+        self._stall_event = stall_event
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_bytes(self, chunk_size=8192):
+        yield self.first_chunk
+        # Simulate httpx's read-timeout firing on the next iteration.
+        # The real httpx transport raises ReadTimeout from a different
+        # layer but the exception class is identical and
+        # ``download_stream_to_file`` catches it via ``except
+        # httpx.ReadTimeout``.
+        import httpx as _httpx
+        self._stall_event.set()  # release any waiting test thread
+        raise _httpx.ReadTimeout("simulated stall")
+
+
 def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, monkeypatch):
     # Disable the minimum file size check for this test (uses small test data)
     monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
@@ -111,6 +151,62 @@ def test_download_stream_to_file_rejects_text_error_response(tmp_path, monkeypat
         stream_download.download_stream_to_file("https://example.test/error", str(target))
 
     assert not target.exists()
+    assert not (tmp_path / "episode.mkv.part").exists()
+
+
+def test_download_stream_to_file_translates_read_timeout_to_stall_error(tmp_path, monkeypatch):
+    """When httpx's read timeout fires (the local torrent proxy has no
+    peers and the body has stalled), ``download_stream_to_file`` must
+    raise ``StreamStallError`` and clean up the partial file instead
+    of hanging for the full 5-minute request timeout.
+
+    Regression: 90 Day Fiance S12E08 was stuck on "waiting for
+    download" for many minutes because the local torrent proxy found
+    the info hash but had no peers, and the download kept blocking on
+    ``iter_bytes`` until httpx's full request timeout fired.  The fix
+    threads a per-chunk ``read`` timeout through to httpx and
+    translates the resulting ``ReadTimeout`` into a domain-specific
+    ``StreamStallError`` so the caller can fall through to the next
+    stream in the queue.
+    """
+    import threading
+    from py_stremio.components.download import stream_download
+
+    monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
+    target = tmp_path / "episode.mkv"
+    first_chunk = b"x" * 4096  # Above the 1-byte minimum so we get past the
+                              # "sizing" phase and into the steady read loop.
+
+    stall_event = threading.Event()
+    captured_timeout = {"value": None}
+
+    def fake_stream(method, url, **kwargs):
+        captured_timeout["value"] = kwargs.get("timeout")
+        return _StallingResponse(
+            first_chunk=first_chunk,
+            headers={"content-length": "100000", "content-type": "video/mp4"},
+            total_size=100000,
+            stall_event=stall_event,
+        )
+
+    monkeypatch.setattr(stream_download.httpx, "stream", fake_stream)
+
+    with pytest.raises(stream_download.StreamStallError):
+        stream_download.download_stream_to_file(
+            "https://example.test/stall",
+            str(target),
+            stall_timeout=0.5,
+        )
+    # Unblock the test fixture's stall_event so the request thread can
+    # exit cleanly even if anything keeps a reference to the response.
+    stall_event.set()
+    # The stall timeout must be applied as httpx's read timeout so the
+    # body read aborts within the configured window, not the 5-minute
+    # request timeout.
+    assert captured_timeout["value"] is not None
+    assert getattr(captured_timeout["value"], "read", None) == 0.5
+    # The partial file must be cleaned up so the user does not see a
+    # stale .part leftover after a stall.
     assert not (tmp_path / "episode.mkv.part").exists()
 
 

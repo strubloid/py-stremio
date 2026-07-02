@@ -1,6 +1,8 @@
 """Stream URL resolving and file download helpers."""
 from urllib.parse import urlencode
 
+import time
+
 import httpx
 
 import re
@@ -23,6 +25,15 @@ _KNOWN_ERROR_VIDEOS = frozenset({
 
 class InvalidVideoDownloadError(ValueError):
     """Raised when a resolved stream downloads an invalid placeholder/error file."""
+
+
+class StreamStallError(RuntimeError):
+    """Raised when a download receives no bytes for longer than the stall timeout.
+
+    Distinct from a transport error so callers can recognise the cause
+    and apply the right retry policy (e.g. fall through to the next
+    stream instead of the same proxy on the next retry round).
+    """
 
 
 _TEXT_ERROR_CONTENT_TYPES = (
@@ -747,8 +758,17 @@ def download_stream_to_file(
     progress_callback=None,
     bandwidth_limiter=None,
     thread_id: int | None = None,
+    stall_timeout: float = 60.0,
 ) -> None:
-    """Download a direct stream URL to disk, resuming partial files when possible."""
+    """Download a direct stream URL to disk, resuming partial files when possible.
+
+    ``stall_timeout`` is the maximum number of seconds to wait between
+    consecutive bytes before giving up.  The default is 60s, which is
+    generous enough for slow torrents yet short enough to surface a
+    "no peers" situation within one minute instead of waiting the full
+    5-minute ``httpx`` request timeout.  Pass ``0`` to disable stall
+    detection (rely on the request timeout instead).
+    """
     from pathlib import Path
     import threading
 
@@ -768,7 +788,24 @@ def download_stream_to_file(
             registered_here = True
 
     try:
-        with httpx.stream("GET", download_url, timeout=300, headers=headers, follow_redirects=True) as response:
+        # httpx exposes separate ``connect`` and ``read`` timeouts.  The
+        # ``read`` timeout is exactly what we need for stall detection:
+        # it bounds the gap between consecutive bytes during the body
+        # read.  We keep the overall request timeout generous (5 min)
+        # and the read timeout much shorter (default 60s) so a stalled
+        # proxy aborts within a minute instead of hanging for the full
+        # 5 minutes.
+        if stall_timeout and stall_timeout > 0:
+            request_timeout = httpx.Timeout(300.0, read=stall_timeout)
+        else:
+            request_timeout = 300.0
+        with httpx.stream(
+            "GET",
+            download_url,
+            timeout=request_timeout,
+            headers=headers,
+            follow_redirects=True,
+        ) as response:
             response.raise_for_status()
             resumed = bool(existing_size and response.status_code == 206)
             mode = "ab" if resumed else "wb"
@@ -789,6 +826,15 @@ def download_stream_to_file(
                     downloaded += len(chunk)
                     if progress_callback:
                         progress_callback(downloaded, total_size)
+    except httpx.ReadTimeout as e:
+        # The body stalled for longer than the read timeout.  Translate
+        # to our domain-specific error so the caller can apply the
+        # correct retry policy (fall through to the next stream
+        # instead of retrying the same hung proxy).
+        _delete_invalid_download(file_path, partial_path)
+        raise StreamStallError(
+            f"No bytes received for {stall_timeout}s; aborting {file_path.name}"
+        ) from e
     finally:
         if registered_here and bandwidth_limiter:
             bandwidth_limiter.unregister_thread(active_thread_id)

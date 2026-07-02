@@ -19,6 +19,7 @@ from py_stremio.components.stremio.stremio_ids import build_stremio_id
 from py_stremio.components.stremio.stremio_metadata import get_imdb_id, get_series_imdb_id
 from py_stremio.components.download.stream_download import (
     InvalidVideoDownloadError,
+    StreamStallError,
     build_media_filename,
     can_retry_with_debrid,
     download_stream_to_file,
@@ -387,7 +388,14 @@ def _try_download_streams(
         import threading
         thread_id = threading.get_ident()
         try:
-            download_stream_to_file(download_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter, thread_id=thread_id)
+            download_stream_to_file(
+                download_url,
+                filename,
+                progress_callback=progress_callback,
+                bandwidth_limiter=bandwidth_limiter,
+                thread_id=thread_id,
+                stall_timeout=settings.DOWNLOAD_STALL_TIMEOUT,
+            )
             return _success_result(filename, stream, working_urls)
         except InvalidVideoDownloadError as e:
             invalid_download_errors += 1
@@ -399,6 +407,22 @@ def _try_download_streams(
                 if retry_result:
                     return retry_result
             last_error = str(e)
+        except StreamStallError as e:
+            # The download started but stalled (no bytes for 60s+).  This
+            # typically means the local torrent proxy can't find peers
+            # yet (brand-new episode).  Do NOT retry with RealDebrid on
+            # the same info hash — RD has the same peer-discovery delay.
+            # Move on to the next stream in the queue.
+            transient_download_errors += 1
+            from py_stremio.components.errors.error_logger import log_error
+
+            log_error(
+                f"stalled_download({stream.addon_name})",
+                e,
+                stream.url or stream.info_hash or "?",
+            )
+            last_error = str(e)
+            continue
         except Exception as e:
             transient_download_errors += 1
             from py_stremio.components.errors.error_logger import log_error
