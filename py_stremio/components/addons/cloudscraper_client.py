@@ -194,8 +194,11 @@ def _raise_for_status(resp) -> None:
     if 400 <= status < 600:
         from requests.exceptions import HTTPError
 
+        # Coerce the URL to a plain string for the error message — httpx
+        # responses expose ``httpx.URL`` which is not str-cooperative.
+        url_str = str(resp.url) if resp.url else ""
         raise HTTPError(
-            f"{status} Client/Server Error for url: {_short_url(resp.url or '')}",
+            f"{status} Client/Server Error for url: {_short_url(url_str)}",
             response=resp,
         )
 
@@ -231,7 +234,12 @@ def addon_get_streams(
 
 def _short_url(url: str) -> str:
     """Return a short human-readable URL fragment for error messages."""
-    parsed = urlparse(url)
+    # httpx.Response.url is an httpx.URL object which lacks ``.decode()``
+    # required by ``urllib.parse.urlparse``'s coercion logic.  Coerce
+    # to a plain string up front so error messages never crash on URL
+    # type differences between backends.
+    url_str = str(url) if url else ""
+    parsed = urlparse(url_str)
     path = parsed.path.rstrip("/")
     # Show first 60 chars of path starting from meaningful segment
     segments = [s for s in path.split("/") if s and not s.startswith("realdebrid") and not s.startswith("eyJ")]
