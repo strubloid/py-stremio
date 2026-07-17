@@ -46,9 +46,12 @@ _TEXT_ERROR_CONTENT_TYPES = (
 
 # Language keyword patterns for stream title filtering.
 # Keep short codes token-bound so e.g. "legend" does not imply ENG.
+# Anime-specific markers (VOSTFR, VOSTEN, ITA, etc.) are included for
+# scene/fansub releases where the subtitle language is not otherwise stated.
 _LANGUAGE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\benglish\b", re.IGNORECASE), "english"),
     (re.compile(r"(?:^|[^a-z0-9])eng(?:lish)?(?:$|[^a-z0-9])", re.IGNORECASE), "english"),
+    (re.compile(r"\bvosten\b", re.IGNORECASE), "english"),
     (re.compile(r"\brussian\b", re.IGNORECASE), "russian"),
     (re.compile(r"\bрус(?:ский|ская|ское|ские)?\b", re.IGNORECASE), "russian"),
     (re.compile(r"\brusskiy\b", re.IGNORECASE), "russian"),
@@ -57,16 +60,23 @@ _LANGUAGE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bspanish\b", re.IGNORECASE), "spanish"),
     (re.compile(r"\bespañol\b", re.IGNORECASE), "spanish"),
     (re.compile(r"\bespanol\b", re.IGNORECASE), "spanish"),
+    (re.compile(r"(?:^|[^a-z0-9])spa?(?:nish)?(?:$|[^a-z0-9])", re.IGNORECASE), "spanish"),
     (re.compile(r"\bfrench\b", re.IGNORECASE), "french"),
     (re.compile(r"\bfrançais\b", re.IGNORECASE), "french"),
     (re.compile(r"\bfrancais\b", re.IGNORECASE), "french"),
+    (re.compile(r"\bvostfr\b", re.IGNORECASE), "french"),
+    (re.compile(r"(?:^|[^a-z0-9])fra?(?:nch|is)?(?:$|[^a-z0-9])", re.IGNORECASE), "french"),
     (re.compile(r"\bgerman\b", re.IGNORECASE), "german"),
     (re.compile(r"\bdeutsch\b", re.IGNORECASE), "german"),
+    (re.compile(r"(?:^|[^a-z0-9])ger(?:$|[^a-z0-9])", re.IGNORECASE), "german"),
     (re.compile(r"\bitalian\b", re.IGNORECASE), "italian"),
     (re.compile(r"\bitaliano\b", re.IGNORECASE), "italian"),
+    (re.compile(r"(?:^|[^a-z0-9])ita(?:$|[^a-z0-9])", re.IGNORECASE), "italian"),
+    (re.compile(r"\bsubit\b", re.IGNORECASE), "italian"),
     (re.compile(r"\bportuguese\b", re.IGNORECASE), "portuguese"),
     (re.compile(r"\bportuguês\b", re.IGNORECASE), "portuguese"),
     (re.compile(r"\bportugues\b", re.IGNORECASE), "portuguese"),
+    (re.compile(r"(?:^|[^a-z0-9])por?t?(?:uguese)?(?:$|[^a-z0-9])", re.IGNORECASE), "portuguese"),
     (re.compile(r"\bdutch\b", re.IGNORECASE), "dutch"),
     (re.compile(r"\bnederlands\b", re.IGNORECASE), "dutch"),
     (re.compile(r"\bpolish\b", re.IGNORECASE), "polish"),
@@ -493,6 +503,117 @@ def filter_streams_by_language(streams: list, preferred_languages: list[str] | N
         continue
 
     return filtered
+
+
+def _stream_subtitle_language_codes(stream) -> set[str]:
+    """Extract language codes from a stream's structured subtitle tracks.
+
+    Normalizes the Stremio ``flag`` and ``label`` fields into a set of
+    canonical lowercase language names so callers can check for English
+    presence without caring about the addon's exact encoding.
+    """
+    tracks = getattr(stream, "subtitle_tracks", None) or []
+    codes: set[str] = set()
+    for track in tracks:
+        flag = str(track.get("flag") or "").strip().lower()
+        label = str(track.get("label") or "").strip().lower()
+        canonical = _SUBTITLE_FLAG_TO_LANGUAGE.get(flag)
+        if canonical:
+            codes.add(canonical)
+        elif "english" in label or "eng" in flag:
+            codes.add("english")
+        elif "french" in label or "fra" in flag or "fre" in flag:
+            codes.add("french")
+        elif "spanish" in label or "spa" in flag:
+            codes.add("spanish")
+        elif "italian" in label or "ita" in flag:
+            codes.add("italian")
+        elif "german" in label or "deu" in flag or "ger" in flag:
+            codes.add("german")
+        elif "portuguese" in label or "por" in flag:
+            codes.add("portuguese")
+        elif "russian" in label or "rus" in flag:
+            codes.add("russian")
+        elif "japanese" in label or "jpn" in flag:
+            codes.add("japanese")
+        elif "korean" in label or "kor" in flag:
+            codes.add("korean")
+        elif "chinese" in label or "zho" in flag or "chi" in flag:
+            codes.add("chinese")
+        elif "arabic" in label or "ara" in flag:
+            codes.add("arabic")
+        elif "hindi" in label or "hin" in flag:
+            codes.add("hindi")
+    return codes
+
+
+_SUBTITLE_FLAG_TO_LANGUAGE: dict[str, str] = {
+    "eng": "english",
+    "fra": "french",
+    "fre": "french",
+    "spa": "spanish",
+    "ita": "italian",
+    "deu": "german",
+    "ger": "german",
+    "por": "portuguese",
+    "rus": "russian",
+    "jpn": "japanese",
+    "kor": "korean",
+    "zho": "chinese",
+    "chi": "chinese",
+    "ara": "arabic",
+    "hin": "hindi",
+}
+
+
+def has_english_subtitle(stream) -> bool:
+    """Return True when a stream has English subtitle support.
+
+    Checks three signals in order:
+      1. Structured subtitle tracks from the Stremio addon response
+      2. English indicators in the release name / stream title
+      3. Multi-language markers (dual audio, multi subs)
+
+    Streams with no detectable language info are accepted (safe default)
+    so that valid English streams whose release name omits the language
+    marker are not silently dropped.
+    """
+    title = getattr(stream, "title", None) or ""
+    name = getattr(stream, "name", None) or ""
+    filename = getattr(stream, "filename", None) or ""
+    combined = f"{title} {name} {filename}"
+
+    # 1. Structured subtitle tracks (most reliable when present)
+    subtitle_codes = _stream_subtitle_language_codes(stream)
+    if "english" in subtitle_codes:
+        return True
+
+    # 2. Release-name language detection
+    detected = _detect_languages(combined)
+    if "english" in detected:
+        return True
+
+    # 3. Multi-language indicators → accept (may include English)
+    if "multi" in detected:
+        return True
+
+    # 4. No language info detected → safe default, accept
+    if not detected and not subtitle_codes:
+        return True
+
+    # 5. Only non-English, non-multi languages detected → reject
+    return False
+
+
+def filter_for_english_subtitles(streams: list) -> list:
+    """Filter streams to those with English subtitle support.
+
+    Streams that have English in their subtitle tracks, English in their
+    release name, multi-language markers, or no detectable language info
+    at all are kept. Only streams that are positively identified as
+    non-English are filtered out.
+    """
+    return [s for s in streams if has_english_subtitle(s)]
 
 
 def _quality_sort_key(stream) -> tuple:

@@ -25,7 +25,7 @@ class DownloadConfig:
     quality: QualitySettings | None = field(default_factory=QualitySettings)
     languages: list[str] | None = None
     language: str = "any"
-    subtitles: str = "any"
+    subtitles: str = "english"
     provider: str = "auto"
     enabled: bool = True
 

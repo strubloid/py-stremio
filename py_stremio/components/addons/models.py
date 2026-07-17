@@ -1,5 +1,5 @@
 """Shared addon data models."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -15,3 +15,4 @@ class StreamInfo:
     sources: list[str] | None = None
     seeders: int | None = None
     imdb_id: str | None = None
+    subtitle_tracks: list[dict] | None = field(default=None, repr=False)

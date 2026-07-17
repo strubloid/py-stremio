@@ -43,6 +43,7 @@ def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[Stream
                         or behavior_hints.get("imdb_id")
                         or behavior_hints.get("imdbId")
                     ),
+                    subtitle_tracks=_parse_subtitle_tracks(stream),
                 )
             )
     except Exception as exc:
@@ -71,6 +72,30 @@ def _name_from_url(url: str) -> str:
         host = host.split(":")[0]
     # Return the first segment of the domain
     return host.split(".")[0][:30] if host else "unknown"
+
+
+def _parse_subtitle_tracks(stream: dict) -> list[dict] | None:
+    """Extract the Stremio subtitle tracks array from a raw stream dict.
+
+    Returns None when no subtitle metadata is present.
+    """
+    raw = stream.get("subtitles")
+    if not raw or not isinstance(raw, list):
+        return None
+    tracks: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        track: dict = {}
+        if "url" in entry:
+            track["url"] = entry["url"]
+        if "label" in entry:
+            track["label"] = entry["label"]
+        if "flag" in entry:
+            track["flag"] = entry["flag"]
+        if track:
+            tracks.append(track)
+    return tracks or None
 
 
 def configured_addon_url(addon: Any) -> str:
@@ -130,22 +155,74 @@ def search_all_addons_for_streams(
     stremio_id: str,
     working_addons: list[str] | None = None,
     max_addons: int = 3,
+    preferred_languages: list[str] | None = None,
 ) -> tuple[list, list[str]]:
-    """Search known working addons first, then remaining configured addons."""
+    """Search known working addons first, then remaining configured addons.
+
+    When *preferred_languages* contains ``"english"`` (or the default
+    PREFERRED_LANGUAGES is english), streams are filtered for English
+    subtitle support after each search phase.  If no English-subtitled
+    streams are found after exhausting all addons, a final pass returns
+    *all* streams (unfiltered) as a last resort — this prevents blocking
+    downloads entirely when no addon provides confirmed English subs.
+    """
+    from py_stremio.components.download.stream_download import filter_for_english_subtitles
+
+    need_english = _should_enforce_english(preferred_languages)
+
+    # ── Phase 1: search working (cached) addons ──
     working_streams, working_urls = search_working_addons_for_streams(
         type_,
         stremio_id,
         working_addons,
     )
+
+    if need_english and working_streams:
+        english_working = filter_for_english_subtitles(working_streams)
+        if english_working:
+            return english_working, working_urls
+
+    # ── Phase 2: search remaining (all) addons ──
     remaining_streams, remaining_urls = search_remaining_addons_for_streams(
         type_,
         stremio_id,
         excluded_addons=working_addons,
     )
+    all_urls = unique_manifest_urls([*working_urls, *remaining_urls])
+
+    if need_english:
+        combined_streams = [*working_streams, *remaining_streams]
+        english_all = filter_for_english_subtitles(combined_streams)
+        if english_all:
+            return english_all, all_urls
+
+        # ── Phase 3 (last resort): return all streams unfiltered ──
+        if combined_streams:
+            return combined_streams, all_urls
+        return [], all_urls
+
     return (
         [*working_streams, *remaining_streams],
-        unique_manifest_urls([*working_urls, *remaining_urls]),
+        all_urls,
     )
+
+
+def _should_enforce_english(preferred_languages: list[str] | None) -> bool:
+    """Return True when English subtitle enforcement should be active.
+
+    Checks both the explicit *preferred_languages* argument and the
+    global ``PREFERRED_LANGUAGES`` setting so the two-pass search
+    activates even when callers do not pass the parameter.
+    """
+    from py_stremio.components.configs.app_settings import settings
+
+    if preferred_languages is not None:
+        normalized = [lang.strip().lower() for lang in preferred_languages if lang and lang.strip()]
+        return "english" in normalized
+
+    global_pref = settings.PREFERRED_LANGUAGES
+    normalized = [lang.strip().lower() for lang in global_pref if lang and lang.strip()]
+    return "english" in normalized
 
 
 # ── Pre-flight addon discovery ────────────────────────────────────────────────

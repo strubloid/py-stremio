@@ -1193,3 +1193,197 @@ class TestInfoHashOnlyStreamFiltering:
 
 # Title filtering is kept in the active pipeline because loose addon searches can
 # return streams from unrelated shows with the same S/E number.
+
+
+# ── English subtitle enforcement tests ──────────────────────────────────
+
+
+class TestDetectLanguagesAnimePatterns:
+    """Test anime-specific language markers in release names."""
+
+    def test_detects_vostfr(self):
+        found = stream_download._detect_languages("[SubGroup] One Piece - 05 [1080p] [VOSTFR]")
+        assert "french" in found
+
+    def test_detects_vosten(self):
+        found = stream_download._detect_languages("[SubGroup] One Piece - 05 [1080p] [VOSTEN]")
+        assert "english" in found
+
+    def test_detects_ita_marker(self):
+        found = stream_download._detect_languages("One Piece S23E11 1080p ITA sub")
+        assert "italian" in found
+
+    def test_detects_fra_marker(self):
+        found = stream_download._detect_languages("One Piece S23E05 1080p FRA sub")
+        assert "french" in found
+
+    def test_detects_spa_marker(self):
+        found = stream_download._detect_languages("One Piece S23E05 1080p SPA sub")
+        assert "spanish" in found
+
+    def test_detects_ger_marker(self):
+        found = stream_download._detect_languages("One Piece S23E05 1080p GER sub")
+        assert "german" in found
+
+    def test_detects_subit_bracket(self):
+        found = stream_download._detect_languages("[SubIT] One Piece - 05 [1080p]")
+        assert "italian" in found
+
+    def test_detects_eng_marker(self):
+        found = stream_download._detect_languages("One Piece S23E05 1080p ENG sub")
+        assert "english" in found
+
+
+class TestHasEnglishSubtitle:
+    """Tests for the has_english_subtitle function."""
+
+    def make_stream(self, title: str, name: str = "Torrentio",
+                    subtitle_tracks: list[dict] | None = None) -> StreamInfo:
+        return StreamInfo(
+            name=name, title=title,
+            url="https://example.test/video.mkv",
+            subtitle_tracks=subtitle_tracks,
+        )
+
+    def test_english_in_title(self):
+        stream = self.make_stream("One Piece S23E05 1080p English AC3")
+        assert stream_download.has_english_subtitle(stream) is True
+
+    def test_english_in_subtitle_tracks(self):
+        tracks = [{"url": "https://sub.test/eng.srt", "label": "English [en]", "flag": "eng"}]
+        stream = self.make_stream("One Piece S23E05 1080p", subtitle_tracks=tracks)
+        assert stream_download.has_english_subtitle(stream) is True
+
+    def test_english_via_flag_code(self):
+        tracks = [{"url": "https://sub.test/sub.srt", "label": "Default", "flag": "eng"}]
+        stream = self.make_stream("One Piece S23E05 1080p", subtitle_tracks=tracks)
+        assert stream_download.has_english_subtitle(stream) is True
+
+    def test_multi_audio_accepted(self):
+        stream = self.make_stream("One Piece S23E05 1080p Multi Audio")
+        assert stream_download.has_english_subtitle(stream) is True
+
+    def test_french_only_rejected(self):
+        stream = self.make_stream("One Piece S23E05 1080p VOSTFR")
+        assert stream_download.has_english_subtitle(stream) is False
+
+    def test_french_subtitle_tracks_rejected(self):
+        tracks = [{"url": "https://sub.test/fra.srt", "label": "French [fr]", "flag": "fra"}]
+        stream = self.make_stream("One Piece S23E05 1080p", subtitle_tracks=tracks)
+        assert stream_download.has_english_subtitle(stream) is False
+
+    def test_italian_only_rejected(self):
+        stream = self.make_stream("One Piece S23E11 1080p ITA sub")
+        assert stream_download.has_english_subtitle(stream) is False
+
+    def test_no_language_info_accepted(self):
+        stream = self.make_stream("One Piece S23E05 1080p WEBRip x264")
+        assert stream_download.has_english_subtitle(stream) is True
+
+    def test_english_plus_french_accepted(self):
+        tracks = [
+            {"url": "https://sub.test/eng.srt", "label": "English", "flag": "eng"},
+            {"url": "https://sub.test/fra.srt", "label": "French", "flag": "fra"},
+        ]
+        stream = self.make_stream("One Piece S23E05 1080p", subtitle_tracks=tracks)
+        assert stream_download.has_english_subtitle(stream) is True
+
+    def test_vosten_accepted(self):
+        stream = self.make_stream("[SubGroup] One Piece - 05 [1080p] [VOSTEN]")
+        assert stream_download.has_english_subtitle(stream) is True
+
+    def test_dual_audio_accepted(self):
+        stream = self.make_stream("One Piece S23E05 1080p Dual Audio")
+        assert stream_download.has_english_subtitle(stream) is True
+
+    def test_no_subtitle_tracks_no_language_accepted(self):
+        stream = self.make_stream("1080p WEBRip x264 AAC")
+        assert stream_download.has_english_subtitle(stream) is True
+
+
+class TestFilterForEnglishSubtitles:
+    """Tests for the filter_for_english_subtitles function."""
+
+    def make_stream(self, title: str, subtitle_tracks: list[dict] | None = None) -> StreamInfo:
+        return StreamInfo(
+            name="Torrentio", title=title,
+            url="https://example.test/video.mkv",
+            subtitle_tracks=subtitle_tracks,
+        )
+
+    def test_keeps_english_streams(self):
+        streams = [
+            self.make_stream("One Piece S23E05 1080p English AC3"),
+            self.make_stream("One Piece S23E05 1080p VOSTFR"),
+            self.make_stream("One Piece S23E05 1080p ITA sub"),
+        ]
+        result = stream_download.filter_for_english_subtitles(streams)
+        assert len(result) == 1
+        assert "English" in result[0].title
+
+    def test_keeps_multi_audio(self):
+        streams = [
+            self.make_stream("One Piece S23E05 1080p Multi Audio"),
+            self.make_stream("One Piece S23E05 1080p VOSTFR"),
+        ]
+        result = stream_download.filter_for_english_subtitles(streams)
+        assert len(result) == 1
+        assert "Multi" in result[0].title
+
+    def test_keeps_no_language_info(self):
+        streams = [
+            self.make_stream("One Piece S23E05 1080p WEBRip x264"),
+            self.make_stream("One Piece S23E05 1080p VOSTFR"),
+        ]
+        result = stream_download.filter_for_english_subtitles(streams)
+        assert len(result) == 1
+        assert "WEBRip" in result[0].title
+
+    def test_keeps_english_subtitle_tracks(self):
+        tracks = [{"url": "https://sub.test/eng.srt", "label": "English", "flag": "eng"}]
+        streams = [
+            self.make_stream("One Piece S23E05 1080p", subtitle_tracks=tracks),
+            self.make_stream("One Piece S23E05 1080p VOSTFR"),
+        ]
+        result = stream_download.filter_for_english_subtitles(streams)
+        assert len(result) == 1
+
+    def test_empty_list(self):
+        result = stream_download.filter_for_english_subtitles([])
+        assert result == []
+
+
+class TestParseSubtitleTracks:
+    """Tests for _parse_subtitle_tracks in base.py."""
+
+    def test_parses_subtitle_array(self):
+        from py_stremio.components.addons.base import _parse_subtitle_tracks
+        stream = {
+            "subtitles": [
+                {"url": "https://sub.test/eng.srt", "label": "English [en]", "flag": "eng"},
+                {"url": "https://sub.test/fra.srt", "label": "French [fr]", "flag": "fra"},
+            ]
+        }
+        result = _parse_subtitle_tracks(stream)
+        assert result is not None
+        assert len(result) == 2
+        assert result[0]["flag"] == "eng"
+        assert result[1]["flag"] == "fra"
+
+    def test_returns_none_when_missing(self):
+        from py_stremio.components.addons.base import _parse_subtitle_tracks
+        result = _parse_subtitle_tracks({})
+        assert result is None
+
+    def test_returns_none_for_empty_list(self):
+        from py_stremio.components.addons.base import _parse_subtitle_tracks
+        result = _parse_subtitle_tracks({"subtitles": []})
+        assert result is None
+
+    def test_skips_non_dict_entries(self):
+        from py_stremio.components.addons.base import _parse_subtitle_tracks
+        stream = {"subtitles": [{"flag": "eng"}, "invalid", 42]}
+        result = _parse_subtitle_tracks(stream)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["flag"] == "eng"

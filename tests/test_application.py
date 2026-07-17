@@ -49,7 +49,7 @@ def test_run_creates_metadata_rich_series_config_when_config_was_deleted(tmp_pat
         },
         "languages": ["english"],
         "language": "any",
-        "subtitles": "any",
+        "subtitles": "english",
         "provider": "auto",
         "enabled": True,
         "title": "House of the Dragon",

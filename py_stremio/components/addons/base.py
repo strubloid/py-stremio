@@ -50,6 +50,7 @@ class BaseAddon(ABC):
                 sources=stream.get("sources"),
                 seeders=_stream_seeders(stream),
                 imdb_id=_stream_imdb_id(stream),
+                subtitle_tracks=_parse_subtitle_tracks(stream),
             )
             for stream in streams_data
             if _is_downloadable_stream_candidate(stream)
@@ -153,6 +154,32 @@ def _stream_imdb_id(stream: dict) -> str | None:
         or behavior_hints.get("imdbId")
     )
     return str(imdb_id) if imdb_id else None
+
+
+def _parse_subtitle_tracks(stream: dict) -> list[dict] | None:
+    """Extract the Stremio subtitle tracks array from a raw stream dict.
+
+    Returns None when no subtitle metadata is present so callers can
+    distinguish "addons returned no subtitles" from "addons returned an
+    empty list".
+    """
+    raw = stream.get("subtitles")
+    if not raw or not isinstance(raw, list):
+        return None
+    tracks: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        track: dict = {}
+        if "url" in entry:
+            track["url"] = entry["url"]
+        if "label" in entry:
+            track["label"] = entry["label"]
+        if "flag" in entry:
+            track["flag"] = entry["flag"]
+        if track:
+            tracks.append(track)
+    return tracks or None
 
 
 def _torrentio_resolve_parts(url: str | None) -> tuple[str | None, int | None]:

@@ -61,12 +61,14 @@ def test_search_tries_working_urls_before_remaining_addons(monkeypatch):
         working_addons=["https://saved-addon/manifest.json"],
     )
 
-    assert calls == ["https://saved-addon", "https://new-addon"]
+    # Phase 1 found streams from the working addon and they passed the
+    # English subtitle filter (no language info → safe default), so
+    # the search short-circuits without calling remaining addons.
+    assert calls == ["https://saved-addon"]
     assert [stream.name for stream in streams] == [
         "stream:https://saved-addon",
-        "stream:https://new-addon",
     ]
-    assert working_urls == ["https://saved-addon", "https://new-addon"]
+    assert working_urls == ["https://saved-addon"]
 
 
 def test_search_continues_to_remaining_addons_when_working_url_has_no_streams(monkeypatch):
@@ -93,6 +95,8 @@ def test_search_continues_to_remaining_addons_when_working_url_has_no_streams(mo
         working_addons=["https://dead-addon"],
     )
 
+    # Phase 1: dead addon returns no streams. Phase 2: remaining addons
+    # searched, fallback-addon returns streams that pass English filter.
     assert calls == ["https://dead-addon", "https://fallback-addon"]
     assert [stream.name for stream in streams] == ["stream:https://fallback-addon"]
     assert working_urls == ["https://fallback-addon"]
@@ -113,7 +117,7 @@ def test_search_and_download_returns_successful_stream_addon_url(monkeypatch, tm
     monkeypatch.setattr(
         stremio_client,
         "search_all_addons_for_streams",
-        lambda id_type, stremio_id, working_addons: (streams, ["https://comet.feels.legal", "https://stream-only-addon"]),
+        lambda id_type, stremio_id, working_addons, preferred_languages=None: (streams, ["https://comet.feels.legal", "https://stream-only-addon"]),
     )
     monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
     monkeypatch.setattr(stremio_client, "download_stream_to_file", lambda download_url, filename, **kwargs: None)
@@ -141,7 +145,7 @@ def test_search_and_download_marks_all_invalid_video_streams_permanent(monkeypat
     monkeypatch.setattr(
         stremio_client,
         "search_all_addons_for_streams",
-        lambda id_type, stremio_id, working_addons: (streams, ["https://comet.feels.legal"]),
+        lambda id_type, stremio_id, working_addons, preferred_languages=None: (streams, ["https://comet.feels.legal"]),
     )
     monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
 
@@ -173,7 +177,7 @@ def test_search_and_download_marks_invalid_attempts_permanent_even_with_unresolv
     monkeypatch.setattr(
         stremio_client,
         "search_all_addons_for_streams",
-        lambda id_type, stremio_id, working_addons: (streams, ["https://comet.feels.legal"]),
+        lambda id_type, stremio_id, working_addons, preferred_languages=None: (streams, ["https://comet.feels.legal"]),
     )
     monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
     monkeypatch.setattr(stremio_client, "resolve_stream_download_url", lambda stream: stream.url)
@@ -212,7 +216,7 @@ def test_search_and_download_marks_filtered_streams_as_no_downloadable_streams(m
     monkeypatch.setattr(
         stremio_client,
         "search_all_addons_for_streams",
-        lambda id_type, stremio_id, working_addons: (streams, ["https://guindex-stremio.vercel.app"]),
+        lambda id_type, stremio_id, working_addons, preferred_languages=None: (streams, ["https://guindex-stremio.vercel.app"]),
     )
     monkeypatch.setattr(stremio_client.settings, "DRY_RUN", False)
 

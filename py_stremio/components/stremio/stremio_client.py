@@ -295,7 +295,7 @@ def _search_single_id(
             stage_tracker.live_resolved(0)
         return {"success": False, "error": "Preflight found no working addons",
                 "working_urls": []}
-    streams, working_urls = search_all_addons_for_streams(id_type, stremio_id, working_addons)
+    streams, working_urls = search_all_addons_for_streams(id_type, stremio_id, working_addons, preferred_languages=preferred_languages)
     if stage_tracker:
         # Mark T complete — we got streams or not
         stage_tracker.set_servers(1)
