@@ -114,7 +114,7 @@ through to the next stream without attempting a RealDebrid retry.
 
 ## Addon System
 
-**64+ built-in addon classes** across 8 categories:
+**65+ built-in addon classes** across 9 categories:
 
 | Category | Count | Examples |
 |----------|-------|----------|
@@ -126,11 +126,12 @@ through to the next stream without attempting a RealDebrid retry.
 | Regional | 12 | NoTorrent, LatinMovies, RicosStremio, FTVStremio, FigaroCorso, Einthusan, VStremio, Dubbindo, Mainelocalnews, FenixFlix, MicoLeaoDublado, Frenchio |
 | Misc | 5 | WatchHub, YouTubePro, FShare, Consumet, SuperFlix |
 | Debrid | 3 | DMM Cast, Premiumize, Peario |
+| Meteor | 1 | MeteorForTheWeebs |
 
-**11 URL configurers**: TorrentioAddonConfigurer, CometAddonConfigurer,
+**12 URL configurers**: TorrentioAddonConfigurer, CometAddonConfigurer,
 HDHubAddonConfigurer, StremThruAddonConfigurer, BrazucaAddonConfigurer,
 GuindexAddonConfigurer, StremioAddonConfigurer, NyaaAddonConfigurer,
-YomiAddonConfigurer, IntellDebridSearchAddonConfigurer.
+YomiAddonConfigurer, IntellDebridSearchAddonConfigurer, MeteorAddonConfigurer.
 
 **Loading**: Built-ins always loaded first, then addons.txt supplement.
 Deduplication by hostname — addons.txt URLs matching a built-in are
@@ -180,7 +181,7 @@ URL redaction: `apikey`, `api_key`, `token`, `realdebrid`, `rd`, `key`, `passwor
 ## Current Status
 
 - Modern Stremio addon-based download path is primary
-- 64+ built-in addons + unlimited URL-based addons
+- 65+ built-in addons + unlimited URL-based addons
 - 388 tests all passing
 - Diacritics-insensitive title matching
 - Release-group-aware title signal detection

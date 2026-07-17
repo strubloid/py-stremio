@@ -14,6 +14,7 @@ from .types import (
     GuindexAddonConfigurer,
     HDHubAddonConfigurer,
     IntellDebridSearchAddonConfigurer,
+    MeteorAddonConfigurer,
     NyaaAddonConfigurer,
     StremioAddonConfigurer,
     StremThruAddonConfigurer,
@@ -31,6 +32,7 @@ _ADDON_CONFIGURERS: list[AddonUrlConfigurer] = [
     HDHubAddonConfigurer(),
     BrazucaAddonConfigurer(),
     StremThruAddonConfigurer(),
+    MeteorAddonConfigurer(),
     YomiAddonConfigurer(),
 ]
 

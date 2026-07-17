@@ -117,6 +117,9 @@ from .debrid import (
     PearioAddon,
 )
 
+# ── Meteor ────────────────────────────────────────────────────────────────────
+from .meteor import MeteorAddon
+
 # ── Registry exports (for tools that want to inspect the registry) ───────────
 from .addon_registry import ADDON_REGISTRY, AddonDef, make_addon_class
 
@@ -205,6 +208,8 @@ __all__ = [
     "DMMAddon",
     "PremiumizeAddon",
     "PearioAddon",
+    # Meteor
+    "MeteorAddon",
     # Registry
     "ADDON_REGISTRY",
     "AddonDef",

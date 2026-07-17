@@ -39,6 +39,7 @@ from .types.builtin_addons import (
     LatinMoviesAddon,
     MainelocalnewsAddon,
     MediaFusionAddon,
+    MeteorAddon,
     MicoLeaoDubladoAddon,
     MyCineAddon,
     NebulaStreamsAddon,
@@ -142,6 +143,9 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(VidFastProAddon())
     manager.register(MyCineAddon())
     manager.register(NebulaStreamsAddon())
+
+    # ── Comet-family addons (base64 config) ──────────────────────────────
+    manager.register(MeteorAddon())
 
     # ── Brazilian / Portuguese ────────────────────────────────────────────
     manager.register(BrazucaTorrentsAddon())

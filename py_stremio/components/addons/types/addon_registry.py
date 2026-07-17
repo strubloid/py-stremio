@@ -97,6 +97,8 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "DMMAddon",
     "PremiumizeAddon",
     "PearioAddon",
+    # meteor.py
+    "MeteorAddon",
 ])
 
 

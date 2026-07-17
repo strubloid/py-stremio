@@ -16,6 +16,7 @@ from .comet_family.GuindexAddonConfigurer import GuindexAddonConfigurer
 from .anime.NyaaAddonConfigurer import NyaaAddonConfigurer
 from .anime.YomiAddonConfigurer import YomiAddonConfigurer
 from .aggregators.IntellDebridSearchAddonConfigurer import IntellDebridSearchAddonConfigurer
+from .meteor.MeteorAddonConfigurer import MeteorAddonConfigurer
 
 # Re-export all explicit addon classes for convenience
 from .builtin_addons import (
@@ -98,6 +99,8 @@ from .builtin_addons import (
     DMMAddon,
     PremiumizeAddon,
     PearioAddon,
+    # Meteor
+    MeteorAddon,
 )
 
 __all__ = [
@@ -108,6 +111,7 @@ __all__ = [
     "GuindexAddonConfigurer",
     "HDHubAddonConfigurer",
     "IntellDebridSearchAddonConfigurer",
+    "MeteorAddonConfigurer",
     "NyaaAddonConfigurer",
     "StremioAddonConfigurer",
     "StremThruAddonConfigurer",
@@ -189,4 +193,5 @@ __all__ = [
     "DMMAddon",
     "PremiumizeAddon",
     "PearioAddon",
+    "MeteorAddon",
 ]
