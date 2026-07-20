@@ -120,6 +120,9 @@ from .debrid import (
 # ── Meteor ────────────────────────────────────────────────────────────────────
 from .meteor import MeteorAddon
 
+# ── Sootio ────────────────────────────────────────────────────────────────────
+from .sooti import SootioAddon
+
 # ── Registry exports (for tools that want to inspect the registry) ───────────
 from .addon_registry import ADDON_REGISTRY, AddonDef, make_addon_class
 
@@ -210,6 +213,8 @@ __all__ = [
     "PearioAddon",
     # Meteor
     "MeteorAddon",
+    # Sootio
+    "SootioAddon",
     # Registry
     "ADDON_REGISTRY",
     "AddonDef",

@@ -16,6 +16,7 @@ from .types import (
     IntellDebridSearchAddonConfigurer,
     MeteorAddonConfigurer,
     NyaaAddonConfigurer,
+    SootioAddonConfigurer,
     StremioAddonConfigurer,
     StremThruAddonConfigurer,
     TorrentioAddonConfigurer,
@@ -33,6 +34,7 @@ _ADDON_CONFIGURERS: list[AddonUrlConfigurer] = [
     BrazucaAddonConfigurer(),
     StremThruAddonConfigurer(),
     MeteorAddonConfigurer(),
+    SootioAddonConfigurer(),
     YomiAddonConfigurer(),
 ]
 

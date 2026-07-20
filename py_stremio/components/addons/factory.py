@@ -50,6 +50,7 @@ from .types.builtin_addons import (
     PeerflixAddon,
     RicosStremioAddon,
     SkyflixAddon,
+    SootioAddon,
     StremifyAddon,
     StremThruAddon,
     StreamViXAddon,
@@ -146,6 +147,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
 
     # ── Comet-family addons (base64 config) ──────────────────────────────
     manager.register(MeteorAddon())
+    manager.register(SootioAddon())
 
     # ── Brazilian / Portuguese ────────────────────────────────────────────
     manager.register(BrazucaTorrentsAddon())

@@ -17,6 +17,7 @@ from .anime.NyaaAddonConfigurer import NyaaAddonConfigurer
 from .anime.YomiAddonConfigurer import YomiAddonConfigurer
 from .aggregators.IntellDebridSearchAddonConfigurer import IntellDebridSearchAddonConfigurer
 from .meteor.MeteorAddonConfigurer import MeteorAddonConfigurer
+from .sooti.SootioAddonConfigurer import SootioAddonConfigurer
 
 # Re-export all explicit addon classes for convenience
 from .builtin_addons import (
@@ -101,6 +102,8 @@ from .builtin_addons import (
     PearioAddon,
     # Meteor
     MeteorAddon,
+    # Sootio
+    SootioAddon,
 )
 
 __all__ = [
@@ -113,6 +116,7 @@ __all__ = [
     "IntellDebridSearchAddonConfigurer",
     "MeteorAddonConfigurer",
     "NyaaAddonConfigurer",
+    "SootioAddonConfigurer",
     "StremioAddonConfigurer",
     "StremThruAddonConfigurer",
     "TorrentioAddonConfigurer",
@@ -194,4 +198,5 @@ __all__ = [
     "PremiumizeAddon",
     "PearioAddon",
     "MeteorAddon",
+    "SootioAddon",
 ]

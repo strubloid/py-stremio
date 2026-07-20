@@ -114,7 +114,7 @@ through to the next stream without attempting a RealDebrid retry.
 
 ## Addon System
 
-**65+ built-in addon classes** across 9 categories:
+**67+ built-in addon classes** across 9 categories:
 
 | Category | Count | Examples |
 |----------|-------|----------|
@@ -127,11 +127,13 @@ through to the next stream without attempting a RealDebrid retry.
 | Misc | 5 | WatchHub, YouTubePro, FShare, Consumet, SuperFlix |
 | Debrid | 3 | DMM Cast, Premiumize, Peario |
 | Meteor | 1 | MeteorForTheWeebs |
+| Sootio | 1 | Sootio |
 
-**12 URL configurers**: TorrentioAddonConfigurer, CometAddonConfigurer,
+**13 URL configurers**: TorrentioAddonConfigurer, CometAddonConfigurer,
 HDHubAddonConfigurer, StremThruAddonConfigurer, BrazucaAddonConfigurer,
 GuindexAddonConfigurer, StremioAddonConfigurer, NyaaAddonConfigurer,
-YomiAddonConfigurer, IntellDebridSearchAddonConfigurer, MeteorAddonConfigurer.
+YomiAddonConfigurer, IntellDebridSearchAddonConfigurer, MeteorAddonConfigurer,
+SootioAddonConfigurer.
 
 **Loading**: Built-ins always loaded first, then addons.txt supplement.
 Deduplication by hostname — addons.txt URLs matching a built-in are
@@ -181,7 +183,7 @@ URL redaction: `apikey`, `api_key`, `token`, `realdebrid`, `rd`, `key`, `passwor
 ## Current Status
 
 - Modern Stremio addon-based download path is primary
-- 65+ built-in addons + unlimited URL-based addons
+- 67+ built-in addons + unlimited URL-based addons
 - 388 tests all passing
 - Diacritics-insensitive title matching
 - Release-group-aware title signal detection
