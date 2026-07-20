@@ -48,7 +48,55 @@ class SourceResult:
     errors: list[str] = field(default_factory=list)
 
 
-# ── 1. GitHub community addons issue thread ──────────────────────────────
+# ── 1. Stremio official addon collection ─────────────────────────────────
+
+STREMIO_ADDONS_COLLECTION_URL = "https://api.strem.io/addonscollection.json"
+
+
+def scrape_stremio_addons_collection() -> set[str]:
+    """Return stream-capable HTTP addon URLs from Stremio's live collection.
+
+    The collection stores each public addon as a transport URL (normally its
+    ``/manifest.json`` endpoint) plus the manifest. Keep only movie/series
+    addons that declare the ``stream`` resource: catalog, metadata, subtitle,
+    and utility addons cannot provide download candidates to py-stremio.
+    """
+    status, data = _fetch(STREMIO_ADDONS_COLLECTION_URL, timeout=15)
+    if status != 200 or not data:
+        return set()
+
+    try:
+        entries = json.loads(data.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return set()
+
+    if not isinstance(entries, list):
+        return set()
+
+    urls: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        transport_url = entry.get("transportUrl")
+        manifest = entry.get("manifest")
+        if not isinstance(transport_url, str) or not transport_url.startswith(("http://", "https://")):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+
+        resources = manifest.get("resources", [])
+        types = manifest.get("types", [])
+        if not isinstance(resources, list) or not isinstance(types, list):
+            continue
+        if "stream" not in resources or not {"movie", "series"}.intersection(types):
+            continue
+
+        urls.add(transport_url.removesuffix("/manifest.json").rstrip("/"))
+
+    return urls
+
+
+# ── 2. GitHub community addons issue thread ──────────────────────────────
 
 def scrape_github_issues() -> set[str]:
     """Scrape Stremio addon URLs from the community issue thread."""
@@ -302,6 +350,7 @@ def run_all_sources(verbose: bool = True) -> SourceResult:
     """
     result = SourceResult(name="all")
     generators = [
+        ("Stremio official addon collection", scrape_stremio_addons_collection),
         ("GitHub issues (HTML)", scrape_github_issues),
         ("stremio-addons.net API", scrape_stremio_addons_net),
         ("Torrentio variants", gen_torrentio_variants),

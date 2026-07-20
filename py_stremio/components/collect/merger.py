@@ -109,10 +109,21 @@ def merge_new_addons(
     # Read existing content + extract known URL bases
     existing_lines: list[str] = []
     known_bases: set[str] = set()
+    existing_observed: list[str] = []
     if path.exists():
         existing_lines = path.read_text().splitlines()
+        in_observed = False
         for line in existing_lines:
             stripped = line.strip()
+            if stripped.startswith("# ── OBSERVED ADDONS"):
+                in_observed = True
+                continue
+            if in_observed:
+                if stripped.startswith("# http"):
+                    observed_url = stripped.removeprefix("# ").split("  #", 1)[0].rstrip("/")
+                    existing_observed.append(observed_url)
+                    known_bases.add(observed_url)
+                continue
             if stripped.startswith("http"):
                 # Normalise trailing slash for dedup
                 known_bases.add(stripped.rstrip("/"))
@@ -177,16 +188,13 @@ def merge_new_addons(
 
     # Copy the existing header and all active sections
     in_observed = False
-    copied_existing = False
     for line in existing_lines:
         stripped = line.strip()
-        if stripped == "# ── OBSERVED ADDONS (was down during last scan, may come back) ────":
+        if stripped.startswith("# ── OBSERVED ADDONS"):
             in_observed = True
+            continue
         if not in_observed:
             new_lines.append(line)
-        if stripped == "" and in_observed:
-            # blank line before observed section — stop copying
-            break
 
     if not new_lines:
         # Empty file or no existing — write the header
@@ -215,7 +223,7 @@ def merge_new_addons(
     # Append observed section with dead addons
     new_lines.append("")
     new_lines.append("# ── OBSERVED ADDONS (was down, may come back) ───────────────────")
-    for url in new_dead:
+    for url in dict.fromkeys([*existing_observed, *new_dead]):
         new_lines.append(f"# {url.rstrip('/')}/")
 
     # Count dead

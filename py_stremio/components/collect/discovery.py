@@ -3,7 +3,7 @@
 import time
 from pathlib import Path
 
-from .sources import run_all_sources
+from .sources import run_all_sources, scrape_stremio_addons_collection
 from .tester import test_urls
 from .merger import merge_new_addons
 
@@ -94,3 +94,47 @@ def discover_new_addons(
     )
 
     return result
+
+
+def discover_official_stremio_addons(
+    addon_txt_path: str | None = None,
+    max_test_workers: int = 8,
+    verbose: bool = True,
+) -> dict[str, int] | dict[str, str]:
+    """Merge reachable stream addons from Stremio's official live collection.
+
+    This focused route avoids the broader community-source scan when the goal
+    is to refresh from Stremio's own current catalog.
+    """
+    project_root = Path(addon_txt_path).resolve().parent if addon_txt_path else _find_project_root()
+    if addon_txt_path is None:
+        addon_txt_path = str(project_root / "addons.txt")
+
+    if verbose:
+        print(f"  Addons file: {addon_txt_path}", flush=True)
+        print("  📡 Collecting stream addons from Stremio's official collection...", flush=True)
+
+    urls = scrape_stremio_addons_collection()
+    if not urls:
+        if verbose:
+            print("  ! No stream addon URLs collected from Stremio's official collection", flush=True)
+        return {"error": "no_urls_collected"}
+
+    if verbose:
+        print(f"  Collected {len(urls)} official stream addon URLs", flush=True)
+        print(f"\n  🧪 Testing {len(urls)} addon URLs (max {max_test_workers} workers)...", flush=True)
+
+    tested = test_urls(list(urls), max_workers=max_test_workers, verbose=verbose)
+    if not tested.working:
+        if verbose:
+            print("  ! No working addons found", flush=True)
+        return {"error": "no_working_found"}
+
+    if verbose:
+        print(f"\n  📝 Merging into {addon_txt_path}...", flush=True)
+    return merge_new_addons(
+        addon_txt_path=addon_txt_path,
+        working_urls=tested.working,
+        dead_urls=tested.dead,
+        verbose=verbose,
+    )

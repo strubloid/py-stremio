@@ -85,6 +85,9 @@ py-stremio --validate    # or: py-stremio 5
 # Discover new addons
 py-stremio --discover
 
+# Refresh stream-capable movie/series addons from Stremio's live official collection
+py-stremio --discover-official
+
 # Cron (preset 5 threads, 80% speed, no prompts)
 py-stremio-cron 2        # update metadata
 py-stremio-cron 3        # download missing

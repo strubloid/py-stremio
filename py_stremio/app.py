@@ -11,7 +11,7 @@ methods in order, and handles the interactive menu / CLI argument dispatch.
 import sys
 
 from py_stremio.components.addons.addon_validator import validate_and_update
-from py_stremio.components.collect import discover_new_addons
+from py_stremio.components.collect import discover_new_addons, discover_official_stremio_addons
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.download.control_panel import cleanup_terminal
 from py_stremio.components.errors import print_error_summary
@@ -107,6 +107,13 @@ class AppService:
         if "--download" in args or action == "3":
             self._banner()
             self.downloader.run(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+            print_error_summary()
+            return
+
+        if "--discover-official" in args:
+            self._banner()
+            print(_c("\n🔍 Official Stremio Addon Discovery", ACCENT))
+            discover_official_stremio_addons()
             print_error_summary()
             return
 
