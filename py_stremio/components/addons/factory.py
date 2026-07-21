@@ -57,6 +57,7 @@ from .types.builtin_addons import (
     ThePirateBayPlusAddon,
     TorrentioAddon,
     TorrentioHindiAddon,
+    TorrentioItalianAddon,
     TorrentioLiteAddon,
     TorrentioPortugueseAddon,
     TorrentioSortSeedersAddon,
@@ -117,6 +118,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(TorrentioSortSeedersAddon())
     manager.register(TorrentioPortugueseAddon())
     manager.register(TorrentioSpanishAddon())
+    manager.register(TorrentioItalianAddon())
     manager.register(TorrentioHindiAddon())
     manager.register(TorrentioLiteAddon())
     manager.register(TorrentsDBAddon())

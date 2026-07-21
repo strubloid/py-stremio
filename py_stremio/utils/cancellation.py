@@ -13,6 +13,16 @@ class _ExecutorLike(Protocol):
 _shutdown_requested = threading.Event()
 
 
+class DownloadCancelled(KeyboardInterrupt):
+    """Raised by cooperative checks while preserving resumable partial files."""
+
+
+def raise_if_shutdown_requested() -> None:
+    """Abort the current operation when cooperative shutdown was requested."""
+    if _shutdown_requested.is_set():
+        raise DownloadCancelled()
+
+
 def request_shutdown() -> None:
     """Mark that the app is shutting down because the user interrupted it."""
     _shutdown_requested.set()

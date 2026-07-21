@@ -3,6 +3,16 @@
 import httpx
 import pytest
 
+from py_stremio.utils.cancellation import clear_shutdown
+
+
+@pytest.fixture(autouse=True)
+def _reset_download_shutdown_state():
+    """Keep standalone stream tests independent from earlier Ctrl+C tests."""
+    clear_shutdown()
+    yield
+    clear_shutdown()
+
 from py_stremio.components.addons.models import StreamInfo
 from py_stremio.components.addons.base import UrlAddon
 from py_stremio.components.download import stream_download

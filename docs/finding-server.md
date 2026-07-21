@@ -2,6 +2,8 @@
 
 This is the repeatable procedure for adding current Stremio addon servers to py-stremio. Use it when a series has no usable sources or when the shared addon list needs refreshing.
 
+For the verified Italian-content configuration, see [Italian content servers](italian-servers.md).
+
 ## What is updated
 
 - `addons.txt` is the global candidate list. Every managed folder can query these addons.

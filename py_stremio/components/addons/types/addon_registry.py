@@ -19,6 +19,7 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "TorrentioSortSeedersAddon",
     "TorrentioPortugueseAddon",
     "TorrentioSpanishAddon",
+    "TorrentioItalianAddon",
     "TorrentioHindiAddon",
     "TorrentioLiteAddon",
     "TorrentsDBAddon",

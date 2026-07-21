@@ -389,6 +389,52 @@ def test_process_season_folder_persists_only_successful_download_server(tmp_path
     assert saved["servers"] == ["https://successful-addon"]
 
 
+def test_process_season_folder_does_not_persist_preflight_server_before_download(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="How I Met Your Mother",
+        imdb_id="tt0460649",
+        season=1,
+        episode_count=1,
+        quality=QualitySettings(preferred="1080p"),
+        servers=[],
+    )
+    save_config(tmp_path / "download-config.json", config)
+    servers_before_download = []
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.preflight_discover_working_addons",
+        lambda *args, **kwargs: ["https://preflight-only-addon"],
+    )
+
+    def fake_search_and_download(**kwargs):
+        reloaded, _ = load_config(tmp_path)
+        servers_before_download.extend(reloaded.servers)
+        return {
+            "success": True,
+            "filename": "How I Met Your Mother_s01e01.mkv",
+            "quality": "1080p",
+            "successful_url": "https://successful-addon",
+            "working_urls": ["https://successful-addon"],
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.settings",
+        SimpleNamespace(LIMIT_EPISODES=0, MIN_COMPLETED_VIDEO_SIZE_MB=0, MAX_DOWNLOAD_ATTEMPTS=1),
+    )
+
+    result = process_season_folder(tmp_path)
+
+    reloaded, _ = load_config(tmp_path)
+    assert result["downloaded"] == 1
+    assert servers_before_download == []
+    assert reloaded.servers == ["https://successful-addon"]
+
+
 def test_process_season_folder_saves_working_urls_when_success_lacks_exact_addon(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",
@@ -472,7 +518,7 @@ def test_process_season_folder_does_not_clear_servers_after_transient_failure(tm
     assert saved["servers"] == ["https://successful-addon"]
 
 
-def test_process_season_folder_preserves_servers_when_no_download_succeeds(tmp_path, monkeypatch):
+def test_process_season_folder_clears_stale_servers_when_no_download_succeeds(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",
         title="How I Met Your Mother",
@@ -505,10 +551,11 @@ def test_process_season_folder_preserves_servers_when_no_download_succeeds(tmp_p
     with open(tmp_path / "download-config.json") as f:
         saved = json.load(f)
     assert result["failed"] == 1
-    # Server cache should be preserved when no download succeeds —
-    # existing working servers are not cleared just because one
-    # missing episode failed (e.g. it may not have aired yet).
-    assert saved["servers"] == ["https://previously-working-addon"]
+    # The cache represents completed-download servers, not sources that merely
+    # returned metadata. Once every attempted item failed, clear it so the
+    # next run performs a fresh preflight instead of repeatedly probing a
+    # stale addon.
+    assert saved["servers"] == []
 
 
 def test_process_season_folder_disables_wrong_show_server_from_result(tmp_path, monkeypatch):
@@ -547,7 +594,7 @@ def test_process_season_folder_disables_wrong_show_server_from_result(tmp_path, 
         saved = json.load(f)
     assert result["failed"] == 1
     assert saved["disabled_servers"] == ["https://bad-addon.test"]
-    assert saved["servers"] == ["https://bad-addon.test", "https://backup-addon.test"]
+    assert saved["servers"] == []
 
 
 def test_process_season_folder_skips_unverified_season_without_episode_count(tmp_path, monkeypatch):
@@ -1178,3 +1225,34 @@ def test_process_movie_folder_uses_search_group_as_fallback_title(tmp_path, monk
 
     assert len(calls) == 1
     assert calls[0] == "The Last Hangover"
+
+
+def test_process_movie_folder_emits_bytes_and_terminal_progress(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="movies",
+        title="The Last Hangover",
+        imdb_id="tt9476490",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    events = []
+
+    def fake_search_and_download(**kwargs):
+        kwargs["progress_callback"](50, 100)
+        kwargs["progress_callback"](100, 100)
+        return {"success": True, "filename": "movie.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr("py_stremio.components.download.processing.search_and_download", fake_search_and_download)
+    monkeypatch.setattr("py_stremio.components.download.processing.preflight_discover_working_addons", lambda *args, **kwargs: [])
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    process_movie_folder(tmp_path, progress_callback=events.append)
+
+    byte_events = [event for event in events if event.get("type") == "bytes"]
+    done_events = [event for event in events if event.get("type") == "episode_done"]
+    assert byte_events[-1]["bytes_total"] == 100
+    assert "total_size" not in byte_events[-1]
+    assert byte_events[-1]["rate_bps"] >= 0
+    assert len(done_events) == 1
+    assert done_events[0]["outcome"] == "downloaded"
+    assert done_events[0]["rate_bps"] == 0

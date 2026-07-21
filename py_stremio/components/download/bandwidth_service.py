@@ -205,7 +205,9 @@ def build_limiter(percent: int, max_speed_mbps: float, max_workers: int = 1) -> 
     the caller updates the limiter via ``update_total_limit()`` and the
     same object starts throttling.
     """
-    clamped_percent = max(0, min(100, int(percent)))
+    # Zero previously meant both "paused" in the UI and "unlimited" in the
+    # limiter. Until pause exists, make every value below 1 an explicit 1% cap.
+    clamped_percent = max(1, min(100, int(percent)))
 
     if clamped_percent >= 100 or max_speed_mbps <= 0:
         total_bytes_per_second = 0

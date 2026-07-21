@@ -26,6 +26,7 @@ from .builtin_addons import (
     TorrentioSortSeedersAddon,
     TorrentioPortugueseAddon,
     TorrentioSpanishAddon,
+    TorrentioItalianAddon,
     TorrentioHindiAddon,
     TorrentioLiteAddon,
     # Comet / HDHub / StremThru / Brazuca / Guindex
@@ -130,6 +131,7 @@ __all__ = [
     "TorrentioSortSeedersAddon",
     "TorrentioPortugueseAddon",
     "TorrentioSpanishAddon",
+    "TorrentioItalianAddon",
     "TorrentioHindiAddon",
     "TorrentioLiteAddon",
     "CometAddon",

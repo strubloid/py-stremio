@@ -230,11 +230,48 @@ def _should_enforce_english(preferred_languages: list[str] | None) -> bool:
 _STAGGER_DELAY = 0.3    # 300ms between addon submission batches
 _STAGGER_GROUP = 3      # how many addons to submit before a delay
 
+
+def _preflight_streams_are_usable(
+    streams: list[StreamInfo],
+    *,
+    title: str | None = None,
+    season: int | None = None,
+    episode: int | None = None,
+    imdb_id: str | None = None,
+) -> bool:
+    """Require a representative stream to survive target validation.
+
+    A non-empty addon response is not enough: some addons return generic
+    catalogue entries for every request. Target context is optional to retain
+    the generic preflight behavior for callers that do not have it.
+    """
+    if not streams:
+        return False
+    if not title:
+        return True
+
+    from py_stremio.components.download.stream_download import select_quality_streams
+
+    return bool(select_quality_streams(
+        streams,
+        preferred_quality="1080p",
+        preferred_languages=[],
+        target_season=season,
+        target_episode=episode,
+        title=title,
+        target_imdb_id=imdb_id,
+    ))
+
+
 def preflight_discover_working_addons(
     type_: str,
     stremio_id: str,
     *,
     timeout_per_addon: int = 8,
+    title: str | None = None,
+    season: int | None = None,
+    episode: int | None = None,
+    imdb_id: str | None = None,
 ) -> list[str]:
     """Query ALL configured addons for one representative ID and return
     only the URLs of addons that returned usable streams.
@@ -267,7 +304,13 @@ def preflight_discover_working_addons(
         def _try_one(addon: BaseAddon) -> tuple[str, bool]:
             try:
                 streams = addon.get_streams(type_, stremio_id)
-                live = bool(streams)
+                live = _preflight_streams_are_usable(
+                    streams,
+                    title=title,
+                    season=season,
+                    episode=episode,
+                    imdb_id=imdb_id,
+                )
             except Exception:
                 live = False
             try:

@@ -25,6 +25,13 @@ def test_build_limiter_disables_at_100_percent():
         assert limiter.bytes_per_second == 0
 
 
+def test_zero_percent_is_clamped_instead_of_becoming_unlimited():
+    limiter = build_limiter(percent=0, max_speed_mbps=100)
+
+    assert isinstance(limiter, BandwidthLimiter)
+    assert limiter.bytes_per_second == 125_000
+
+
 def test_limiter_sleeps_when_window_exceeds_budget(monkeypatch):
     sleeps = []
     times = iter([0.0, 0.0])

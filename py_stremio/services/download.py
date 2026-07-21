@@ -9,7 +9,6 @@ from typing import Any
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.configs.config_file import load_config
 from py_stremio.components.download.bandwidth_service import build_limiter
-from py_stremio.components.download.control_panel import create_control_panel
 from py_stremio.components.download.speed_probe import resolve_max_speed_mbps
 from py_stremio.components.download.processing import process_movie_folder as process_movies
 from py_stremio.components.download.processing import process_season_folder as process_series
@@ -17,9 +16,8 @@ from py_stremio.components.library.library_scanner import Scanner, FolderType, S
 from py_stremio.components.library.media_file import detect_existing_season_episodes
 from py_stremio.components.reports.output_writer import install_thread_stdout_filter, suppress_current_thread_output, restore_thread_stdout_filter
 from py_stremio.components.reports.report import ReportData, print_and_send_report
-from py_stremio.services.progress import (
-    ACCENT, GREEN, YELLOW, RED, DIM, RESET, build_table, make_progress_printer,
-)
+from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, DIM, RESET, build_table
+from py_stremio.services.terminal_ui import create_download_ui
 from py_stremio.utils.cancellation import clear_shutdown, request_shutdown, shutdown_executor_now, shutdown_requested
 
 
@@ -40,11 +38,16 @@ class DynamicLimit:
         self._active = 0
         self._cond = threading.Condition(threading.Lock())
 
-    def acquire(self) -> None:
+    def acquire(self) -> bool:
         with self._cond:
             while self._active >= self._ref[0]:
-                self._cond.wait()
+                if shutdown_requested():
+                    return False
+                self._cond.wait(timeout=0.1)
+            if shutdown_requested():
+                return False
             self._active += 1
+            return True
 
     def release(self) -> None:
         with self._cond:
@@ -78,15 +81,6 @@ class DownloadService:
         max_speed_mbps = resolve_max_speed_mbps(default_mbps=getattr(settings, "INTERNET_MAX_SPEED_MBPS", 100))
         bandwidth_limiter = build_limiter(speed_percent, max_speed_mbps, max_workers=max_workers)
 
-        # Create interactive bottom status bar FIRST — sets scroll region
-        # so all subsequent output scrolls above the reserved bottom line.
-        status_bar, workers_ref, speed_ref = create_control_panel(
-            bandwidth_limiter, max_workers, speed_percent, max_speed_mbps
-        )
-
-        print(_c("\n⬇ Downloads", ACCENT))
-        print(f"  Threads: {max_workers} · speed: {speed_percent}%")
-
         report_folders: list[dict[str, Any]] = []
         total_downloaded = 0
         total_failed = 0
@@ -95,38 +89,31 @@ class DownloadService:
 
         runnable: list[ScannedFolder] = []
         restore_stdout = None
-        if quiet:
+        use_plain_output = not (
+            bool(getattr(sys.stdout, "isatty", lambda: False)())
+            and bool(getattr(sys.stdin, "isatty", lambda: False)())
+        )
+        if quiet and use_plain_output:
             progress_stream, restore_stdout = install_thread_stdout_filter()
         else:
             progress_stream = sys.stdout
-        
-        # Wrap progress printer to track active lines for status bar stats
-        base_progress = make_progress_printer(progress_stream)
-        active_line_count = [0]  # mutable ref
-        active_rates: dict[tuple, float] = {}  # key -> rate_bps for summing
-        
+
+        print(_c("\n⬇ Downloads", ACCENT))
+        speed_label = "unlimited" if speed_percent >= 100 else f"{max(1, speed_percent)}%"
+        print(f"  Worker limit: {max_workers} · speed: {speed_label}")
+
+        ui = create_download_ui(
+            progress_stream,
+            limiter=bandwidth_limiter,
+            max_workers=max_workers,
+            speed_percent=speed_percent,
+            max_speed_mbps=max_speed_mbps,
+        )
+        workers_ref = ui.workers_ref
+
         def progress(event: dict[str, Any]) -> None:
-            base_progress(event)
-            key = (event.get("title"), event.get("season"), event.get("episode"))
-            if event.get("type") == "episode_start":
-                active_line_count[0] += 1
-            elif event.get("type") == "episode_done":
-                active_line_count[0] = max(0, active_line_count[0] - 1)
-                active_rates.pop(key, None)
-            elif event.get("type") == "bytes":
-                rate = event.get("rate_bps", 0) or 0
-                if rate:
-                    active_rates[key] = rate
-            # Sum the rate across all active downloads for a meaningful overall rate
-            total_rate = sum(active_rates.values())
-            total = event.get("total", 0)
-            current = event.get("current", 0)
-            status_bar.update_stats(
-                active=active_line_count[0],
-                remaining=total - current if total else 0,
-                rate_bps=total_rate,
-            )
-        
+            ui.progress(event)
+
         dynamic_limit = DynamicLimit(workers_ref)
 
         def folder_display(folder: ScannedFolder) -> str:
@@ -161,7 +148,7 @@ class DownloadService:
             if result.get("skipped") is True:
                 skipped += 1
                 if folder.folder_type != FolderType.SERIES:
-                    print(_c(f"  {folder_display(folder)} skipped ({result.get('reason', 'disabled')})", YELLOW), file=sys.stderr)
+                    ui.print(_c(f"  {folder_display(folder)} skipped ({result.get('reason', 'disabled')})", YELLOW))
                 report_folders.append({
                     "name": folder.path.name,
                     "type": folder.folder_type.value,
@@ -183,7 +170,7 @@ class DownloadService:
                 status = _c(f"✓ {downloaded_count} downloaded", GREEN) if failed_count == 0 else _c(f"! {failed_count} failed", RED)
                 if downloaded_count and failed_count:
                     status = f"{_c(f'✓ {downloaded_count}', GREEN)} / {_c(f'! {failed_count}', RED)}"
-                print(f"  {folder_display(folder)} {status}", file=sys.stderr)
+                ui.print(f"  {folder_display(folder)} {status}", error=failed_count > 0)
 
             report_folders.append({
                 "name": folder.path.name,
@@ -197,6 +184,7 @@ class DownloadService:
             })
 
         try:
+            ui.start()
             if max_workers > 1 and len(runnable) > 1:
                 executor = ThreadPoolExecutor(max_workers=max_workers)
                 futures = []
@@ -204,6 +192,7 @@ class DownloadService:
                     futures = [executor.submit(process_folder, folder) for folder in runnable]
                     for future in as_completed(futures):
                         if shutdown_requested():
+                            shutdown_executor_now(executor, futures)
                             break
                         folder, result = future.result()
                         record_result(folder, result)
@@ -212,7 +201,10 @@ class DownloadService:
                     shutdown_executor_now(executor, futures)
                     raise
                 else:
-                    executor.shutdown(wait=True)
+                    if shutdown_requested():
+                        shutdown_executor_now(executor, futures)
+                    else:
+                        executor.shutdown(wait=True)
             else:
                 for folder in runnable:
                     if shutdown_requested():
@@ -233,12 +225,8 @@ class DownloadService:
             print_and_send_report(report)
             return report
         finally:
+            ui.stop()
             restore_thread_stdout_filter(restore_stdout)
-            if 'status_bar' in dir():
-                status_bar.stop()
-            else:
-                from py_stremio.components.download.control_panel import _reset_scroll_region as _rsr
-                _rsr()
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

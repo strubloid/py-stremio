@@ -1,7 +1,5 @@
 """Tests for addon discovery source generation."""
 
-from types import SimpleNamespace
-
 from py_stremio.components.collect import sources
 from py_stremio.components.collect.merger import merge_new_addons
 
@@ -64,13 +62,7 @@ def test_merge_preserves_observed_addons_without_duplicate_sections(tmp_path):
     assert "# https://newly-down.example/" in content
 
 
-def test_torrentio_variants_do_not_embed_static_real_debrid_key(monkeypatch):
-    monkeypatch.setattr(
-        sources,
-        "settings",
-        SimpleNamespace(REAL_DEBRID_API_KEY=""),
-    )
-
+def test_torrentio_variants_do_not_embed_real_debrid_key():
     urls = sources.gen_torrentio_variants()
 
     assert "https://torrentio.strem.fun/" in urls
@@ -79,13 +71,7 @@ def test_torrentio_variants_do_not_embed_static_real_debrid_key(monkeypatch):
     assert not any("realdebrid=" in url for url in urls)
 
 
-def test_torrentio_variants_use_runtime_real_debrid_key(monkeypatch):
-    monkeypatch.setattr(
-        sources,
-        "settings",
-        SimpleNamespace(REAL_DEBRID_API_KEY="runtime-key"),
-    )
-
+def test_torrentio_variants_never_embed_runtime_real_debrid_key():
     urls = sources.gen_torrentio_variants()
 
-    assert "https://torrentio.strem.fun/realdebrid=runtime-key/" in urls
+    assert not any("realdebrid=" in url for url in urls)

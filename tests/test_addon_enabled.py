@@ -35,6 +35,15 @@ def test_builtin_registration_excludes_disabled_addons():
     _register_builtin_addons(manager)
     assert all(addon.enabled for addon in manager.addons)
     assert "KnightCrawler" not in {addon.name for addon in manager.addons}
+    assert "Torrentio-IT" in {addon.name for addon in manager.addons}
+
+
+def test_torrentio_italian_uses_italian_filter_and_runtime_realdebrid_key():
+    from py_stremio.components.addons.types import TorrentioItalianAddon
+
+    addon = TorrentioItalianAddon()
+    assert addon.get_url() == "https://torrentio.strem.fun/language=italian/"
+    assert addon.get_url("KEY") == "https://torrentio.strem.fun/language=italian|realdebrid=KEY/"
 
 
 def test_every_addon_type_configurer_has_enabled_flag():

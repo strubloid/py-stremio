@@ -11,6 +11,7 @@ from py_stremio.components.addons.models import StreamInfo
 from py_stremio.components.debrid.real_debrid_client import resolve_torrent_with_debrid
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.stremio.stremio_url import unique_manifest_urls
+from py_stremio.utils.cancellation import raise_if_shutdown_requested
 
 RD_PROXY_PREFIX = "https://torrentio.strem.fun/resolve/"
 # Also match the direct realdebrid=<key> format
@@ -774,6 +775,7 @@ def resolve_real_debrid_proxy_url(download_url: str) -> str | None:
     """Resolve Torrentio RealDebrid proxy redirects.
     Returns None if the redirect leads to a Torrentio error page."""
     try:
+        raise_if_shutdown_requested()
         response = httpx.get(
             download_url,
             timeout=10,
@@ -927,6 +929,7 @@ def download_stream_to_file(
             headers=headers,
             follow_redirects=True,
         ) as response:
+            raise_if_shutdown_requested()
             response.raise_for_status()
             resumed = bool(existing_size and response.status_code == 206)
             mode = "ab" if resumed else "wb"
@@ -939,10 +942,12 @@ def download_stream_to_file(
 
             with open(partial_path, mode) as file:
                 for chunk in response.iter_bytes(chunk_size=8192):
+                    raise_if_shutdown_requested()
                     if not chunk:
                         continue
                     if bandwidth_limiter:
                         bandwidth_limiter.wait_for(len(chunk), thread_id=active_thread_id)
+                    raise_if_shutdown_requested()
                     file.write(chunk)
                     downloaded += len(chunk)
                     if progress_callback:
@@ -961,6 +966,7 @@ def download_stream_to_file(
             bandwidth_limiter.unregister_thread(active_thread_id)
 
     # Detect content-length mismatch: server claimed more bytes than it sent
+    raise_if_shutdown_requested()
     # (premature close, truncated response, or spoofed headers).
     # Check BEFORE renaming so the .part file is still present for retry.
     if total_size > 0 and downloaded < total_size:

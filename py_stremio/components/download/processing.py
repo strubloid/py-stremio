@@ -13,7 +13,13 @@ from py_stremio.components.reports.output_writer import suppress_current_thread_
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.state.app_state import load_state, save_state, DownloadState
 from py_stremio.components.stremio.stremio_client import StageTracker, search_and_download
-from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
+from py_stremio.utils.cancellation import (
+    DownloadCancelled,
+    raise_if_shutdown_requested,
+    request_shutdown,
+    shutdown_executor_now,
+    shutdown_requested,
+)
 from py_stremio.components.download.stream_download import build_media_filename, _minimum_completed_video_bytes
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
 from py_stremio.components.addons.addon_search_service import preflight_discover_working_addons
@@ -165,12 +171,18 @@ def setup_season_folder(
     if missing and not servers and config.imdb_id:
         first_episode = missing[0]
         stremio_id = build_stremio_id(config.imdb_id, title, season, first_episode)
-        discovered = preflight_discover_working_addons("series", stremio_id)
+        discovered = preflight_discover_working_addons(
+            "series",
+            stremio_id,
+            title=title,
+            season=season,
+            episode=first_episode,
+            imdb_id=config.imdb_id,
+        )
         if discovered:
             servers = discovered
-            _save_verified_server_urls(config, config_path, servers)
             if not quiet_output:
-                print(f"      Using {len(discovered)} pre-confirmed addons")
+                print(f"      Using {len(discovered)} preflight addon candidate(s)")
         else:
             if not quiet_output:
                 print(f"      No working addons found — will search all per-episode")
@@ -256,8 +268,8 @@ def _do_download_one_episode(
     last_downloaded_bytes = 0
     last_total_bytes = 0
     last_rate_bps = 0.0
-    last_progress_bytes = 0
-    last_progress_at = time.monotonic()
+    last_progress_bytes: int | None = None
+    last_progress_at: float | None = None
     last_bytes_event: dict = {}
     stage_tracker = StageTracker()
 
@@ -300,10 +312,14 @@ def _do_download_one_episode(
     def on_bytes(downloaded_bytes: int, total_bytes: int) -> None:
         nonlocal last_downloaded_bytes, last_total_bytes, last_rate_bps, last_progress_bytes, last_progress_at, last_bytes_event
         now = time.monotonic()
-        elapsed = max(0.001, now - last_progress_at)
-        delta = max(0, downloaded_bytes - last_progress_bytes)
-        if delta:
-            last_rate_bps = delta / elapsed
+        if last_progress_bytes is None or downloaded_bytes < last_progress_bytes:
+            last_rate_bps = 0.0
+            last_progress_bytes = downloaded_bytes
+            last_progress_at = now
+        else:
+            elapsed = max(0.001, now - (last_progress_at or now))
+            delta = downloaded_bytes - last_progress_bytes
+            last_rate_bps = delta / elapsed if delta else 0.0
             last_progress_bytes = downloaded_bytes
             last_progress_at = now
         last_downloaded_bytes = downloaded_bytes
@@ -346,34 +362,40 @@ def _do_download_one_episode(
     # Always allow the full search as a safety net when no server cache exists.
     skip_full = task.no_working_addons and bool(active_servers)
 
-    result = search_and_download(
-        title=task.title,
-        imdb_id=task.config.imdb_id,
-        season=task.season,
-        episode=episode_num,
-        folder_path=str(task.folder_path),
-        preferred_quality=task.quality,
-        preferred_languages=task.preferred_languages,
-        working_addons=active_servers,
-        progress_callback=on_bytes,
-        bandwidth_limiter=task.bandwidth_limiter,
-        experimental_addons=task.experimental_addons,
-        stage_tracker=stage_tracker,
-        skip_full_search=skip_full,
-    )
-
-    emit({
-        "type": "episode_done",
-        "title": task.title,
-        "season": task.season,
-        "episode": episode_num,
-        "current": index,
-        "total": task.total_missing,
-        "success": bool(result.get("success")),
-        "downloaded": last_downloaded_bytes,
-        "bytes_total": last_total_bytes,
-        "rate_bps": last_rate_bps,
-    })
+    result: dict[str, Any] = {}
+    error: BaseException | None = None
+    try:
+        raise_if_shutdown_requested()
+        result = search_and_download(
+            title=task.title,
+            imdb_id=task.config.imdb_id,
+            season=task.season,
+            episode=episode_num,
+            folder_path=str(task.folder_path),
+            preferred_quality=task.quality,
+            preferred_languages=task.preferred_languages,
+            working_addons=active_servers,
+            progress_callback=on_bytes,
+            bandwidth_limiter=task.bandwidth_limiter,
+            experimental_addons=task.experimental_addons,
+            stage_tracker=stage_tracker,
+            skip_full_search=skip_full,
+        )
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        cancelled = isinstance(error, (DownloadCancelled, KeyboardInterrupt)) or shutdown_requested()
+        emit({
+            "type": "episode_done",
+            **_identity_fields,
+            "success": bool(result.get("success")),
+            "outcome": "cancelled" if cancelled else ("downloaded" if result.get("success") else "failed"),
+            "reason": "interrupted" if cancelled else (str(error) if error else result.get("error")),
+            "downloaded": last_downloaded_bytes,
+            "bytes_total": last_total_bytes,
+            "rate_bps": 0.0,
+        })
 
     return {"episode": episode_num, "result": result}
 
@@ -625,7 +647,9 @@ def process_season_folder(
 
     def _download_episode_with_slot(index: int, episode_num: int) -> dict:
         if worker_semaphore:
-            worker_semaphore.acquire()
+            acquired = worker_semaphore.acquire()
+            if acquired is False:
+                raise DownloadCancelled()
         try:
             if quiet_output:
                 with suppress_current_thread_output():
@@ -696,6 +720,7 @@ def process_season_folder(
                 deferred: set[int] = set()
                 for future in as_completed(future_map):
                     if shutdown_requested():
+                        shutdown_executor_now(executor, futures)
                         break
                     item = future.result()
                     if item["result"].get("success"):
@@ -710,7 +735,10 @@ def process_season_folder(
                 shutdown_executor_now(executor, futures)
                 raise
             else:
-                executor.shutdown(wait=True)
+                if shutdown_requested():
+                    shutdown_executor_now(executor, futures)
+                else:
+                    executor.shutdown(wait=True)
     else:
         for round_num in range(max_attempts):
             if shutdown_requested() or not queue:
@@ -720,6 +748,9 @@ def process_season_folder(
             if round_num > 0:
                 pass  # silently retry deferred episodes
             for index, episode_num in enumerate(round_items, start=1):
+                if shutdown_requested():
+                    queue.extend(round_items[index - 1:])
+                    break
                 _set_current_episode(task.config, task.config_path, episode_num)
                 item = _download_episode_with_slot(index, episode_num)
                 if item["result"].get("success"):
@@ -729,13 +760,14 @@ def process_season_folder(
                 else:
                     queue.append(episode_num)
 
-    for episode_num in queue:
-        reason = "All retry rounds exhausted"
-        task.state.mark_failed(f"episode_{episode_num}", reason, max_attempts)
-        failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {reason}")
-        failed += 1
+    if not shutdown_requested():
+        for episode_num in queue:
+            reason = "All retry rounds exhausted"
+            task.state.mark_failed(f"episode_{episode_num}", reason, max_attempts)
+            failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {reason}")
+            failed += 1
 
-    if task.missing_episodes and verified_servers:
+    if task.missing_episodes:
         with servers_lock:
             task.servers = _save_verified_server_urls(task.config, task.config_path, verified_servers)
 
@@ -745,7 +777,13 @@ def process_season_folder(
             task.state.add_download(ep["filename"], task.quality, "stremio")
             skipped += 1
     save_state(folder_path, task.state)
-    return {"downloaded": downloaded, "skipped": skipped, "failed": failed, "failed_reasons": failed_reasons}
+    return {
+        "downloaded": downloaded,
+        "skipped": skipped,
+        "failed": failed,
+        "cancelled": len(queue) if shutdown_requested() else 0,
+        "failed_reasons": failed_reasons,
+    }
 
 
 # ── Movie folder processing ────────────────────────────────────────
@@ -802,6 +840,12 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
             pass
 
     movie_stage_tracker = StageTracker()
+    movie_progress_lock = threading.Lock()
+    movie_last_downloaded = 0
+    movie_last_total = 0
+    movie_last_progress_bytes: int | None = None
+    movie_last_progress_at: float | None = None
+    movie_rate_bps = 0.0
     # Seed with title so stage-only events show the movie name
     movie_last_bytes: dict = {
         "type": "episode_start",
@@ -814,14 +858,27 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
 
     def _movie_emit_stage() -> None:
         if progress_callback:
-            progress_callback({**movie_last_bytes, **movie_stage_tracker.to_dict()})
+            with movie_progress_lock:
+                progress_callback({**movie_last_bytes, **movie_stage_tracker.to_dict()})
 
     movie_stage_tracker.on_update(_movie_emit_stage)
     # Emit initial state so T/L/E bars appear from the start
     _movie_emit_stage()
 
     def on_movie_bytes(downloaded_bytes: int, total_bytes: int) -> None:
-        nonlocal movie_last_bytes
+        nonlocal movie_last_bytes, movie_last_downloaded, movie_last_total
+        nonlocal movie_last_progress_bytes, movie_last_progress_at, movie_rate_bps
+        now = time.monotonic()
+        if movie_last_progress_bytes is None or downloaded_bytes < movie_last_progress_bytes:
+            movie_rate_bps = 0.0
+        else:
+            elapsed = max(0.001, now - (movie_last_progress_at or now))
+            delta = downloaded_bytes - movie_last_progress_bytes
+            movie_rate_bps = delta / elapsed if delta else 0.0
+        movie_last_progress_bytes = downloaded_bytes
+        movie_last_progress_at = now
+        movie_last_downloaded = downloaded_bytes
+        movie_last_total = total_bytes
         movie_last_bytes = {
             "type": "bytes",
             "title": title,
@@ -830,27 +887,54 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
             "current": 1,
             "total": 1,
             "downloaded": downloaded_bytes,
-            "total_size": total_bytes,
+            "bytes_total": total_bytes,
+            "rate_bps": movie_rate_bps,
             **movie_stage_tracker.to_dict(),
         }
         if progress_callback:
-            progress_callback(movie_last_bytes)
+            with movie_progress_lock:
+                progress_callback(movie_last_bytes)
 
-    result = search_and_download(
-        title=title,
-        imdb_id=config.imdb_id,
-        season=None,
-        episode=None,
-        folder_path=str(folder_path),
-        preferred_quality=quality,
-        preferred_languages=preferred_languages,
-        working_addons=servers,
-        content_type="movie",
-        progress_callback=on_movie_bytes,
-        bandwidth_limiter=bandwidth_limiter,
-        experimental_addons=experimental_addons,
-        stage_tracker=movie_stage_tracker,
-    )
+    result: dict[str, Any] = {}
+    error: BaseException | None = None
+    try:
+        raise_if_shutdown_requested()
+        result = search_and_download(
+            title=title,
+            imdb_id=config.imdb_id,
+            season=None,
+            episode=None,
+            folder_path=str(folder_path),
+            preferred_quality=quality,
+            preferred_languages=preferred_languages,
+            working_addons=servers,
+            content_type="movie",
+            progress_callback=on_movie_bytes,
+            bandwidth_limiter=bandwidth_limiter,
+            experimental_addons=experimental_addons,
+            stage_tracker=movie_stage_tracker,
+        )
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        cancelled = isinstance(error, (DownloadCancelled, KeyboardInterrupt)) or shutdown_requested()
+        if progress_callback:
+            with movie_progress_lock:
+                progress_callback({
+                    "type": "episode_done",
+                    "title": title,
+                    "season": None,
+                    "episode": None,
+                    "current": 1,
+                    "total": 1,
+                    "success": bool(result.get("success")),
+                    "outcome": "cancelled" if cancelled else ("downloaded" if result.get("success") else "failed"),
+                    "reason": "interrupted" if cancelled else (str(error) if error else result.get("error")),
+                    "downloaded": movie_last_downloaded,
+                    "bytes_total": movie_last_total,
+                    "rate_bps": 0.0,
+                })
 
     if result.get("success"):
         successful_urls = _verified_urls_from_result(result)

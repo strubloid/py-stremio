@@ -1,5 +1,6 @@
 """Thread-aware terminal output helpers."""
 import contextlib
+import re
 import sys
 import threading
 from typing import Iterator, TextIO
@@ -8,6 +9,7 @@ from typing import Iterator, TextIO
 _quiet_thread_ids: set[int] = set()
 _quiet_lock = threading.Lock()
 _proxy_lock = threading.Lock()
+_ansi_re = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class ThreadFilteringStdout:
@@ -21,6 +23,8 @@ class ThreadFilteringStdout:
             quiet = threading.get_ident() in _quiet_thread_ids
         if quiet:
             return len(text)
+        if not bool(getattr(self.target, "isatty", lambda: False)()):
+            text = _ansi_re.sub("", text)
         return self.target.write(text)
 
     def flush(self) -> None:

@@ -39,6 +39,7 @@ RESET = "\033[0m"
 
 _tty_fd: int | None = None
 _tty_old_attrs: Any = None
+_terminal_active = False
 
 
 def cleanup_terminal() -> None:
@@ -50,7 +51,10 @@ def cleanup_terminal() -> None:
     - termios restore  (if raw/cbreak was active)
     - Clear any leftover status bar line
     """
-    global _tty_fd, _tty_old_attrs
+    global _tty_fd, _tty_old_attrs, _terminal_active
+
+    if not _terminal_active and _tty_fd is None:
+        return
 
     _reset_scroll_region()
     # Ensure cursor is visible
@@ -70,6 +74,7 @@ def cleanup_terminal() -> None:
             pass
     _tty_fd = None
     _tty_old_attrs = None
+    _terminal_active = False
 
 
 # Register once at module import — will always run on exit.
@@ -177,9 +182,15 @@ class StatusBar:
 
     def start(self) -> None:
         """Set up scroll region, draw bar, start key listener."""
+        global _terminal_active
         if self._running:
             return
+        if not bool(getattr(sys.stdout, "isatty", lambda: False)()):
+            return
+        if not bool(getattr(sys.stdin, "isatty", lambda: False)()):
+            return
         self._running = True
+        _terminal_active = True
         self._setup_scroll()
         self._draw(force_setup=False)
         self._thread = threading.Thread(target=self._listen_loop, daemon=True)
@@ -187,11 +198,15 @@ class StatusBar:
 
     def stop(self) -> None:
         """Clear bar, reset scroll region, stop key listener."""
+        global _terminal_active
+        if not self._running:
+            return
         self._running = False
         self._clear()
         _reset_scroll_region()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=0.5)
+        _terminal_active = False
 
     def update_stats(
         self,

@@ -40,7 +40,30 @@ class FakeManager:
         return all_streams, working_urls
 
 
+def test_preflight_rejects_wrong_show_streams():
+    from py_stremio.components.addons.addon_search_service import _preflight_streams_are_usable
+
+    streams = [
+        StreamInfo(
+            name="[Castle] 1080p",
+            url="https://example.test/castle.mp4",
+            addon_url="https://wrong-show-addon",
+        )
+    ]
+
+    assert not _preflight_streams_are_usable(
+        streams,
+        title="Temptation Island (IT)",
+        season=14,
+        episode=4,
+        imdb_id="tt37449227",
+    )
+
+
 def test_search_tries_working_urls_before_remaining_addons(monkeypatch):
+    from py_stremio.components.configs.app_settings import settings
+
+    monkeypatch.setattr(settings, "PREFERRED_LANGUAGES", ["english"])
     calls = []
 
     def create_addon_manager_from_urls(urls: list[str]) -> FakeManager:
