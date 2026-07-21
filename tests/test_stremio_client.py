@@ -125,6 +125,27 @@ def test_search_continues_to_remaining_addons_when_working_url_has_no_streams(mo
     assert working_urls == ["https://fallback-addon"]
 
 
+def test_exhaustive_search_without_streams_is_a_permanent_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(stremio_client, "_resolve_imdb_id", lambda title, imdb_id, season: "tt123")
+    monkeypatch.setattr(
+        stremio_client,
+        "search_all_addons_for_streams",
+        lambda id_type, stremio_id, working_addons, preferred_languages=None: ([], []),
+    )
+
+    result = stremio_client.search_and_download(
+        "Unavailable Show",
+        imdb_id="tt123",
+        season=1,
+        episode=1,
+        folder_path=str(tmp_path),
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "No streams found"
+    assert result["permanent_failure"] is True
+
+
 def test_search_and_download_returns_successful_stream_addon_url(monkeypatch, tmp_path):
     streams = [
         StreamInfo(

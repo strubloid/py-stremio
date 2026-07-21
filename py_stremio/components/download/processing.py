@@ -185,7 +185,7 @@ def setup_season_folder(
                 print(f"      Using {len(discovered)} preflight addon candidate(s)")
         else:
             if not quiet_output:
-                print(f"      No working addons found — will search all per-episode")
+                print(f"      No working addons found — skipping repeated per-episode searches")
 
         no_working_addons = len(discovered) == 0
     elif not servers and missing:
@@ -355,12 +355,10 @@ def _do_download_one_episode(
                 save_config(task.config_path, task.config)
     active_servers = [s for s in task.servers if s not in bad_servers]
 
-    # Only skip the full search when we have cached servers to try first.
-    # If active_servers is empty, the skip_full_search flag would prevent
-    # ANY addon search (since _search_single_id only checks it after the
-    # `if working_addons:` branch is skipped due to an empty list).
-    # Always allow the full search as a safety net when no server cache exists.
-    skip_full = task.no_working_addons and bool(active_servers)
+    # Preflight has already searched every configured addon for this exact
+    # show/season/episode. With no usable result, another full search for every
+    # missing episode only multiplies timeouts and rate-limit cooldowns.
+    skip_full = task.no_working_addons
 
     result: dict[str, Any] = {}
     error: BaseException | None = None
@@ -835,7 +833,6 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
         discovered = preflight_discover_working_addons("movie", stremio_id)
         if discovered:
             servers = discovered
-            _save_verified_server_urls(config, config_path, servers)
         else:
             pass
 

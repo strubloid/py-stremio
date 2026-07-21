@@ -281,7 +281,12 @@ def _search_single_id(
             return remaining_result
         if cached_streams or remaining_streams:
             return remaining_result if remaining_streams else cached_result
-        return {"success": False, "error": "No streams found", "working_urls": combined_working_urls}
+        return {
+            "success": False,
+            "error": "No streams found",
+            "working_urls": combined_working_urls,
+            "permanent_failure": True,
+        }
 
     # No cached addons — search all
     if skip_full_search:
@@ -294,7 +299,7 @@ def _search_single_id(
             stage_tracker.set_live(0)
             stage_tracker.live_resolved(0)
         return {"success": False, "error": "Preflight found no working addons",
-                "working_urls": []}
+                "working_urls": [], "permanent_failure": True}
     streams, working_urls = search_all_addons_for_streams(id_type, stremio_id, working_addons, preferred_languages=preferred_languages)
     if stage_tracker:
         # Mark T complete — we got streams or not
@@ -304,7 +309,7 @@ def _search_single_id(
         live_count = len(working_urls) if working_urls else (len(streams) if streams else 0)
         stage_tracker.set_live(max(1, live_count))
         stage_tracker.live_resolved(live_count)
-    return _try_download_streams(
+    result = _try_download_streams(
         title=title,
         streams=streams,
         working_urls=working_urls,
@@ -317,6 +322,9 @@ def _search_single_id(
         bandwidth_limiter=bandwidth_limiter,
         imdb_id=imdb_id,
     )
+    if not streams:
+        result["permanent_failure"] = True
+    return result
 
 
 def _try_download_streams(

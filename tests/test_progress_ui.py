@@ -2,8 +2,10 @@
 
 import io
 import re
+from types import SimpleNamespace
 
 from py_stremio.components.application import _make_progress_printer, _progress_line, render_progress_bar
+from py_stremio.services.terminal_ui import PlainDownloadUI
 
 
 def strip_ansi(text: str) -> str:
@@ -15,6 +17,40 @@ class TtyBuffer(io.StringIO):
 
     def isatty(self):
         return True
+
+
+def test_episode_retry_clears_stale_transfer_rate_from_progress_ui():
+    ui = PlainDownloadUI(
+        io.StringIO(),
+        limiter=SimpleNamespace(),
+        max_workers=1,
+        speed_percent=100,
+        max_speed_mbps=100,
+    )
+    bytes_event = {
+        "type": "bytes",
+        "title": "Example Show",
+        "season": 1,
+        "episode": 1,
+        "downloaded": 8192,
+        "bytes_total": 1000000,
+        "rate_bps": 500000,
+    }
+    start_event = {
+        "type": "episode_start",
+        "title": "Example Show",
+        "season": 1,
+        "episode": 1,
+        "current": 1,
+        "total": 1,
+    }
+
+    ui.progress(bytes_event)
+    ui.progress(start_event)
+
+    stored = ui._tasks[(None, "Example Show", 1, 1)]
+    assert "rate_bps" not in stored
+    assert "downloaded" not in stored
 
 
 def test_render_progress_bar_shows_percentage_and_fill():

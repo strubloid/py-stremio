@@ -231,7 +231,11 @@ def _looks_like_finished_release(text: str) -> bool:
 
 
 def _normalized_title_text(text: str) -> str:
-    return re.sub(r"[._\-]+", " ", text.lower()).strip()
+    # Scene releases use dots, while library titles commonly contain colons,
+    # apostrophes, question marks, and other punctuation.  Treat all
+    # non-word separators alike before comparing titles so e.g.
+    # "Fiancé: The Other Way" matches "Fiance.The.Other.Way".
+    return re.sub(r"[^\w]+", " ", text.lower(), flags=re.UNICODE).strip()
 
 
 def _strip_accents(text: str) -> str:
@@ -759,9 +763,20 @@ def resolve_stream_download_url(stream: StreamInfo) -> str | None:
         download_url = resolve_real_debrid_proxy_url(download_url)
 
     if stream.info_hash and not download_url:
+        # Meteor results are debrid-backed but expose only an info hash.  Its
+        # configured RealDebrid path is more reliable than the optional local
+        # torrent proxy, which otherwise turns these usable streams into slow
+        # no-peer/proxy retries.
+        addon_identity = " ".join(
+            str(getattr(stream, field, "") or "")
+            for field in ("addon_name", "addon_url")
+        ).lower()
+        if "meteor" in addon_identity and settings.REAL_DEBRID_API_KEY:
+            download_url = resolve_torrent_with_debrid(stream.info_hash, stream.file_idx)
+
         # Fast path: try local torrent proxy if configured. The proxy needs the
         # original Stremio tracker sources; without them it may not find peers.
-        if settings.TORRENT_PROXY_URL:
+        if not download_url and settings.TORRENT_PROXY_URL:
             download_url = build_torrent_proxy_url(settings.TORRENT_PROXY_URL, stream)
 
         # Slow path: full RealDebrid API flow

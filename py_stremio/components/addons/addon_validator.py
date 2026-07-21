@@ -240,7 +240,36 @@ def update_addons_file(
             # Already a comment, blank, section header — keep untouched
             new_lines.append(line)
 
-    if changes:
+    active_count = sum(
+        1
+        for line in new_lines
+        if line.strip().startswith(("http://", "https://"))
+    )
+    dead_count = sum(1 for line in new_lines if line.strip().startswith("# http"))
+    total_lines = len(new_lines)
+    has_summary = any(
+        line.strip().startswith((
+            "# Active URLs:",
+            "# Total active:",
+            "# Total commented (dead):",
+            "# Total lines:",
+            "# Grand total lines:",
+        ))
+        for line in new_lines
+    )
+    if changes or has_summary:
+        for index, line in enumerate(new_lines):
+            stripped = line.strip()
+            if stripped.startswith("# Active URLs:"):
+                new_lines[index] = f"# Active URLs: {active_count} (last validated)\n"
+            elif stripped.startswith("# Total active:"):
+                new_lines[index] = f"# Total active: {active_count}\n"
+            elif stripped.startswith("# Total commented (dead):"):
+                new_lines[index] = f"# Total commented (dead): {dead_count}\n"
+            elif stripped.startswith("# Total lines:"):
+                new_lines[index] = f"# Total lines: {total_lines}\n"
+            elif stripped.startswith("# Grand total lines:"):
+                new_lines[index] = f"# Grand total lines: {total_lines}\n"
         atomic_write_text(filepath, "".join(new_lines))
 
     return changes

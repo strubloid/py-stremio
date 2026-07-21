@@ -179,6 +179,30 @@ def test_update_addons_file_no_changes_if_all_working(tmp_path):
     )
 
 
+def test_update_addons_file_refreshes_active_and_dead_summary_counts(tmp_path):
+    addons = tmp_path / "addons.txt"
+    addons.write_text(
+        "# Active URLs: 99 (last validated)\n"
+        "https://working.example\n"
+        "https://broken.example\n"
+        "# Total active: 99\n"
+        "# Total commented (dead): 0\n"
+        "# Total lines: 0\n"
+    )
+
+    update_addons_file(
+        str(addons),
+        working=["https://working.example"],
+        failed=["https://broken.example"],
+    )
+
+    content = addons.read_text()
+    assert "# Active URLs: 1 (last validated)" in content
+    assert "# Total active: 1" in content
+    assert "# Total commented (dead): 1" in content
+    assert "# Total lines: 6" in content
+
+
 def test_update_addons_file_comment_already_comment_unchanged(tmp_path):
     """Already commented lines are left alone, even if URL is in failed."""
     addons = tmp_path / "addons.txt"

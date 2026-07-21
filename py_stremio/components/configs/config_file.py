@@ -75,7 +75,7 @@ def get_default_config(folder_path: Path) -> DownloadConfig:
     """Get appropriate default config based on folder shape."""
     from py_stremio.components.configs.app_settings import settings
     cfg = create_series_config(folder_path) if is_series_season_folder(folder_path) else create_movies_config(folder_path)
-    if settings.PREFERRED_LANGUAGES and cfg.languages is None:
+    if cfg.type == "series" and settings.PREFERRED_LANGUAGES and cfg.languages is None:
         cfg.languages = list(settings.PREFERRED_LANGUAGES)
     return cfg
 

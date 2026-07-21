@@ -7,7 +7,7 @@ from py_stremio.components.configs.config_file import load_config
 from py_stremio.components.library.library_scanner import Scanner, FolderType
 from py_stremio.components.library.media_file import infer_next_episode_download
 from py_stremio.components.stremio.stremio_client import get_series_imdb_id
-from py_stremio.components.stremio.stremio_metadata import get_imdb_id, get_series_metadata
+from py_stremio.components.stremio.stremio_metadata import get_movie_metadata, get_series_metadata
 from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, RESET, build_table
 from py_stremio.utils.media import parse_season_from_folder
 from py_stremio.utils.atomic_write import atomic_write_json
@@ -264,11 +264,7 @@ class MetadataService:
             "metadata_last_checked": config_model.metadata_last_checked,
         }
 
-        # Inject preferred languages from settings if config doesn't have them
         changed = False
-        if settings.PREFERRED_LANGUAGES and not config.get("languages"):
-            config["languages"] = list(settings.PREFERRED_LANGUAGES)
-            changed = True
 
         # Movies don't track episode download progress — null it out
         if config.get("current_episode_download", 0) > 0:
@@ -294,22 +290,38 @@ class MetadataService:
                 atomic_write_json(config_path, config, indent=2)
             return changed
 
-        # Try to get IMDB ID from Cinemeta
-        imdb_id = config.get("imdb_id") or get_imdb_id(title)
-
-        if imdb_id and config.get("imdb_id") != imdb_id:
-            config["imdb_id"] = imdb_id
-            config_model.imdb_id = imdb_id
+        metadata = get_movie_metadata(title, config.get("imdb_id"))
+        if metadata:
+            imdb_id = metadata.get("imdb_id")
+            if imdb_id and config.get("imdb_id") != imdb_id:
+                config["imdb_id"] = imdb_id
+                changed = True
+            canonical_title = metadata.get("title")
+            if canonical_title and config.get("title") != canonical_title:
+                config["title"] = canonical_title
+                changed = True
+            imdb_languages = metadata.get("languages") or []
+            if imdb_languages and config.get("languages") != imdb_languages:
+                config["languages"] = imdb_languages
+                changed = True
+        elif not config.get("title") and title:
+            config["title"] = title
             changed = True
 
-        if not config.get("title") and title:
-            config["title"] = title
-            config_model.title = title
+        # Earlier versions copied the global series preference into every movie.
+        # Remove only that inherited value when IMDb did not provide a replacement.
+        if (
+            not (metadata or {}).get("languages")
+            and settings.PREFERRED_LANGUAGES
+            and [str(language).casefold() for language in config.get("languages") or []]
+            == [str(language).casefold() for language in settings.PREFERRED_LANGUAGES]
+        ):
+            config["languages"] = None
             changed = True
 
         checked_at = datetime.now(timezone.utc).isoformat()
         config["metadata_last_checked"] = checked_at
-        if imdb_id:
+        if (metadata or {}).get("imdb_id"):
             changed = True
 
         if changed:

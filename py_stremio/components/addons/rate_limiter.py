@@ -110,16 +110,24 @@ class RateLimiter:
                     f"Rate limit cap reached: {host} — "
                     f"{state.request_count} requests (max {_MAX_REQUESTS_PER_HOST})"
                 )
+
+            now = time.monotonic()
+
+            # 429 cooldown — skip a banned host for this query instead of
+            # parking a download worker. A concurrent episode search can
+            # otherwise queue behind this lock for minutes (or an hour),
+            # making the whole download UI appear stuck. This remains active
+            # under pytest's gap-delay override because it is a correctness
+            # guard, not pacing.
+            if state.cooldown_until > now:
+                wait = state.cooldown_until - now
+                raise RuntimeError(
+                    f"Rate limited: {host} cooling down for {wait:.0f}s"
+                )
+
             state.request_count += 1
 
             if not _DISABLE_DELAYS:
-                now = time.monotonic()
-
-                # a) 429 cooldown — exponential back-off
-                if state.cooldown_until > now:
-                    wait = state.cooldown_until - now
-                    time.sleep(wait)
-                    now = time.monotonic()
 
                 # b) Minimum gap since last request to this host
                 if state.last_request > 0:

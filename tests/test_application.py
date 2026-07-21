@@ -214,6 +214,44 @@ def test_full_run_metadata_uses_fresh_cache_without_network_lookup(tmp_path, mon
     assert updated == 0
 
 
+def test_movie_metadata_replaces_inherited_language_with_imdb_language(tmp_path, monkeypatch):
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
+    from py_stremio.services.metadata import MetadataService
+
+    movie_folder = tmp_path / "movies" / "Michael"
+    movie_folder.mkdir(parents=True)
+    save_config(
+        movie_folder / "download-config.json",
+        DownloadConfig(
+            type="movies",
+            title="Michael",
+            search_group="Michael",
+            languages=["italian"],
+            current_episode_download=0,
+        ),
+    )
+    folder = ScannedFolder(movie_folder, FolderType.MOVIES, movie_folder.parent)
+    monkeypatch.setattr(
+        "py_stremio.services.metadata.get_movie_metadata",
+        lambda title, imdb_id=None: {
+            "imdb_id": "tt11378946",
+            "title": "Michael",
+            "languages": ["english"],
+        },
+    )
+
+    updated = MetadataService().run(folders=[folder], quiet=True, use_cache=False)
+
+    with open(movie_folder / "download-config.json") as f:
+        config = json.load(f)
+    assert updated == 1
+    assert config["imdb_id"] == "tt11378946"
+    assert config["title"] == "Michael"
+    assert config["languages"] == ["english"]
+    assert config["season"] is None
+    assert config["current_episode_download"] == 0
+
+
 def test_full_run_metadata_refreshes_incomplete_cached_config(tmp_path, monkeypatch):
     from datetime import datetime, timezone
 

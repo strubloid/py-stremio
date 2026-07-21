@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import gzip
 import io
+import json
+import re
 import urllib.parse
 
 import httpx
@@ -27,6 +29,77 @@ def _best_series_match(title: str) -> dict | None:
         if meta.get("name", "").lower() == title.lower():
             return meta
     return metas[0] if metas else None
+
+
+def _search_movies(title: str) -> list[dict]:
+    query = urllib.parse.quote(title.lower())
+    search_url = f"https://v3-cinemeta.strem.io/catalog/movie/top/search={query}.json"
+    response = httpx.get(search_url, timeout=15)
+    if response.status_code != 200:
+        return []
+    return response.json().get("metas", [])
+
+
+def _best_movie_match(title: str) -> dict | None:
+    metas = _search_movies(title)
+    exact = [meta for meta in metas if str(meta.get("name") or "").casefold() == title.casefold()]
+    return (exact or metas or [None])[0]
+
+
+def _normalize_language_values(value) -> list[str]:
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, dict):
+        values = [value.get("name") or value.get("text") or value.get("@value")]
+    elif isinstance(value, list):
+        values = [
+            item if isinstance(item, str) else item.get("name") or item.get("text") or item.get("@value")
+            for item in value if isinstance(item, (str, dict))
+        ]
+    else:
+        values = []
+    return list(dict.fromkeys(str(item).strip().casefold() for item in values if item and str(item).strip()))
+
+
+def get_imdb_movie_languages(imdb_id: str) -> list[str]:
+    """Read a movie's language list from IMDb's public title markup."""
+    try:
+        response = httpx.get(
+            f"https://www.imdb.com/title/{imdb_id}/",
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.9"},
+            follow_redirects=True,
+        )
+        if response.status_code != 200:
+            return []
+        for raw_json in re.findall(
+            r'<script type="application/ld\+json">(.*?)</script>', response.text, flags=re.DOTALL
+        ):
+            try:
+                languages = _normalize_language_values(json.loads(raw_json).get("inLanguage"))
+            except json.JSONDecodeError:
+                continue
+            if languages:
+                return languages
+    except Exception:
+        pass
+    return []
+
+
+def get_movie_metadata(title: str, imdb_id: str | None = None) -> dict | None:
+    """Resolve one movie folder's canonical title, IMDb ID, and IMDb languages."""
+    try:
+        match = _best_movie_match(title)
+        resolved_id = imdb_id or (match or {}).get("imdb_id") or (match or {}).get("id")
+        if not resolved_id:
+            return None
+        return {
+            "imdb_id": resolved_id,
+            "title": (match or {}).get("name") or title,
+            "languages": get_imdb_movie_languages(resolved_id),
+        }
+    except Exception:
+        return None
 
 
 def _video_year(video: dict) -> int | None:
@@ -170,18 +243,9 @@ def get_current_year_series_seasons(title: str, year: int) -> list[dict]:
 
 
 def get_imdb_id(title: str) -> str | None:
-    """Search for IMDB ID using Cinemeta."""
-    search_url = f"https://cinemeta.strem.io/metadata/{urllib.parse.quote(title.lower().replace(' ', '-'))}"
-
-    try:
-        response = httpx.get(search_url, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("imdb_id")
-    except Exception as e:
-        print(f"  IMDB lookup error: {e}")
-
-    return None
+    """Resolve a movie IMDb ID from Cinemeta's movie catalog."""
+    metadata = get_movie_metadata(title)
+    return metadata.get("imdb_id") if metadata else None
 
 
 def get_series_imdb_id(title: str, season: int) -> str | None:

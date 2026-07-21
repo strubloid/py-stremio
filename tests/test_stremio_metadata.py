@@ -28,6 +28,34 @@ class FakeContentResponse(FakeResponse):
         self.content = content
 
 
+def test_get_movie_metadata_resolves_title_and_languages_from_imdb(monkeypatch):
+    from py_stremio.components.stremio.stremio_metadata import get_movie_metadata
+
+    def fake_get(url, timeout, **kwargs):
+        if "/catalog/movie/" in url:
+            return FakeResponse(
+                {
+                    "metas": [
+                        {"imdb_id": "tt11378946", "name": "Michael", "type": "movie"},
+                        {"imdb_id": "tt0117038", "name": "Michael", "type": "movie"},
+                    ]
+                }
+            )
+        return FakeTextResponse(
+            '<script type="application/ld+json">'
+            '{"name":"Michael","inLanguage":["English"]}'
+            "</script>"
+        )
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+
+    assert get_movie_metadata("Michael") == {
+        "imdb_id": "tt11378946",
+        "title": "Michael",
+        "languages": ["english"],
+    }
+
+
 def test_get_series_metadata_follows_cinemeta_meta_redirects(monkeypatch):
     calls = []
 

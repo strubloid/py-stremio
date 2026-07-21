@@ -95,6 +95,23 @@ class _StallingResponse:
         raise _httpx.ReadTimeout("simulated stall")
 
 
+def test_meteor_info_hash_prefers_real_debrid_before_local_torrent_proxy(monkeypatch):
+    stream = StreamInfo(
+        name="Meteor 1080p",
+        info_hash="abc123",
+        addon_name="Meteor",
+    )
+    monkeypatch.setattr(stream_download.settings, "REAL_DEBRID_API_KEY", "test-key")
+    monkeypatch.setattr(stream_download.settings, "TORRENT_PROXY_URL", "http://torrent-proxy.test")
+    monkeypatch.setattr(
+        stream_download,
+        "resolve_torrent_with_debrid",
+        lambda info_hash, file_idx: "https://real-debrid.test/video.mkv",
+    )
+
+    assert stream_download.resolve_stream_download_url(stream) == "https://real-debrid.test/video.mkv"
+
+
 def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, monkeypatch):
     # Disable the minimum file size check for this test (uses small test data)
     monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
@@ -1171,6 +1188,34 @@ class TestInfoHashOnlyStreamFiltering:
                 target_imdb_id="tt3469050",
             )
             assert result == [kod_stream], f"title={title!r} got {len(result)} streams"
+
+    def test_colon_in_library_title_matches_dotted_release_name(self):
+        """A title colon must not reject a valid scene-style release name.
+
+        Regression: Meteor returned a verified, playable S05E01 stream for
+        ``90 Day Fiancé: The Other Way`` but the title filter rejected it
+        because the release used ``90.Day.Fiance.The.Other.Way``.
+        """
+        meteor_stream = StreamInfo(
+            name="[RD] Meteor",
+            title="90.Day.Fiance.The.Other.Way.S05E01.XviD-AFG",
+            url="https://example.com/episode.mp4",
+            filename="90.Day.Fiance.The.Other.Way.S05E01.XviD-AFG.avi",
+            addon_name="MeteorForTheWeebs",
+            addon_url="https://meteorfortheweebs.midnightignite.me",
+        )
+
+        result = stream_download.select_quality_streams(
+            [meteor_stream],
+            "1080p",
+            preferred_languages=["english"],
+            target_season=5,
+            target_episode=1,
+            title="90 Day Fiancé: The Other Way",
+            target_imdb_id="tt9170070",
+        )
+
+        assert result == [meteor_stream]
 
     def test_accented_wrong_show_still_rejected(self):
         """Diacritics-insensitive title matching must not weaken the

@@ -89,7 +89,10 @@ class DownloadUI:
         with self._lock:
             key = _key(event)
             event_type = event.get("type")
-            self._tasks[key] = {**self._tasks.get(key, {}), **event}
+            self._tasks[key] = dict(event) if event_type == "episode_start" else {
+                **self._tasks.get(key, {}),
+                **event,
+            }
             total = event.get("total")
             group = (event.get("folder_path"), event.get("title"), event.get("season"))
             if isinstance(total, int) and total > 0:
@@ -244,7 +247,7 @@ class RichDownloadUI(DownloadUI):
             event = self._tasks.get(key, {})
             downloaded = int(event.get("downloaded") or 0)
             total = int(event.get("bytes_total") or event.get("total_size") or 0)
-            if event.get("type") == "bytes" and downloaded >= 1024 * 1024:
+            if event.get("type") == "bytes" and downloaded > 0:
                 stage = "downloading"
             elif any(event.get(name) is not None for name in ("server_total", "live_total", "experimental_total")):
                 stage = "searching"

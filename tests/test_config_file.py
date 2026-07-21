@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import json
 import shutil
+from types import SimpleNamespace
 
 from py_stremio.components.configs.config_file import (
     DownloadConfig,
@@ -36,6 +37,17 @@ class TestDownloadConfig:
     def test_movies_config_creation(self):
         cfg = create_movies_config(Path("/movies/batman"))
         assert cfg.type == "movies"
+
+    def test_movie_config_does_not_inherit_global_series_language_preference(self, monkeypatch):
+        monkeypatch.setattr(
+            "py_stremio.components.configs.app_settings.settings",
+            SimpleNamespace(PREFERRED_LANGUAGES=["italian"]),
+        )
+
+        config = get_default_config(Path("/movies/Michael"))
+
+        assert config.type == "movies"
+        assert config.languages is None
 
 
 class TestConfigFileIO:

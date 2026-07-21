@@ -100,6 +100,44 @@ def test_process_season_folder_passes_config_languages_to_search(tmp_path, monke
     assert captured["preferred_languages"] == ["english"]
 
 
+def test_no_preflight_source_skips_repeated_full_addon_searches(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="series",
+        title="Unavailable Show",
+        imdb_id="tt1234567",
+        season=1,
+        episode_count=2,
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    skip_flags = []
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.preflight_discover_working_addons",
+        lambda *args, **kwargs: [],
+    )
+
+    def fake_search_and_download(**kwargs):
+        skip_flags.append(kwargs["skip_full_search"])
+        return {
+            "success": False,
+            "error": "Preflight found no working addons",
+            "working_urls": [],
+            "permanent_failure": True,
+        }
+
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        fake_search_and_download,
+    )
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    result = process_season_folder(tmp_path, max_workers=2)
+
+    assert result["failed"] == 2
+    assert skip_flags == [True, True]
+
+
 def test_process_season_folder_does_not_count_search_workers_as_active_downloads(tmp_path, monkeypatch):
     config = DownloadConfig(
         type="series",
@@ -1225,6 +1263,32 @@ def test_process_movie_folder_uses_search_group_as_fallback_title(tmp_path, monk
 
     assert len(calls) == 1
     assert calls[0] == "The Last Hangover"
+
+
+def test_process_movie_folder_does_not_cache_preflight_servers_before_a_download(tmp_path, monkeypatch):
+    config = DownloadConfig(
+        type="movies",
+        title="Michael",
+        imdb_id="tt11378946",
+        search_group="Michael",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.preflight_discover_working_addons",
+        lambda *args, **kwargs: ["https://candidate.example"],
+    )
+    monkeypatch.setattr(
+        "py_stremio.components.download.processing.search_and_download",
+        lambda **kwargs: {"success": False, "error": "No streams found", "working_urls": []},
+    )
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    result = process_movie_folder(tmp_path)
+    reloaded, _ = load_config(tmp_path)
+
+    assert result["failed"] == 1
+    assert reloaded.servers == []
 
 
 def test_process_movie_folder_emits_bytes_and_terminal_progress(tmp_path, monkeypatch):
