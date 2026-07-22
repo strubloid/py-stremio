@@ -112,6 +112,9 @@ def search_and_download(
     experimental_addons: list[str] | None = None,
     stage_tracker: StageTracker | None = None,
     skip_full_search: bool = False,
+    quality_fallbacks: list[str] | None = None,
+    allow_higher: bool = False,
+    allow_lower: bool = True,
 ) -> dict:
     """Search addons for a given movie/episode, try to download it.
 
@@ -176,6 +179,9 @@ def search_and_download(
             stage_tracker=stage_tracker,
             skip_full_search=skip_full_search,
             imdb_id=effective_imdb,
+            quality_fallbacks=quality_fallbacks,
+            allow_higher=allow_higher,
+            allow_lower=allow_lower,
         )
         last_result = result
         if result.get("success"):
@@ -197,6 +203,9 @@ def search_and_download(
                 preferred_languages=preferred_languages,
                 progress_callback=progress_callback,
                 bandwidth_limiter=bandwidth_limiter,
+                quality_fallbacks=quality_fallbacks,
+                allow_higher=allow_higher,
+                allow_lower=allow_lower,
                 experimental_urls=experimental_addons,
                 stage_tracker=stage_tracker,
                 imdb_id=effective_imdb,
@@ -222,6 +231,9 @@ def _search_single_id(
     stage_tracker: StageTracker | None = None,
     skip_full_search: bool = False,
     imdb_id: str | None = None,
+    quality_fallbacks: list[str] | None = None,
+    allow_higher: bool = False,
+    allow_lower: bool = True,
 ) -> dict:
     """Search addons for a single identifier and try to download."""
 
@@ -247,6 +259,9 @@ def _search_single_id(
             progress_callback=progress_callback,
             bandwidth_limiter=bandwidth_limiter,
             imdb_id=imdb_id,
+            quality_fallbacks=quality_fallbacks,
+            allow_higher=allow_higher,
+            allow_lower=allow_lower,
         )
         if cached_result.get("success"):
             return cached_result
@@ -277,6 +292,9 @@ def _search_single_id(
             progress_callback=progress_callback,
             bandwidth_limiter=bandwidth_limiter,
             imdb_id=imdb_id,
+            quality_fallbacks=quality_fallbacks,
+            allow_higher=allow_higher,
+            allow_lower=allow_lower,
         )
         if remaining_result.get("success"):
             return remaining_result
@@ -322,6 +340,9 @@ def _search_single_id(
         progress_callback=progress_callback,
         bandwidth_limiter=bandwidth_limiter,
         imdb_id=imdb_id,
+        quality_fallbacks=quality_fallbacks,
+        allow_higher=allow_higher,
+        allow_lower=allow_lower,
     )
     if not streams:
         result["permanent_failure"] = True
@@ -340,6 +361,9 @@ def _try_download_streams(
     progress_callback=None,
     bandwidth_limiter=None,
     imdb_id: str | None = None,
+    quality_fallbacks: list[str] | None = None,
+    allow_higher: bool = False,
+    allow_lower: bool = True,
 ) -> dict:
     if not streams:
         return {"success": False, "error": "No streams found", "working_urls": working_urls}
@@ -363,6 +387,9 @@ def _try_download_streams(
         target_episode=episode,
         title=title,
         target_imdb_id=imdb_id,
+        quality_fallbacks=quality_fallbacks,
+        allow_higher=allow_higher,
+        allow_lower=allow_lower,
     )
     if not streams_to_try:
         return {
@@ -521,6 +548,9 @@ def _try_experimental_addons(
     experimental_urls: list[str] | None = None,
     stage_tracker: StageTracker | None = None,
     imdb_id: str | None = None,
+    quality_fallbacks: list[str] | None = None,
+    allow_higher: bool = False,
+    allow_lower: bool = True,
 ) -> dict:
     """Query experimental addons and attempt download for one episode.
 
@@ -555,4 +585,7 @@ def _try_experimental_addons(
         progress_callback=progress_callback,
         bandwidth_limiter=bandwidth_limiter,
         imdb_id=imdb_id,
+        quality_fallbacks=quality_fallbacks,
+        allow_higher=allow_higher,
+        allow_lower=allow_lower,
     )

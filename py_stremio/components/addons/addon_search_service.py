@@ -244,6 +244,11 @@ def _preflight_streams_are_usable(
     A non-empty addon response is not enough: some addons return generic
     catalogue entries for every request. Target context is optional to retain
     the generic preflight behavior for callers that do not have it.
+
+    Quality preferences are deliberately NOT applied here — the preflight
+    only needs to confirm the addon returned a stream that matches the
+    target show/episode. The full quality filter (preferred + fallbacks +
+    ``allow_higher``/``allow_lower``) runs later in the download path.
     """
     if not streams:
         return False
@@ -260,6 +265,9 @@ def _preflight_streams_are_usable(
         target_episode=episode,
         title=title,
         target_imdb_id=imdb_id,
+        quality_fallbacks=["2160p", "720p", "480p", "360p"],
+        allow_higher=True,
+        allow_lower=True,
     ))
 
 

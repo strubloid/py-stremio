@@ -1271,6 +1271,207 @@ class TestInfoHashOnlyStreamFiltering:
         assert result == []
 
 
+class TestQualityPriorityFilter:
+    """Verify the configured quality priority (preferred + fallbacks) is
+    respected by ``select_quality_streams`` and the ``allow_higher`` /
+    ``allow_lower`` flags filter or rerank streams accordingly.
+
+    Regression: 4K-only movies (e.g. ``Michael`` tt11378946) used to be
+    silently picked despite the user having ``preferred: 1080p`` and
+    ``allow_higher: false`` because the legacy sort always ranked 4K
+    first regardless of the configured quality.
+    """
+
+    def _make_stream(
+        self,
+        title: str,
+        name: str = "Torrentio",
+        url: str | None = "https://dl.test",
+        info_hash: str | None = None,
+        file_idx: int | None = None,
+        filename: str | None = None,
+    ) -> StreamInfo:
+        return StreamInfo(
+            name=name,
+            title=title,
+            url=url,
+            info_hash=info_hash,
+            file_idx=file_idx,
+            filename=filename,
+        )
+
+    def test_4k_filtered_when_allow_higher_false(self, monkeypatch):
+        """1080p preferred with allow_higher=False must drop 4K streams."""
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        four_k = self._make_stream("Michael.2026.2160p.UHD.BluRay.x265-GROUP")
+        ten_eighty = self._make_stream("Michael.2026.1080p.BluRay.x264-GROUP")
+        result = stream_download.select_quality_streams(
+            [four_k, ten_eighty],
+            "1080p",
+            quality_fallbacks=["720p", "480p"],
+            allow_higher=False,
+            allow_lower=True,
+            title="Michael",
+            target_imdb_id="tt11378946",
+        )
+        assert four_k not in result
+        assert ten_eighty in result
+
+    def test_4k_filtered_when_only_4k_available(self, monkeypatch):
+        """With only 4K streams and allow_higher=False, the result is empty
+        (the user must opt in to 4K by setting allow_higher=True)."""
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        four_k_1 = self._make_stream("Michael.2026.2160p.UHD.BluRay.x265-A")
+        four_k_2 = self._make_stream("Michael.2026.4K.WEB-DL.DV.HDR-GROUP")
+        result = stream_download.select_quality_streams(
+            [four_k_1, four_k_2],
+            "1080p",
+            quality_fallbacks=["720p", "480p"],
+            allow_higher=False,
+            allow_lower=True,
+            title="Michael",
+            target_imdb_id="tt11378946",
+        )
+        assert result == []
+
+    def test_4k_kept_and_sorted_last_when_allow_higher_true(self, monkeypatch):
+        """With allow_higher=True, 4K streams are kept and tried after
+        all configured priorities (preferred + fallbacks)."""
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        four_k = self._make_stream("Michael.2026.2160p.UHD.BluRay.x265-GROUP")
+        ten_eighty = self._make_stream("Michael.2026.1080p.BluRay.x264-GROUP")
+        seven_twenty = self._make_stream("Michael.2026.720p.BluRay.x264-GROUP")
+        result = stream_download.select_quality_streams(
+            [four_k, seven_twenty, ten_eighty],
+            "1080p",
+            quality_fallbacks=["720p", "480p"],
+            allow_higher=True,
+            allow_lower=True,
+            title="Michael",
+            target_imdb_id="tt11378946",
+        )
+        assert result[0] is ten_eighty
+        assert result[1] is seven_twenty
+        assert result[-1] is four_k
+
+    def test_priority_order_within_same_quality(self, monkeypatch):
+        """1080p > 720p > 480p ordering must match the configured priority."""
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        four_eighty = self._make_stream("Show.S01E01.480p.WEB-DL")
+        seven_twenty = self._make_stream("Show.S01E01.720p.WEB-DL")
+        ten_eighty = self._make_stream("Show.S01E01.1080p.WEB-DL")
+        # Pass in reverse-priority order to confirm sorting, not just filtering
+        result = stream_download.select_quality_streams(
+            [four_eighty, ten_eighty, seven_twenty],
+            "1080p",
+            quality_fallbacks=["720p", "480p"],
+            allow_higher=False,
+            allow_lower=True,
+            target_season=1,
+            target_episode=1,
+            title="Show",
+            target_imdb_id="tt0000001",
+        )
+        assert [s.title for s in result] == [
+            "Show.S01E01.1080p.WEB-DL",
+            "Show.S01E01.720p.WEB-DL",
+            "Show.S01E01.480p.WEB-DL",
+        ]
+
+    def test_below_fallback_filtered_when_allow_lower_false(self, monkeypatch):
+        """360p streams are filtered out when allow_lower=False and 360p
+        is not in the configured fallbacks."""
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        three_sixty = self._make_stream("Show.S01E01.360p.WEB-DL")
+        ten_eighty = self._make_stream("Show.S01E01.1080p.WEB-DL")
+        result = stream_download.select_quality_streams(
+            [three_sixty, ten_eighty],
+            "1080p",
+            quality_fallbacks=["720p", "480p"],
+            allow_higher=False,
+            allow_lower=False,
+            target_season=1,
+            target_episode=1,
+            title="Show",
+            target_imdb_id="tt0000001",
+        )
+        assert three_sixty not in result
+        assert ten_eighty in result
+
+    def test_unknown_quality_kept_with_allow_lower_true(self, monkeypatch):
+        """Streams with no detectable quality are kept when at least one
+        of allow_higher/allow_lower is true (no useful signal to filter)."""
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        unknown = self._make_stream("Show.S01E01.WEB-DL")  # no resolution marker
+        ten_eighty = self._make_stream("Show.S01E01.1080p.WEB-DL")
+        result = stream_download.select_quality_streams(
+            [unknown, ten_eighty],
+            "1080p",
+            quality_fallbacks=["720p", "480p"],
+            allow_higher=False,
+            allow_lower=True,
+            target_season=1,
+            target_episode=1,
+            title="Show",
+            target_imdb_id="tt0000001",
+        )
+        assert ten_eighty in result
+        assert unknown in result
+        # 1080p is preferred, so it sorts before the unknown stream
+        assert result[0] is ten_eighty
+
+    def test_cin_4k_addon_label_does_not_filter_stream(self, monkeypatch):
+        """The addon's display name (e.g. ``"CIN 4K"``) must not be used
+        as a quality signal. CIN's info-hash streams are commonly tagged
+        with the addon's quality category regardless of the actual file
+        quality, so treating "4K" in the name as a hard 4K signal would
+        silently drop valid 1080p/720p releases.
+        """
+        monkeypatch.setattr(
+            stream_download.settings, "PREFERRED_LANGUAGES", ["english"]
+        )
+        from py_stremio.components.addons.models import StreamInfo
+
+        cin_stream = StreamInfo(
+            name="CIN 4K",
+            title=None,
+            url=None,
+            info_hash="598974fc04f0344822b34411a2d9f0a5219d47b1",
+            file_idx=0,
+            sources=[
+                "tracker:udp://tracker.opentrackr.org:1337/announce",
+                "dht:598974fc04f0344822b34411a2d9f0a5219d47b1",
+            ],
+            filename=None,
+            addon_name="CIN",
+            addon_url="https://cinnn.vercel.app/manifest.json",
+        )
+        result = stream_download.select_quality_streams(
+            [cin_stream],
+            "1080p",
+            quality_fallbacks=["720p", "480p"],
+            allow_higher=False,
+            allow_lower=True,
+            target_season=23,
+            target_episode=3,
+            title="One Piece",
+            target_imdb_id="tt0388629",
+        )
+        assert result == [cin_stream]
+
+
 # Title filtering is kept in the active pipeline because loose addon searches can
 # return streams from unrelated shows with the same S/E number.
 

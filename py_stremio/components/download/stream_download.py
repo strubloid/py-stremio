@@ -625,10 +625,115 @@ def filter_for_english_subtitles(streams: list) -> list:
     return [s for s in streams if has_english_subtitle(s)]
 
 
+_QUALITY_STRING_SCORES: dict[str, int] = {
+    "2160p": 100, "4k": 100, "uhd": 100,
+    "1080p": 80, "fhd": 80,
+    "720p": 60, "hd": 60,
+    "480p": 40, "sd": 40,
+    "360p": 20,
+}
+
+
+def _stream_quality_score(stream) -> int | None:
+    """Return the numeric quality score of a stream, or None if it cannot be
+    detected from the stream's title/filename.
+
+    Only the *title* and *filename* fields are used as quality signals.
+    The *name* field is the addon's display label (e.g. ``"CIN 4K"``,
+    ``"Torrentio 1080p"``, ``"Comet 720p"``) and reflects the addon's
+    own quality category rather than the actual quality of the file
+    behind the stream — using it for filtering would falsely reject
+    valid streams (CIN's info-hash streams are commonly tagged
+    ``"CIN 4K"`` even when the underlying file is 1080p or 720p).
+
+    4K (2160p) is checked before 1080p/720p so its marker is never
+    mis-attributed to a smaller resolution that also happens to contain
+    a "1080" or "720" substring.
+    """
+    title = (getattr(stream, "title", "") or "").lower()
+    filename = (getattr(stream, "filename", "") or "").lower()
+    haystacks = (title, filename)
+
+    for marker, score in (
+        (("2160", "4k", "uhd"), 100),
+        (("1080", "fhd"), 80),
+        (("720", "hd"), 60),
+        (("480", "sd"), 40),
+        (("360",), 20),
+    ):
+        for marker_str in marker:
+            if any(marker_str in hay for hay in haystacks):
+                return score
+    return None
+
+
+def _quality_string_to_score(quality: str | None) -> int | None:
+    """Map a configured quality string like ``"1080p"`` to its numeric score."""
+    if not quality:
+        return None
+    return _QUALITY_STRING_SCORES.get(quality.strip().lower())
+
+
+def _build_quality_priority(
+    preferred_quality: str | None,
+    fallbacks: list[str] | None,
+) -> list[int]:
+    """Build a deduplicated list of quality scores in preference order:
+    preferred first, then fallbacks in the order given.
+    """
+    priority: list[int] = []
+    preferred_score = _quality_string_to_score(preferred_quality)
+    if preferred_score is not None:
+        priority.append(preferred_score)
+    if fallbacks:
+        for q in fallbacks:
+            score = _quality_string_to_score(q)
+            if score is not None and score not in priority:
+                priority.append(score)
+    return priority
+
+
+def _quality_priority_rank(stream, priority_scores: list[int]) -> tuple[int, bool]:
+    """Return ``(rank, is_unknown)`` for a stream under the given priority list.
+
+    A stream whose score matches an entry in *priority_scores* is ranked by
+    its position in that list (0 = best, the preferred quality).  A stream
+    whose score is below the lowest allowed quality is given a rank past
+    the end of the priority list so it is tried after the configured
+    fallbacks.  A stream whose score is above the highest allowed quality
+    is given an even larger rank so it is tried last (or filtered out
+    entirely by the caller when ``allow_higher`` is False).  A stream
+    whose quality cannot be detected is ranked last of all.
+    """
+    score = _stream_quality_score(stream)
+    if score is None:
+        return (len(priority_scores) + 2, True)
+    if not priority_scores:
+        return (0, False)
+    try:
+        return (priority_scores.index(score), False)
+    except ValueError:
+        min_score = min(priority_scores)
+        max_score = max(priority_scores)
+        if score > max_score:
+            return (len(priority_scores) + 1, False)
+        if score < min_score:
+            return (len(priority_scores), False)
+        # Between two configured qualities (shouldn't happen with the
+        # current discrete buckets, but be defensive).
+        return (len(priority_scores), False)
+
+
 def _quality_sort_key(stream) -> tuple:
     """Sort streams by quality: 4K > 1080p > 720p > 480p > 360p > others.
     Prefers streams with a direct URL over info_hash-only at the same quality.
-    Prefers streams with more seeders at the same quality level."""
+    Prefers streams with more seeders at the same quality level.
+
+    NOTE: this helper preserves the legacy "always 4K first" behaviour and
+    is kept only for callers that have not been migrated to the
+    priority-aware ``_quality_priority_sort_key`` below.  New code should
+    use ``select_quality_streams`` with the full quality config.
+    """
     name = (stream.name or "").lower()
     title = (stream.title or "").lower()
 
@@ -663,6 +768,34 @@ def _quality_sort_key(stream) -> tuple:
     return (-url_bonus, -qscore, -addon_bonus, -seeders)
 
 
+def _quality_priority_sort_key(
+    stream,
+    priority_scores: list[int],
+) -> tuple:
+    """Sort key that respects the configured quality priority list.
+
+    Streams are first ordered by their position in the priority list
+    (preferred first, then fallbacks in order, then below-fallback, then
+    above-preferred, then unknown).  Within the same priority bucket,
+    the same secondary factors as ``_quality_sort_key`` apply: direct
+    URLs over info-hash, Comet/non-Torrentio over Torrentio, then
+    seeders.
+    """
+    rank, _is_unknown = _quality_priority_rank(stream, priority_scores)
+    name = (stream.name or "").lower()
+    title = (stream.title or "").lower()
+    addon = (getattr(stream, "addon_name", "") or "").lower()
+
+    url_bonus = 1 if stream.url else 0
+    addon_bonus = 0
+    if "comet" in addon:
+        addon_bonus = 30
+    elif "torrentio" not in addon:
+        addon_bonus = 10
+    seeders = getattr(stream, "seeders", None) or 0
+    return (rank, -url_bonus, -addon_bonus, -seeders)
+
+
 def select_quality_streams(
     streams: list,
     preferred_quality: str,
@@ -671,10 +804,32 @@ def select_quality_streams(
     target_episode: int | None = None,
     title: str | None = None,
     target_imdb_id: str | None = None,
+    quality_fallbacks: list[str] | None = None,
+    allow_higher: bool = False,
+    allow_lower: bool = True,
 ) -> list:
-    """Filter out unusable streams, then return all usable ones sorted by quality
-    descending (1080p > 720p > 480p > ...) so the caller can try best first
-    and fall back to lower qualities.
+    """Filter out unusable streams, then return all usable ones sorted by the
+    configured quality priority (preferred first, then fallbacks in order) so
+    the caller can try best first and fall back to lower qualities.
+
+    The priority is built from *preferred_quality* + *quality_fallbacks*
+    (the same fields the legacy ``plan_quality_fallback`` uses).  The
+    ``allow_higher`` and ``allow_lower`` flags control what happens to
+    streams whose quality is outside the configured priority list:
+
+      * ``allow_higher=False`` (the default): streams whose quality is
+        *better* than the preferred quality (e.g. 4K when the user
+        prefers 1080p) are filtered out entirely.  This is the
+        long-standing behaviour of the legacy ``allow_higher`` flag and
+        prevents the system from silently picking a 4K release when the
+        user explicitly asked for 1080p.
+      * ``allow_higher=True``: those streams are kept and tried *after*
+        all configured priorities, so a user who has 4K as a last-resort
+        fallback still gets 1080p first.
+      * ``allow_lower=False``: streams whose quality is *worse* than
+        the lowest configured fallback are filtered out.
+      * ``allow_lower=True`` (the default): those streams are kept and
+        tried after the configured fallbacks.
 
     When *title* is provided, warns about streams whose release name doesn't
     contain the show title — this helps catch IMDB-ID mismatches where an
@@ -704,8 +859,34 @@ def select_quality_streams(
     usable = filter_streams_by_language(usable, preferred_languages=preferred_languages)
     if not usable:
         return []
-    # Sort by quality descending
-    usable.sort(key=_quality_sort_key)
+
+    priority_scores = _build_quality_priority(preferred_quality, quality_fallbacks)
+    if priority_scores:
+        min_score = min(priority_scores)
+        max_score = max(priority_scores)
+        filtered: list = []
+        for s in usable:
+            score = _stream_quality_score(s)
+            if score is None:
+                # Unknown quality — only keep when we're not filtering
+                # strictly; otherwise the user gets nothing.
+                if allow_higher or allow_lower:
+                    filtered.append(s)
+                continue
+            if score > max_score and not allow_higher:
+                continue
+            if score < min_score and not allow_lower:
+                continue
+            filtered.append(s)
+        usable = filtered
+        if not usable:
+            return []
+        usable.sort(key=lambda s: _quality_priority_sort_key(s, priority_scores))
+    else:
+        # No usable priority list (no preferred + no fallbacks).  Fall
+        # back to the legacy quality-descending sort so behaviour is
+        # at least sensible in this edge case.
+        usable.sort(key=_quality_sort_key)
     return usable[:20]  # cap at 20 to avoid too many attempts
 
 

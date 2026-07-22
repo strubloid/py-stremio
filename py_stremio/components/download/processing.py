@@ -378,6 +378,15 @@ def _do_download_one_episode(
             experimental_addons=task.experimental_addons,
             stage_tracker=stage_tracker,
             skip_full_search=skip_full,
+            quality_fallbacks=(
+                task.config.quality.fallbacks if task.config.quality else None
+            ),
+            allow_higher=(
+                task.config.quality.allow_higher if task.config.quality else False
+            ),
+            allow_lower=(
+                task.config.quality.allow_lower if task.config.quality else True
+            ),
         )
     except BaseException as exc:
         error = exc
@@ -910,6 +919,9 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
             bandwidth_limiter=bandwidth_limiter,
             experimental_addons=experimental_addons,
             stage_tracker=movie_stage_tracker,
+            quality_fallbacks=config.quality.fallbacks if config.quality else None,
+            allow_higher=config.quality.allow_higher if config.quality else False,
+            allow_lower=config.quality.allow_lower if config.quality else True,
         )
     except BaseException as exc:
         error = exc
