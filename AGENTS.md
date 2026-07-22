@@ -178,6 +178,7 @@ AppService.run_pipeline()
 - Queries Stremio addons directly (Torrentio, MediaFusion, ThePirateBay+, etc.)
 - Append-only progress bars emit only the changed episode line in non-TTY output (stable numbering/no repeated full blocks) with per-episode rate limiting (~1 line/sec/episode); non-download/search stages render `waiting for download`, and tiny invalid/error responses under 1 MB render `sizing` instead of fake byte percentages
 - Multi-threaded download support (DOWNLOAD_THREADS, default: 2) with FairBandwidthLimiter per-active-download bandwidth sharing and dynamic redistribution when actual stream downloads start/finish; search/probe workers are not counted against the bandwidth share
+- **Interactive bottom controls bar** (rich TUI only, no-op on pipes/cron) — single-key controls rendered below the existing footer: `[B]` toggles 4K filter (session-only, propagates to all live folder configs in memory), `[+]`/`[-]` adjusts the worker count (1..16, clamped), `[[]`/`]]` adjusts the speed percent in 5-point steps (1..100, clamped), `[Q]` requests cooperative shutdown. The keyboard reader is implemented in `services/controls.py` (cross-platform: `termios.tty.setcbreak` on Unix, `msvcrt.kbhit`/`getwch` on Windows) and is automatically suppressed when stdin/stdout is not a tty. Toggling 4K does NOT persist to `download-config.json` — the on-disk config is read once at startup and never written by the toggle.
 - **`py-stremio-cron` console entry point** — uses the same `AppService` path as `py-stremio` with cron preset defaults: 5 threads + 80% speed
 - **Interactive prompt split** — normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses preset defaults (5 threads, 80% speed) without prompts
 - Movie partial-download safety: when a movie source ignores its Range request, preserve the existing `.part` unchanged and try another source rather than silently restarting from zero; do not alter established series behavior
@@ -438,6 +439,7 @@ When these non-stream addons are queried for `/stream/`, they either:
 - **Preflight optimization**: when preflight scan finds zero working addons, subsequent episodes skip the full addon re-scan (saves ~30s/episode)
 - **`py-stremio-cron`** console entry point: same `AppService` path as `py-stremio`, with cron preset defaults (5 threads and 80% speed limit)
 - **Interactive prompt split**: normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses 5 threads and 80% speed without prompts
+- **Live bottom-bar controls** (TUI only): the controls bar described above lets the user adjust workers, speed, and 4K filter on the fly — these are session-only, not persisted to disk
 - Legacy abstract provider path maintained but secondary
 - Email reports via SMTP (optional)
 

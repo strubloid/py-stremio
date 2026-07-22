@@ -483,6 +483,30 @@ def _generated_episode_filename(folder_path: Path, config, season: int, episode:
     return Path(build_media_filename(config.title, season, episode, str(folder_path))).name
 
 
+def _movie_target_path(folder_path: Path, config) -> Path:
+    """Return the absolute path of the expected final movie file.
+
+    Uses the configured title (preferred) or the folder name as a
+    fallback, matching the ``build_media_filename`` output used by the
+    download path so the two halves of the pipeline agree on the
+    expected output location.
+    """
+    title = config.title or folder_path.name
+    return folder_path / f"{title}.mkv"
+
+
+def _movie_partial_path(folder_path: Path, config) -> Path:
+    """Return the absolute path of the in-progress ``.part`` movie file, if any.
+
+    The downloader writes bytes to ``<title>.mkv.part`` while a download
+    is running and atomically renames it to ``<title>.mkv`` on success.
+    Detecting the ``.part`` file is what lets the pipeline announce
+    "resuming partial download" instead of pretending the search is a
+    fresh start.
+    """
+    return _movie_target_path(folder_path, config).with_suffix(".mkv.part")
+
+
 def _is_completed_generated_file(folder_path: Path, config, season: int, episode: int) -> bool:
     """Return True when the final generated media file is already present."""
     expected = _generated_episode_filename(folder_path, config, season, episode)
@@ -613,8 +637,16 @@ def process_season_folder(
     bandwidth_limiter=None,
     worker_semaphore: threading.Semaphore | None = None,
     quiet_output: bool = False,
+    live_configs: list | None = None,
 ) -> dict:
-    """Process a season folder — backward-compatible wrapper around the task system."""
+    """Process a season folder — backward-compatible wrapper around the task system.
+
+    When ``live_configs`` is provided, the loaded ``task.config`` is
+    appended to it so the caller can observe and mutate quality
+    settings live (for example the bottom-bar 4K toggle in the
+    interactive UI).  The on-disk config is never written by this
+    function for the 4K toggle — it is a session-only override.
+    """
     task = setup_season_folder(
         folder_path=folder_path,
         bandwidth_limiter=bandwidth_limiter,
@@ -622,6 +654,9 @@ def process_season_folder(
     )
     if task is None:
         return {"skipped": True, "reason": "setup returned no task"}
+
+    if live_configs is not None:
+        live_configs.append(task.config)
 
     skipped_existing = _drop_existing_episodes_from_task(task)
     if skipped_existing:
@@ -796,10 +831,24 @@ def process_season_folder(
 # ── Movie folder processing ────────────────────────────────────────
 
 
-def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_limiter=None) -> dict:
-    """Process a movie folder and download missing content from Stremio."""
+def process_movie_folder(
+    folder_path: Path,
+    progress_callback=None,
+    bandwidth_limiter=None,
+    live_configs: list | None = None,
+) -> dict:
+    """Process a movie folder and download missing content from Stremio.
+
+    When ``live_configs`` is provided, the loaded ``config`` is
+    appended to it so the caller can observe and mutate quality
+    settings live (for example the bottom-bar 4K toggle in the
+    interactive UI).  The on-disk config is never written by this
+    function for the 4K toggle — it is a session-only override.
+    """
     config, config_path = load_config(folder_path)
     state = load_state(folder_path)
+    if live_configs is not None:
+        live_configs.append(config)
 
     # ── Load experimental addons (last-resort fallback) ─────────────────
     experimental_addons: list[str] | None = None
@@ -828,6 +877,30 @@ def process_movie_folder(folder_path: Path, progress_callback=None, bandwidth_li
                 state.add_download(file_path.name, quality, "stremio")
         save_state(folder_path, state)
         return {"downloaded": 0, "skipped": len(video_files)}
+
+    # ── Partial download detection ──────────────────────────────────────
+    # If a ``.part`` file exists from a previous interrupted download,
+    # surface that to the user BEFORE the (potentially slow) addon
+    # search starts so they know the system is aware of the partial
+    # bytes.  The actual resume happens inside ``download_stream_to_file``
+    # via HTTP Range headers — once a stream is selected, the partial
+    # file is appended to instead of being rewritten from zero.
+    partial_path = _movie_partial_path(folder_path, config)
+    resume_state: dict[str, Any] = {"partial_bytes": 0}
+    if partial_path.exists():
+        try:
+            partial_bytes = partial_path.stat().st_size
+        except OSError:
+            partial_bytes = 0
+        if partial_bytes > 0:
+            resume_state["partial_bytes"] = partial_bytes
+            size_mb = partial_bytes / (1024 * 1024)
+            size_gb = size_mb / 1024
+            human = f"{size_gb:.1f} GB" if size_gb >= 1 else f"{size_mb:.0f} MB"
+            print(
+                f"  ↻ Resuming partial download: {partial_path.name} "
+                f"({human} already on disk) — search will reuse the bytes via HTTP Range"
+            )
 
     title = config.search_group or config.title or folder_path.name
     servers = unique_manifest_urls(config.servers)

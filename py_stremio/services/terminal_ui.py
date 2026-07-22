@@ -7,13 +7,16 @@ import re
 import sys
 import threading
 import time
-from typing import Any, TextIO
+from typing import Any, Callable, TextIO
 
 from rich.console import Console, Group
 from rich.live import Live
 from rich.progress_bar import ProgressBar
 from rich.table import Table
 from rich.text import Text
+
+from py_stremio.services.controls import KeyboardControls
+from py_stremio.utils.cancellation import request_shutdown
 
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -84,6 +87,13 @@ class DownloadUI:
         self.workers_ref = [max(1, max_workers)]
         self.speed_ref = [max(1, min(100, speed_percent))]
         self.max_speed_mbps = max_speed_mbps
+        # Session-only 4K filter override. When True, the next episode's
+        # quality filter keeps streams above the preferred quality (e.g.
+        # 4K when the user prefers 1080p). The download service is
+        # responsible for propagating this to per-folder in-memory
+        # configs so the very next ``select_quality_streams`` call
+        # honours the toggle. The on-disk config is never modified.
+        self.allow_4k_ref: list[bool] = [False]
         self._now = now
         self._lock = threading.RLock()
         self._tasks: dict[tuple[Any, ...], dict[str, Any]] = {}
@@ -105,6 +115,15 @@ class DownloadUI:
 
     def stop(self) -> None:
         pass
+
+    def on_4k_toggle(self, handler: Callable[[bool], None]) -> None:
+        """Register a callback fired with the new value when 4K is toggled.
+
+        The base class has no keyboard handling, so this is a no-op by
+        default. Interactive subclasses wire it to the ``KeyboardControls``
+        reader thread.
+        """
+        del handler
 
     def progress(self, event: dict[str, Any]) -> None:
         with self._lock:
@@ -240,6 +259,14 @@ class RichDownloadUI(DownloadUI):
     # refreshed on every event — only the rendered value is sticky.
     RATE_DISPLAY_INTERVAL = 1.5
 
+    # Keyboard control limits (kept as class constants so tests can
+    # verify the bounds without poking the UI).
+    MIN_WORKERS = 1
+    MAX_WORKERS = 16
+    SPEED_STEP = 5
+    MIN_SPEED = 1
+    MAX_SPEED = 100
+
     def __init__(self, *args, console: Console | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.console = console or Console(file=self.stream, markup=False)
@@ -258,12 +285,82 @@ class RichDownloadUI(DownloadUI):
             redirect_stdout=True,
             redirect_stderr=True,
         )
+        self._controls = KeyboardControls()
+        self._4k_handlers: list[Callable[[bool], None]] = []
+        self._wire_default_keybindings()
+
+    # ── Keyboard control wiring ────────────────────────────────────────
+
+    def _wire_default_keybindings(self) -> None:
+        """Register the default keybindings for the bottom controls bar.
+
+        Subclasses or tests can override the behaviour of any key by
+        removing the corresponding handler via :meth:`_controls.off`
+        before :meth:`start` is called. The toggle key (``b``) also
+        fires every callback registered through :meth:`on_4k_toggle`.
+        """
+        c = self._controls
+        c.on("b", self._handle_4k_toggle)
+        c.on("+", lambda: self._bump_workers(+1))
+        c.on("=", lambda: self._bump_workers(+1))  # unshifted '+' on US layout
+        c.on("-", lambda: self._bump_workers(-1))
+        c.on("[", lambda: self._bump_speed(-self.SPEED_STEP))
+        c.on("]", lambda: self._bump_speed(+self.SPEED_STEP))
+        c.on("q", request_shutdown)
+        c.on("Q", request_shutdown)
+
+    def _handle_4k_toggle(self) -> None:
+        new_value = not self.allow_4k_ref[0]
+        self.allow_4k_ref[0] = new_value
+        handlers = list(self._4k_handlers)
+        for handler in handlers:
+            try:
+                handler(new_value)
+            except Exception:
+                continue
+
+    def _bump_workers(self, delta: int) -> None:
+        current = self.workers_ref[0]
+        new_value = max(self.MIN_WORKERS, min(self.MAX_WORKERS, current + delta))
+        self.workers_ref[0] = new_value
+
+    def _bump_speed(self, delta: int) -> None:
+        current = self.speed_ref[0]
+        new_value = max(self.MIN_SPEED, min(self.MAX_SPEED, current + delta))
+        self.speed_ref[0] = new_value
+
+    def on_4k_toggle(self, handler: Callable[[bool], None]) -> None:
+        """Register a callback fired with the new value when 4K is toggled."""
+        self._4k_handlers.append(handler)
 
     def start(self) -> None:
+        self._controls.start()
         self._live.start(refresh=True)
 
     def stop(self) -> None:
-        self._live.stop()
+        try:
+            self._live.stop()
+        finally:
+            self._controls.stop()
+
+    # ── Keyboard control introspection (testing) ───────────────────────
+
+    @property
+    def controls(self) -> KeyboardControls:
+        return self._controls
+
+    def trigger_4k_toggle(self) -> bool:
+        """Synchronously fire the 4K toggle handler and return the new value."""
+        self._handle_4k_toggle()
+        return self.allow_4k_ref[0]
+
+    def trigger_workers_bump(self, delta: int) -> int:
+        self._bump_workers(delta)
+        return self.workers_ref[0]
+
+    def trigger_speed_bump(self, delta: int) -> int:
+        self._bump_speed(delta)
+        return self.speed_ref[0]
 
     def print(self, message: str, *, error: bool = False) -> None:
         style = "red" if error else None
@@ -376,7 +473,27 @@ class RichDownloadUI(DownloadUI):
             f"  |  Downloading {self._active_transfers()}  |  Ctrl+C cancel",
             style="dim",
         )
-        return Group(header, table, footer)
+        controls = self._build_controls_line()
+        return Group(header, table, footer, controls)
+
+    def _build_controls_line(self) -> Text:
+        """Render the bottom controls bar with current values and keybindings.
+
+        The bar shows what each key does so the user does not need to
+        remember the keymap. Current values are bold so the user can see
+        the result of their last keypress.
+        """
+        four_k_state = "ON" if self.allow_4k_ref[0] else "OFF"
+        four_k_style = "bold green" if self.allow_4k_ref[0] else "bold red"
+        return Text.assemble(
+            ("  [B] 4K: ", "dim"),
+            (four_k_state, four_k_style),
+            ("  │  [+/-] Workers: ", "dim"),
+            (str(self.workers_ref[0]), "bold cyan"),
+            ("  │  [[/]] Speed: ", "dim"),
+            (f"{self.speed_ref[0]}%", "bold cyan"),
+            ("  │  [Q] Quit", "dim"),
+        )
 
 
 def create_download_ui(

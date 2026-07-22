@@ -55,6 +55,28 @@ class DynamicLimit:
             self._cond.notify()
 
 
+class _LiveConfigs(list):
+    """Thread-safe config registry carrying the current session 4K override."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.RLock()
+        self._allow_4k: bool | None = None
+
+    def append(self, config) -> None:
+        with self._lock:
+            super().append(config)
+            if self._allow_4k is not None and config and config.quality:
+                config.quality.allow_higher = self._allow_4k
+
+    def set_allow_4k(self, allow_4k: bool) -> None:
+        with self._lock:
+            self._allow_4k = allow_4k
+            for config in self:
+                if config and config.quality:
+                    config.quality.allow_higher = allow_4k
+
+
 class DownloadService:
     """Download missing episodes/movies across folders with parallel support."""
 
@@ -114,6 +136,17 @@ class DownloadService:
         def progress(event: dict[str, Any]) -> None:
             ui.progress(event)
 
+        # Live-loaded folder configs (filled as we process each folder).
+        # The 4K toggle handler mutates these in place so the very next
+        # ``select_quality_streams`` call honours the user's choice. The
+        # on-disk config is never modified — the toggle is session-only.
+        live_configs = _LiveConfigs()
+
+        def _propagate_4k_toggle(new_value: bool) -> None:
+            live_configs.set_allow_4k(new_value)
+
+        ui.on_4k_toggle(_propagate_4k_toggle)
+
         dynamic_limit = DynamicLimit(workers_ref)
 
         def folder_display(folder: ScannedFolder) -> str:
@@ -141,6 +174,7 @@ class DownloadService:
                 max_workers=per_folder_workers,
                 bandwidth_limiter=bandwidth_limiter,
                 worker_semaphore=dynamic_limit,
+                live_configs=live_configs,
             )
 
         def record_result(folder: ScannedFolder, result: dict[str, Any]) -> None:
@@ -289,6 +323,7 @@ class DownloadService:
         max_workers: int = 1,
         bandwidth_limiter=None,
         worker_semaphore: threading.Semaphore | DynamicLimit | None = None,
+        live_configs: list | None = None,
     ) -> dict[str, Any]:
         processor = process_series if folder.folder_type == FolderType.SERIES else process_movies
         signature = inspect.signature(processor).parameters
@@ -303,6 +338,8 @@ class DownloadService:
             kwargs["worker_semaphore"] = worker_semaphore
         if "quiet_output" in signature:
             kwargs["quiet_output"] = quiet
+        if live_configs is not None and "live_configs" in signature:
+            kwargs["live_configs"] = live_configs
         if quiet:
             with suppress_current_thread_output():
                 return processor(folder.path, **kwargs)

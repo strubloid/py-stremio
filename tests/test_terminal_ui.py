@@ -356,3 +356,262 @@ def test_rich_renderer_header_annotates_downloading_count_when_searching():
     assert "2 active (1 downloading)" in rendered
     # Footer label was also renamed for clarity.
     assert "Downloading 1" in rendered
+
+
+# ── Bottom controls bar ───────────────────────────────────────────────────
+
+
+class TestControlsBar:
+    """The bottom controls bar shows the current state of every interactive
+    control (4K filter, worker count, speed limit) plus the keymap.  Pressing
+    the documented keys must update both the displayed value and the
+    corresponding mutable reference consumed by the download pipeline.
+    """
+
+    def _make_ui(self, **overrides):
+        output = _TtyBuffer()
+        console = Console(
+            file=output,
+            force_terminal=True,
+            width=160,
+            color_system=None,
+            record=True,
+        )
+        defaults = dict(
+            limiter=_NoLimiter(),
+            max_workers=2,
+            speed_percent=50,
+            max_speed_mbps=100,
+        )
+        defaults.update(overrides)
+        return RichDownloadUI(output, console=console, **defaults), console
+
+    def test_initial_4k_state_is_off(self):
+        ui, _ = self._make_ui()
+        assert ui.allow_4k_ref[0] is False
+
+    def test_controls_bar_shows_off_state(self):
+        ui, console = self._make_ui()
+        console.print(ui._build_controls_line())
+        rendered = console.export_text(styles=False)
+        assert "[B] 4K: OFF" in rendered
+        assert "[+/-] Workers: 2" in rendered
+        assert "[[/]] Speed: 50%" in rendered
+        assert "[Q] Quit" in rendered
+
+    def test_controls_bar_shows_on_state_after_toggle(self):
+        ui, console = self._make_ui()
+        ui.trigger_4k_toggle()
+        console.print(ui._build_controls_line())
+        rendered = console.export_text(styles=False)
+        assert "[B] 4K: ON" in rendered
+
+    def test_4k_toggle_fires_registered_handlers(self):
+        ui, _ = self._make_ui()
+        received: list[bool] = []
+        ui.on_4k_toggle(received.append)
+        ui.trigger_4k_toggle()
+        ui.trigger_4k_toggle()
+        assert received == [True, False]
+
+    def test_b_key_toggles_4k_via_keyboard(self):
+        ui, _ = self._make_ui()
+        ui.controls.dispatch("b")
+        assert ui.allow_4k_ref[0] is True
+        ui.controls.dispatch("B")  # case-insensitive
+        assert ui.allow_4k_ref[0] is False
+
+    def test_plus_bumps_workers(self):
+        ui, _ = self._make_ui(max_workers=3)
+        ui.controls.dispatch("+")
+        assert ui.workers_ref[0] == 4
+        # Unshifted '+' is '=' on US keyboards — both must work.
+        ui.controls.dispatch("=")
+        assert ui.workers_ref[0] == 5
+
+    def test_minus_drops_workers(self):
+        ui, _ = self._make_ui(max_workers=3)
+        ui.controls.dispatch("-")
+        assert ui.workers_ref[0] == 2
+
+    def test_workers_clamps_to_bounds(self):
+        ui, _ = self._make_ui(max_workers=1)
+        ui.controls.dispatch("-")
+        assert ui.workers_ref[0] == 1  # min
+        for _ in range(20):
+            ui.controls.dispatch("+")
+        assert ui.workers_ref[0] == RichDownloadUI.MAX_WORKERS  # 16
+
+    def test_brackets_bump_speed_in_steps(self):
+        ui, _ = self._make_ui(speed_percent=50)
+        ui.controls.dispatch("]")
+        assert ui.speed_ref[0] == 55
+        ui.controls.dispatch("[")
+        ui.controls.dispatch("[")
+        assert ui.speed_ref[0] == 45
+
+    def test_speed_clamps_to_bounds(self):
+        ui, _ = self._make_ui(speed_percent=1)
+        ui.controls.dispatch("[")
+        assert ui.speed_ref[0] == 1  # min
+        for _ in range(50):
+            ui.controls.dispatch("]")
+        assert ui.speed_ref[0] == RichDownloadUI.MAX_SPEED  # 100
+
+    def test_q_key_requests_shutdown(self):
+        from py_stremio.utils.cancellation import (
+            clear_shutdown,
+            shutdown_requested,
+        )
+        clear_shutdown()
+        ui, _ = self._make_ui()
+        ui.controls.dispatch("q")
+        assert shutdown_requested() is True
+        clear_shutdown()  # cleanup for subsequent tests
+
+    def test_full_renderable_includes_controls_line(self):
+        ui, console = self._make_ui()
+        console.print(ui._build_renderable())
+        rendered = console.export_text(styles=False)
+        # The controls line lives below the existing footer
+        assert "[B] 4K: OFF" in rendered
+        # and the existing footer is still there
+        assert "Worker limit 2" in rendered
+
+    def test_no_op_when_key_not_registered(self):
+        ui, _ = self._make_ui()
+        # Should not raise even though no handler is registered.
+        ui.controls.dispatch("z")
+        assert ui.allow_4k_ref[0] is False
+        assert ui.workers_ref[0] == 2
+        assert ui.speed_ref[0] == 50
+
+    def test_4k_toggle_propagates_to_live_configs(self):
+        """The 4K toggle mutates in-memory DownloadConfig objects so the
+        next ``select_quality_streams`` call honours the choice.  This is
+        exactly the wiring that ``services/download.py`` uses to keep the
+        next episode's quality filter in sync with the bottom bar."""
+        from py_stremio.components.configs.config_file import (
+            DownloadConfig,
+            QualitySettings,
+        )
+
+        ui, _ = self._make_ui()
+        config_a = DownloadConfig(
+            type="movies", quality=QualitySettings(preferred="1080p", allow_higher=False)
+        )
+        config_b = DownloadConfig(
+            type="movies", quality=QualitySettings(preferred="1080p", allow_higher=True)
+        )
+        live_configs: list = [config_a, config_b]
+
+        def _propagate(new_value: bool) -> None:
+            for config in live_configs:
+                if config and config.quality:
+                    config.quality.allow_higher = new_value
+
+        ui.on_4k_toggle(_propagate)
+
+        ui.trigger_4k_toggle()
+        assert config_a.quality.allow_higher is True
+        assert config_b.quality.allow_higher is True
+
+        ui.trigger_4k_toggle()
+        assert config_a.quality.allow_higher is False
+        assert config_b.quality.allow_higher is False
+
+    def test_4k_toggle_applies_to_configs_loaded_after_keypress(self):
+        from py_stremio.components.configs.config_file import (
+            DownloadConfig,
+            QualitySettings,
+        )
+        from py_stremio.services.download import _LiveConfigs
+
+        ui, _ = self._make_ui()
+        live_configs = _LiveConfigs()
+        ui.on_4k_toggle(live_configs.set_allow_4k)
+
+        ui.trigger_4k_toggle()
+        config = DownloadConfig(
+            type="series",
+            quality=QualitySettings(preferred="1080p", allow_higher=False),
+        )
+        live_configs.append(config)
+
+        assert config.quality.allow_higher is True
+
+    def test_controls_not_started_when_tty_unsupported(self):
+        """In non-TTY contexts (pipes, CI, subprocess captures) the
+        keyboard reader must not start a thread that would block on
+        stdin or corrupt the terminal mode."""
+        from py_stremio.services.controls import KeyboardControls
+
+        ctrl = KeyboardControls()
+        # Force the no-raw path even when pytest's stdin happens to be a tty.
+        ctrl._supports_raw = False
+        ctrl.start()
+        try:
+            assert ctrl.is_running() is False
+        finally:
+            ctrl.stop()
+
+
+# ── KeyboardControls unit tests ───────────────────────────────────────────
+
+
+class TestKeyboardControls:
+    def test_on_dispatch_invokes_handler(self):
+        from py_stremio.services.controls import KeyboardControls
+
+        ctrl = KeyboardControls()
+        calls: list[str] = []
+        ctrl.on("a", lambda: calls.append("a"))
+        ctrl.dispatch("a")
+        assert calls == ["a"]
+
+    def test_dispatch_is_case_insensitive(self):
+        from py_stremio.services.controls import KeyboardControls
+
+        ctrl = KeyboardControls()
+        calls: list[str] = []
+        ctrl.on("b", lambda: calls.append("b"))
+        ctrl.dispatch("B")
+        ctrl.dispatch("b")
+        assert calls == ["b", "b"]
+
+    def test_dispatch_unknown_key_is_noop(self):
+        from py_stremio.services.controls import KeyboardControls
+
+        ctrl = KeyboardControls()
+        # Should not raise
+        ctrl.dispatch("z")
+
+    def test_dispatch_isolates_handler_exceptions(self):
+        from py_stremio.services.controls import KeyboardControls
+
+        ctrl = KeyboardControls()
+        seen: list[str] = []
+        ctrl.on("x", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+        ctrl.on("x", lambda: seen.append("ok"))
+        # First handler raises, second must still run.
+        ctrl.dispatch("x")
+        assert seen == ["ok"]
+
+    def test_multiple_handlers_for_same_key_fire_in_order(self):
+        from py_stremio.services.controls import KeyboardControls
+
+        ctrl = KeyboardControls()
+        seen: list[str] = []
+        ctrl.on("p", lambda: seen.append("first"))
+        ctrl.on("p", lambda: seen.append("second"))
+        ctrl.dispatch("p")
+        assert seen == ["first", "second"]
+
+    def test_start_is_idempotent(self):
+        from py_stremio.services.controls import KeyboardControls
+
+        ctrl = KeyboardControls()
+        ctrl._supports_raw = False
+        ctrl.start()
+        ctrl.start()  # second call must not spawn another thread
+        ctrl.stop()

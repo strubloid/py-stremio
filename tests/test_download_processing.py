@@ -1317,6 +1317,127 @@ def test_process_movie_folder_emits_bytes_and_terminal_progress(tmp_path, monkey
     assert byte_events[-1]["bytes_total"] == 100
     assert "total_size" not in byte_events[-1]
     assert byte_events[-1]["rate_bps"] >= 0
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Movie .part resume detection
+# ═══════════════════════════════════════════════════════════════════
+
+
+def test_process_movie_folder_announces_resume_when_part_file_exists(tmp_path, monkeypatch, capsys):
+    """A ``.part`` file from a previous interrupted download must be
+    announced so the user knows the system is aware of the partial bytes
+    and will resume via HTTP Range headers."""
+    config = DownloadConfig(
+        type="movies",
+        title="Michael",
+        imdb_id="tt11378946",
+        search_group="Michael",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    # 66 GB-ish partial file in the same shape the user reported.
+    partial = tmp_path / "Michael.mkv.part"
+    partial.write_bytes(b"\x00" * (66 * 1024 * 1024 * 1024 // 4))  # smaller fake
+
+    captured: list[dict] = []
+
+    def fake_search_and_download(**kwargs):
+        captured.append(dict(kwargs))
+        return {"success": True, "filename": "Michael.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr("py_stremio.components.download.processing.search_and_download", fake_search_and_download)
+    monkeypatch.setattr("py_stremio.components.download.processing.preflight_discover_working_addons", lambda *args, **kwargs: [])
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    process_movie_folder(tmp_path)
+    output = capsys.readouterr().out
+    assert "Resuming partial download" in output
+    assert "Michael.mkv.part" in output
+    # And the search must still have been kicked off so a real download
+    # can resume the .part bytes — the announcement alone is not enough.
+    assert len(captured) == 1
+    assert captured[0]["title"] == "Michael"
+
+
+def test_process_movie_folder_silent_when_no_part_file(tmp_path, monkeypatch, capsys):
+    """Without a .part file the resume line must NOT be printed — the
+    announcement is only useful when there's something to resume."""
+    config = DownloadConfig(
+        type="movies",
+        title="Michael",
+        imdb_id="tt11378946",
+        search_group="Michael",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+
+    def fake_search_and_download(**kwargs):
+        return {"success": True, "filename": "Michael.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr("py_stremio.components.download.processing.search_and_download", fake_search_and_download)
+    monkeypatch.setattr("py_stremio.components.download.processing.preflight_discover_working_addons", lambda *args, **kwargs: [])
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    process_movie_folder(tmp_path)
+    output = capsys.readouterr().out
+    assert "Resuming partial download" not in output
+
+
+def test_process_movie_folder_ignores_empty_part_file(tmp_path, monkeypatch, capsys):
+    """A zero-byte .part file (e.g. leftover from a failed attempt) must
+    NOT trigger the resume announcement — there's nothing to resume."""
+    config = DownloadConfig(
+        type="movies",
+        title="Michael",
+        imdb_id="tt11378946",
+        search_group="Michael",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    (tmp_path / "Michael.mkv.part").write_bytes(b"")
+
+    def fake_search_and_download(**kwargs):
+        return {"success": True, "filename": "Michael.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr("py_stremio.components.download.processing.search_and_download", fake_search_and_download)
+    monkeypatch.setattr("py_stremio.components.download.processing.preflight_discover_working_addons", lambda *args, **kwargs: [])
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    process_movie_folder(tmp_path)
+    output = capsys.readouterr().out
+    assert "Resuming partial download" not in output
+
+
+def test_movie_target_path_matches_build_media_filename(tmp_path):
+    """The path printed in the resume message and used by the
+    downloader must be the same so the HTTP Range request targets the
+    exact file the .part bytes belong to."""
+    from py_stremio.components.download.processing import (
+        _movie_target_path,
+        _movie_partial_path,
+    )
+    from py_stremio.components.download.stream_download import build_media_filename
+
+    config = DownloadConfig(
+        type="movies", title="Michael", imdb_id="tt11378946",
+        search_group="Michael",
+    )
+    target = _movie_target_path(tmp_path, config)
+    partial = _movie_partial_path(tmp_path, config)
+    assert target == tmp_path / "Michael.mkv"
+    assert partial == tmp_path / "Michael.mkv.part"
+    # build_media_filename must agree on the basename so the search
+    # and download paths use the same on-disk location.
+    download_filename = Path(
+        build_media_filename("Michael", None, None, str(tmp_path))
+    ).name
+    assert download_filename == "Michael.mkv"
+    assert download_filename == target.name
+
+
+def _download_settings():
+    return _FakeSettings()
     assert len(done_events) == 1
     assert done_events[0]["outcome"] == "downloaded"
     assert done_events[0]["rate_bps"] == 0
