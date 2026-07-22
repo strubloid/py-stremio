@@ -2,9 +2,9 @@
 from py_stremio.components import application
 
 
-def test_menu_choice_two_updates_library(monkeypatch, capsys):
+def test_menu_choice_three_updates_library(monkeypatch, capsys):
     calls = []
-    answers = iter(["2", "7"])
+    answers = iter(["3", "8"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -21,14 +21,14 @@ def test_menu_choice_two_updates_library(monkeypatch, capsys):
     assert calls == ["scan", "metadata"]
     output = capsys.readouterr().out
     assert "Py-Stremio" in output
-    assert "2" in output
+    assert "3" in output
     assert "Update library" in output
 
 
 def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch):
     calls = []
     folders = [object()]
-    answers = iter(["1", "7", "55", "7"])
+    answers = iter(["1", "4", "55", "8"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -44,12 +44,38 @@ def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch)
 
     assert calls[0][0] == "library-sync"
     assert calls[0][2] is False
-    assert calls[1] == ("download", folders, True, 7, 55)
+    assert calls[1] == ("download", folders, True, 4, 55)
 
 
-def test_menu_choice_three_asks_threads_and_speed_before_download(monkeypatch):
+def test_menu_choice_two_updates_library_then_downloads(monkeypatch):
     calls = []
-    answers = iter(["3", "4", "60", "7"])
+    folders = [object()]
+    answers = iter(["2", "4", "60", "8"])
+
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.run",
+        lambda self: calls.append("scan") or folders,
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.metadata.MetadataService.run",
+        lambda self, folders=None, quiet=False, **kwargs: calls.append(("metadata", folders)),
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append(("download", folders, quiet, max_workers, speed_percent)),
+    )
+
+    application.run_menu()
+
+    assert calls[0] == "scan"
+    assert calls[1] == ("metadata", folders)
+    assert calls[2] == ("download", folders, True, 4, 60)
+
+
+def test_menu_choice_four_asks_threads_and_speed_before_download(monkeypatch):
+    calls = []
+    answers = iter(["4", "4", "60", "8"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -63,7 +89,7 @@ def test_menu_choice_three_asks_threads_and_speed_before_download(monkeypatch):
 
 
 def test_menu_choice_one_prints_library_sync_status_before_blocking_work(monkeypatch, capsys):
-    answers = iter(["1", "2", "100", "7"])
+    answers = iter(["1", "2", "100", "8"])
     folders = []
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -146,7 +172,7 @@ def test_cron_entrypoint_download_uses_shared_parser_with_cron_presets(monkeypat
 
     calls = []
 
-    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "3"]})())
+    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "4"]})())
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
         lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
@@ -155,6 +181,33 @@ def test_cron_entrypoint_download_uses_shared_parser_with_cron_presets(monkeypat
     AppService().run(interactive=False, default_max_workers=5, default_speed_percent=80)
 
     assert calls == [(None, True, 5, 80)]
+
+
+def test_cron_entrypoint_update_and_download_uses_shared_parser(monkeypatch):
+    from py_stremio.app import AppService
+
+    calls = []
+    folders = [object()]
+
+    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "2"]})())
+    monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.run",
+        lambda self: calls.append("scan") or folders,
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.metadata.MetadataService.run",
+        lambda self, folders=None, quiet=False, **kwargs: calls.append(("metadata", folders)),
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append(("download", folders, quiet, max_workers, speed_percent)),
+    )
+
+    AppService().run(interactive=False, default_max_workers=5, default_speed_percent=80)
+
+    assert calls[0] == "scan"
+    assert calls[1] == ("metadata", folders)
+    assert calls[2] == ("download", folders, True, 5, 80)
 
 
 def test_run_pipeline_ctrl_c_exits_cleanly(monkeypatch, capsys):

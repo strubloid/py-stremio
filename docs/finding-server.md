@@ -50,14 +50,14 @@ The focused official command is preferred for ordinary refreshes because it is b
 1. Discovery strips `/manifest.json` and stores a normalized addon base URL.
 2. Each candidate is fetched live at `<addon>/manifest.json` before it can be added.
 3. Existing URLs are deduplicated; the merge is atomic.
-4. The validator comments out unreachable active URLs instead of deleting them.
-5. A live manifest alone is not proof that an addon can deliver an episode. A URL enters a folder's `servers` cache only after a real completed download.
+4. The validator comments out unreachable active URLs instead of deleting them and refreshes the active/dead summary counts in `addons.txt`.
+5. A live manifest alone is not proof that an addon can deliver media. Preflight responders are available only for the current attempt; a URL enters a folder's `servers` cache only after a real completed download.
 
-## When a particular series is still missing servers
+## When a particular movie or series is still missing servers
 
 1. Run the standard recipe above.
-2. Confirm the season's `download-config.json` has a correct `imdb_id` and expected episode metadata; run `py-stremio --metadata` again if necessary.
-3. Run `py-stremio --download` for a real missing episode. The preflight search queries the global addon list and writes only successful providers to that folder's verified `servers` list.
+2. Confirm the folder's `download-config.json` has the correct `imdb_id`. Series also need expected episode metadata; movie folders must keep `season: null` and `current_episode_download: 0`. Run `py-stremio --metadata` again if necessary.
+3. Run `py-stremio --download` for a real missing episode or movie. The preflight search queries the global addon list, but writes only successful providers to that folder's verified `servers` list.
 4. If the folder still finds nothing, inspect the grouped error summary. Do not add API keys, debrid tokens, or copied personalized Stremio configuration URLs to `addons.txt`.
 
 ## Agent procedure

@@ -309,7 +309,7 @@ The Example Show              S02E04     downloading  ████████�
 Another Series                S01E09     searching    18/64 addons          --          --
 Example Film                  movie      resolving    stream 3/7            --          --
 
-Limit 150 Mbps (50%)  |  Worker limit 4  |  Transfers 1  |  q cancel
+Limit 150 Mbps (50%)  |  Max 8.9 MB/s  |  Worker limit 4  |  Transfers 1  |  q cancel
 ```
 
 On narrow terminals, remove columns in this order:

@@ -37,6 +37,10 @@ class StreamStallError(RuntimeError):
     """
 
 
+class RangeNotSupportedError(RuntimeError):
+    """Raised when a source ignores a range request for a preserved partial file."""
+
+
 _TEXT_ERROR_CONTENT_TYPES = (
     "text/html",
     "text/plain",
@@ -897,6 +901,7 @@ def download_stream_to_file(
     bandwidth_limiter=None,
     thread_id: int | None = None,
     stall_timeout: float = 60.0,
+    preserve_partial_on_unsupported_range: bool = False,
 ) -> None:
     """Download a direct stream URL to disk, resuming partial files when possible.
 
@@ -946,6 +951,10 @@ def download_stream_to_file(
         ) as response:
             raise_if_shutdown_requested()
             response.raise_for_status()
+            if existing_size and response.status_code != 206 and preserve_partial_on_unsupported_range:
+                raise RangeNotSupportedError(
+                    f"Source does not support byte-range resume for {file_path.name}; preserving the partial file"
+                )
             resumed = bool(existing_size and response.status_code == 206)
             mode = "ab" if resumed else "wb"
             downloaded = existing_size if resumed else 0

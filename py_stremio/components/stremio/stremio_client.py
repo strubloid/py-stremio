@@ -19,6 +19,7 @@ from py_stremio.components.stremio.stremio_ids import build_stremio_id
 from py_stremio.components.stremio.stremio_metadata import get_imdb_id, get_series_imdb_id
 from py_stremio.components.download.stream_download import (
     InvalidVideoDownloadError,
+    RangeNotSupportedError,
     StreamStallError,
     build_media_filename,
     can_retry_with_debrid,
@@ -403,6 +404,7 @@ def _try_download_streams(
                 bandwidth_limiter=bandwidth_limiter,
                 thread_id=thread_id,
                 stall_timeout=settings.DOWNLOAD_STALL_TIMEOUT,
+                preserve_partial_on_unsupported_range=season is None,
             )
             return _success_result(filename, stream, working_urls)
         except InvalidVideoDownloadError as e:
@@ -429,6 +431,13 @@ def _try_download_streams(
                 e,
                 stream.url or stream.info_hash or "?",
             )
+            last_error = str(e)
+            continue
+        except RangeNotSupportedError as e:
+            # Movie partials must remain resumable.  Ignore a source that
+            # silently discarded our Range request and try another source
+            # rather than truncating the existing .part back to zero.
+            transient_download_errors += 1
             last_error = str(e)
             continue
         except Exception as e:

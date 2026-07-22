@@ -109,7 +109,7 @@ py-stremio/
 │           ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
 │           ├── error_reporter.py      # ErrorReporter singleton + redact_url helpers
 │           └── error_logger.py        # Legacy error logger (backward compat)
-└── tests/                             # 30 test files, 363 tests
+└── tests/                             # 32 test files, 451 tests (10 live-network checks)
     ├── test_addon_enabled.py
     ├── test_addon_type_configurers.py
     ├── test_addon_validator.py
@@ -155,6 +155,7 @@ AppService.run_pipeline()
     → update_config_imdb_ids() # stremio/stremio_metadata.py
     → repair_series_season_config()
     → infer_next_episode_download()
+    → resolve movie title/IMDb ID/languages for each movies/{title}/ folder
   → DownloadService.run()
     → download_folders()       # download/processing.py
       → process_season_folder() / process_movie_folder()
@@ -179,7 +180,7 @@ AppService.run_pipeline()
 - Multi-threaded download support (DOWNLOAD_THREADS, default: 2) with FairBandwidthLimiter per-active-download bandwidth sharing and dynamic redistribution when actual stream downloads start/finish; search/probe workers are not counted against the bandwidth share
 - **`py-stremio-cron` console entry point** — uses the same `AppService` path as `py-stremio` with cron preset defaults: 5 threads + 80% speed
 - **Interactive prompt split** — normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses preset defaults (5 threads, 80% speed) without prompts
-- Partial download resume via .part files and Range headers
+- Movie partial-download safety: when a movie source ignores its Range request, preserve the existing `.part` unchanged and try another source rather than silently restarting from zero; do not alter established series behavior
 - Per-episode final-file existence guard: download workers skip instead of re-downloading if the expected output file already exists, even if a stale task listed it as missing
 - Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
 - Addon advisory/config/browser-only rows (for example Reddit notices, `configure this addon`, `externalUrl` only) are filtered before download attempts; if every returned stream is filtered out, the item reports `No downloadable streams found after filtering` and is not retried repeatedly in the same run
@@ -202,7 +203,21 @@ AppService.run_pipeline()
 
 - Series folders: `series/{show_name}/s{number}/` (e.g. `series/Breaking Bad/s01/`)
 - Movies folders: `movies/{group_name}/`
+- Each direct child of `movies/` is exactly one movie request, not a multi-title group. Movie
+  processing uses `content_type="movie"`, `season=None`, and `episode=None`.
 - Season number extracted from folder name via `utils.parse_season_from_folder()` — matches `s03` or `Season_2`
+
+### Movie Metadata and Languages
+
+- `MetadataService._update_movie_metadata()` resolves a movie folder title through Cinemeta's
+  movie catalog and persists its canonical title and IMDb ID. A supplied `imdb_id` takes
+  precedence over a title match; use it when a folder name is ambiguous.
+- Movie languages are read from IMDb title markup when available. New movie configs do **not**
+  inherit `PREFERRED_LANGUAGES`; that global setting initializes newly created series-season
+  configs only. If IMDb language data cannot be read, keep the movie language-neutral instead
+  of inventing a default.
+- Movies keep `season=None`, `episode_count=None`, and `current_episode_download=0`. Do not
+  reuse series episode metadata or season parsing for a movie folder.
 
 ### Episode Number Detection
 
@@ -234,7 +249,7 @@ Uses regex patterns in `utils.parse_episode_number()`:
 ```
 1. Preflight scan: when config.servers is empty and IMDB ID exists, run preflight_discover_working_addons()
    - Queries ALL addons concurrently (10 at a time)
-   - Caches working URLs to config.servers after first successful download
+   - Uses responders for the current attempt only; cache them only after a successful completed download
 2. Known working addon URLs from config.servers (per-folder verified cache)
 3. Built-in addons (64 classes in types/, organized by category — Torrentio, Comet, MediaFusion, etc.)
 4. Custom addons from addons.txt (if file exists)
@@ -270,6 +285,7 @@ ELSE
 | LIMIT_EPISODES | 0 | Max episodes per run (0=unlimited) |
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min size for valid completed file |
 | DOWNLOAD_THREADS | 2 | Parallel download workers |
+| PREFERRED_LANGUAGES | `english` | Default only for new series-season configs; movie metadata sets movie languages |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
 | INTERNET_MAX_SPEED_MBPS | auto-detected once; fallback 100 | Max Mbps for bandwidth calculation; if missing from env/.env, a short speed probe appends the measured value to .env |
 | DRY_RUN | false | Test mode — no actual downloads |
@@ -306,13 +322,14 @@ py-stremio --download    # or: py-stremio 3
 py-stremio --run 4 50   # 4 threads, 50% speed
 
 # Cron console entry point (same AppService path; preset 5 threads, 80% speed, no interactive prompts)
-py-stremio-cron 2       # update metadata (for crontab)
-py-stremio-cron 3       # download missing (for crontab)
+py-stremio-cron 3       # update metadata (for crontab)
+py-stremio-cron 4       # download missing (for crontab)
+py-stremio-cron 2       # update metadata + download (combined)
 
 # Cron setup (crontab -e)
 # PATH=/home/strubloid/apps/py-stremio/venv/bin:/usr/local/bin:/usr/bin:/bin
-# 0 */3 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 2
-# 0 */2 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 3
+# 0 */3 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 3
+# 0 */2 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 4
 
 # Legacy paths (superseded by `py-stremio`, kept for reference)
 
@@ -327,7 +344,7 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 
 ### Built-in Addons
 
-**54 built-in addon classes** in `components/addons/types/`, each class in its own file organized by category folder:
+**64 built-in addon classes** in `components/addons/types/`, each class in its own file organized by category folder:
   - `torrentio_family/` (7 variants: Torrentio, SortSeeders, Portuguese, Spanish, Hindi, Lite, TorrentsDB)
   - `comet_family/` (7: Comet, CometElfHosted, CometNet, HDHub, StremThru, BrazucaTorrents, Guindex)
   - `aggregators/` (19: MediaFusion, KnightCrawler, EasyNews+, ThePirateBay+, Peerflix, Nucleus, Orion, DebridSearch, Stremify, Jackettio, AIOStreams, CineTorrent, Torrin, FlixStreams, MyCine, NebulaStreams, StreamViX, VidFastPro, Ytztvio)
@@ -339,22 +356,15 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
 ### Addon Loading Behavior (addons.txt + Built-ins)
 
 When `create_addon_manager()` is called (via `factory.py`):
-1. **Always loads all 54 built-in addons first** — these have correct RealDebrid key injection in their `get_url()` methods
+1. **Always loads all built-in addons first** — these have correct RealDebrid key injection in their `get_url()` methods
 2. **Supplements with addons from `addons.txt`** (if file exists) — loads URLs from `addons.txt` and `addons.stremio`
 3. **Deduplicates by hostname** — any URL from addons.txt whose hostname matches a built-in addon is skipped (reported as "covered by built-in")
 4. **Wraps file URLs as `UrlAddon`** — URLs from file become generic UrlAddon instances
 5. **Applies RealDebrid API key** to all addons (built-in and file-loaded)
 
-**Example output when loading**:
-```
-Loaded 90 addon(s) from addon file(s) (37 skipped, covered by built-in)
-```
-
-This means:
-- 127 URLs found in addons.txt
-- 37 URLs match built-in addon hostnames (e.g., torrentio.strem.fun) → skipped
-- 90 URLs are unique and loaded as UrlAddon instances
-- **Total: 54 built-in + 90 from file = 144 addons**
+The loader reports the current file-addon count and the number skipped as covered by a built-in.
+Those values are live inventory, not stable project constants; do not copy them into docs or
+assume that a loaded addon is verified for a particular folder.
 
 **Important**: Many URLs in addons.txt are **non-stream addons** (subtitles, catalogs, metadata, ratings, trackers). These are still loaded but won't return downloadable streams:
 - Subtitle addons: OpenSubtitles, Addic7ed, Napisy24, Subscene, Podnapisi, YifySubtitles
@@ -408,7 +418,7 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Config tests verify default creation and loading
 - Download processing tests mock the Stremio client
 - **Monkeypatch caveat**: `from X import Y` in service modules creates a permanent local binding. When tests monkeypatch `X.Y`, the local binding in the service module is unaffected if the service was already imported by a prior test. Always also monkeypatch the local binding (`py_stremio.services.<name>.<function>`) in tests that need to mock functions imported via `from ... import` in service modules.
-- **Test status**: 363 tests across 30 files, all passing (run `pytest tests/ -v`)
+- **Test status**: 451 tests. `pytest --ignore=tests/test_new_servers.py -q` runs 441 deterministic tests; `tests/test_new_servers.py` is live-network coverage and can fail when third-party endpoints return 403/502.
 
 ## Current Status
 
@@ -423,6 +433,7 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Final-file existence guard prevents stale tasks from re-downloading episodes already present on disk
 - Working addon URL tracking and caching
 - Metadata auto-fetch via Cinemeta + IMDb TSV dataset
+- Movie folders resolve their own canonical IMDb ID and IMDb-derived language metadata; they remain separate one-request movie workflows, never series seasons.
 - Auto-creation of new season folders for current year
 - **Preflight optimization**: when preflight scan finds zero working addons, subsequent episodes skip the full addon re-scan (saves ~30s/episode)
 - **`py-stremio-cron`** console entry point: same `AppService` path as `py-stremio`, with cron preset defaults (5 threads and 80% speed limit)

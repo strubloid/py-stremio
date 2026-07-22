@@ -143,6 +143,31 @@ def test_download_stream_to_file_resumes_existing_partial_part_file(tmp_path, mo
     assert progress_events[-1] == (10, 10)
 
 
+def test_download_stream_to_file_keeps_existing_partial_when_source_ignores_range(tmp_path, monkeypatch):
+    monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
+    target = tmp_path / "Michael.mkv"
+    partial = tmp_path / "Michael.mkv.part"
+    partial.write_bytes(b"already-downloaded")
+    captured = {}
+
+    def fake_stream(method, url, **kwargs):
+        captured["headers"] = kwargs.get("headers", {})
+        return FakeDownloadResponse(b"a-new-full-response", status_code=200)
+
+    monkeypatch.setattr(stream_download.httpx, "stream", fake_stream)
+
+    with pytest.raises(RuntimeError, match="does not support byte-range resume"):
+        stream_download.download_stream_to_file(
+            "https://example.test/movie.mkv",
+            str(target),
+            preserve_partial_on_unsupported_range=True,
+        )
+
+    assert captured["headers"]["Range"] == "bytes=18-"
+    assert partial.read_bytes() == b"already-downloaded"
+    assert not target.exists()
+
+
 def test_download_stream_to_file_rejects_tiny_response_before_writing(tmp_path, monkeypatch):
     monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100)
     target = tmp_path / "episode.mkv"

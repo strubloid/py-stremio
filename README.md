@@ -18,8 +18,9 @@ py-stremio
 py-stremio --run
 
 # Or for cron (preset 5 threads, 80% speed)
-py-stremio-cron 2     # update metadata
-py-stremio-cron 3     # download missing episodes
+py-stremio-cron 2     # update metadata + download
+py-stremio-cron 3     # update metadata
+py-stremio-cron 4     # download missing episodes
 ```
 
 ## Folder Structure
@@ -33,10 +34,28 @@ py-stremio-cron 3     # download missing episodes
 │       │   └── .download-state.json
 │       └── s02/
 └── movies/
-    └── Movie Group/
+    └── Movie Title/                  # one folder represents one movie
         ├── download-config.json
         └── .download-state.json
 ```
+
+## Movie Folders
+
+Each direct child of `movies/` is one movie request, not a series group. For example:
+
+```text
+movies/Michael/
+```
+
+During `py-stremio --metadata`, the movie path resolves a canonical title and IMDb ID from
+Cinemeta's movie catalog. The downloader then makes one movie request with that ID — never a
+season or episode request. If a title is ambiguous, put the intended IMDb ID in that folder's
+`download-config.json` before downloading.
+
+Movie folders do not inherit `PREFERRED_LANGUAGES`; that setting is the default only for newly
+created series-season configs. Movie languages are populated from IMDb title metadata when its
+public markup is available. If IMDb language metadata is unavailable, the movie remains
+language-neutral rather than inheriting an unrelated global language preference.
 
 ## Configuration
 
@@ -55,7 +74,7 @@ cp .env.example .env
 | `DOWNLOAD_STALL_TIMEOUT` | `60` | Seconds without bytes before aborting a stalled download |
 | `INTERNET_SPEED_LIMIT` | `100` | Bandwidth cap (%) |
 | `INTERNET_MAX_SPEED_MBPS` | auto-probed | Line speed for bandwidth calc |
-| `PREFERRED_LANGUAGES` | `english` | Comma-separated language filter |
+| `PREFERRED_LANGUAGES` | `english` | Default language filter for new series-season configs; movie metadata supplies movie languages |
 | `DRY_RUN` | `false` | Test mode — no actual downloads |
 | `TORRENT_PROXY_URL` | — | Local torrent proxy (e.g. `http://127.0.0.1:11470`) |
 | `METADATA_CACHE_HOURS` | `24` | Skip Cinemeta refresh for recently-checked folders |
@@ -71,31 +90,33 @@ cp .env.example .env
 py-stremio
 
 # Individual pipeline steps
-py-stremio --scan        # or: py-stremio 1
-py-stremio --metadata    # or: py-stremio 2
-py-stremio --download    # or: py-stremio 3
+py-stremio --scan        # or: py-stremio 3
+py-stremio --metadata    # or: py-stremio 3
+py-stremio --download    # or: py-stremio 4
+py-stremio --update-and-download  # or: py-stremio 2
 
 # Full pipeline
-py-stremio --run         # or: py-stremio 4
+py-stremio --run         # or: py-stremio 1
 py-stremio --run 7 100   # 7 threads, 100% speed
 
 # Validate addon URLs
-py-stremio --validate    # or: py-stremio 5
+py-stremio --validate    # or: py-stremio 6
 
 # Discover new addons
-py-stremio --discover
+py-stremio --discover    # or: py-stremio 5
 
 # Refresh stream-capable movie/series addons from Stremio's live official collection
 py-stremio --discover-official
 
 # Cron (preset 5 threads, 80% speed, no prompts)
-py-stremio-cron 2        # update metadata
-py-stremio-cron 3        # download missing
+py-stremio-cron 2        # update metadata + download
+py-stremio-cron 3        # update metadata
+py-stremio-cron 4        # download missing
 
 # Crontab example
 # PATH=/home/strubloid/apps/py-stremio/venv/bin:/usr/local/bin:/usr/bin:/bin
-# 0 */3 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 2
-# 0 */2 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 3
+# 0 */3 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 3
+# 0 */2 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 4
 ```
 
 ## Architecture
@@ -134,9 +155,10 @@ The filter pipeline (`select_quality_streams`) is the gate before any download:
 - **Local torrent proxy** — info-hash streams resolved through a local Stremio-compatible proxy
 - **Stall detection** — downloads that stop receiving bytes for 60+s are aborted via httpx
   read timeout; configurable via `DOWNLOAD_STALL_TIMEOUT`
-- **Partial resume** — .part files + Range headers
+- **Movie partial resume** — `.part` files + Range headers; a movie source that ignores a resume request is skipped without truncating the saved partial back to zero
 - **Bandwidth limiting** — fair-share across active download threads
 - **Working addon caching** — only addons that completed a download are saved to `servers`
+- **Movie-specific metadata** — one folder → one IMDb-backed movie request; no season/episode tracking
 - **Addon discovery** — `py-stremio --discover` scrapes sources, tests URLs, merges into `addons.txt`
 - **Error reporting** — deduplicated, URL-redacted; full tracebacks only in debug mode
 - **Email reports** — optional SMTP summary after each run
@@ -144,7 +166,8 @@ The filter pipeline (`select_quality_streams`) is the gate before any download:
 ## Tests
 
 ```bash
-pytest tests/ -v                         # 388 tests
+pytest tests/ -v                         # 451 tests (includes live network checks)
+pytest --ignore=tests/test_new_servers.py # 441 deterministic tests
 pytest tests/ --cov=py_stremio           # coverage
 ```
 

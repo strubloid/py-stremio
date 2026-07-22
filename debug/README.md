@@ -99,7 +99,7 @@ python debug/11_check_two_addons.py
 ## Key Findings
 
 1. **Zero downloadable streams exist** for this show across all 173 tested addons
-2. **Addon loading works correctly**: 54 built-in + 90 from file = 144 total
+2. **Addon loading worked correctly at the time of this historical probe**. Addon-file and built-in counts are live inventory; inspect current startup output instead of relying on a fixed total here.
 3. **Advisory messages** from CometNet/Jackettio are correctly filtered out
 4. **VidFast** has the episode but as `externalUrl` (browser redirect, not downloadable)
 5. **IMDb metadata** is correct (tt10955614, 556 episodes, 35 seasons)

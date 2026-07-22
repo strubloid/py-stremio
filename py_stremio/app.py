@@ -96,7 +96,7 @@ class AppService:
         else:
             speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else speed_percent
 
-        if "--scan" in args or "--metadata" in args or "--config" in args or action == "2":
+        if "--scan" in args or "--metadata" in args or "--config" in args or action == "3":
             self._banner()
             print(_c("\n📚 Update library", ACCENT))
             folders = self.scanner.run()
@@ -104,7 +104,7 @@ class AppService:
             print_error_summary()
             return
 
-        if "--download" in args or action == "3":
+        if "--download" in args or action == "4":
             self._banner()
             self.downloader.run(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
             print_error_summary()
@@ -117,15 +117,24 @@ class AppService:
             print_error_summary()
             return
 
-        if "--discover" in args or "--find-addons" in args or action == "4":
+        if "--discover" in args or "--find-addons" in args or action == "5":
             self._banner()
             print(_c("\n🔍 Addon Discovery", ACCENT))
             discover_new_addons()
             print_error_summary()
             return
 
-        if "--validate" in args or "--validate-addons" in args or action == "5":
+        if "--validate" in args or "--validate-addons" in args or action == "6":
             validate_and_update()
+            print_error_summary()
+            return
+
+        if "--update-and-download" in args or action == "2":
+            self._banner()
+            print(_c("\n📚 Update library", ACCENT))
+            folders = self.scanner.run()
+            self.metadata.run(folders=folders, quiet=False)
+            self.downloader.run(folders=folders, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
             print_error_summary()
             return
 
@@ -200,15 +209,15 @@ class AppService:
         self._menu()
 
         while True:
-            choice = input(_c("Select 1-7 › ", ACCENT)).strip()
+            choice = input(_c("Select 1-8 › ", ACCENT)).strip()
 
-            if choice == "7" or choice == "":
+            if choice == "8" or choice == "":
                 cleanup_terminal()
                 print("Bye.")
                 break
 
-            if choice not in ("1", "2", "3", "4", "5", "6"):
-                print(_c("Unknown option. Choose 1-7.", RED))
+            if choice not in ("1", "2", "3", "4", "5", "6", "7"):
+                print(_c("Unknown option. Choose 1-8.", RED))
                 continue
 
             if choice == "1":
@@ -220,24 +229,32 @@ class AppService:
                 self.downloader.run(folders=folders, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
 
             elif choice == "2":
+                max_workers, speed_percent = self._ask_download_options()
+                self._phase("\n📚 Update library", "scanning and refreshing metadata...")
+                folders = self.scanner.run()
+                self.metadata.run(folders=folders, quiet=False)
+                self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed...")
+                self.downloader.run(folders=folders, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+
+            elif choice == "3":
                 self._phase("\n📚 Update library", "scanning and refreshing metadata...")
                 folders = self.scanner.run()
                 self.metadata.run(folders=folders, quiet=False)
 
-            elif choice == "3":
+            elif choice == "4":
                 max_workers, speed_percent = self._ask_download_options()
                 self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed...")
                 self.downloader.run(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
 
-            elif choice == "4":
+            elif choice == "5":
                 self._phase("\n🔍 Addon Discovery", "scraping and testing addon URLs...")
                 discover_new_addons()
 
-            elif choice == "5":
+            elif choice == "6":
                 self._phase("\n🛠  Validate addon URLs", "testing addons before download...")
                 validate_and_update()
 
-            elif choice == "6":
+            elif choice == "7":
                 self._phase("\n🧪 Experimental Addons", "managing experimental addons...")
                 self._menu_experimental_addons()
 
@@ -264,12 +281,13 @@ class AppService:
         print()
         print(_c("Choose a step", ACCENT))
         print("  1  ✨  Run: scan → metadata → download")
-        print("  2  📚  Update library (configs)")
-        print("  3  ⬇   Download missing episodes/movies")
-        print("  4  🔍  Discover new addon URLs")
-        print("  5  🛠  Validate addon URLs")
-        print("  6  🧪  Experimental addons")
-        print("  7  🚪  Exit")
+        print("  2  📚⬇  Update library + download missing")
+        print("  3  📚  Update library (configs)")
+        print("  4  ⬇   Download missing episodes/movies")
+        print("  5  🔍  Discover new addon URLs")
+        print("  6  🛠  Validate addon URLs")
+        print("  7  🧪  Experimental addons")
+        print("  8  🚪  Exit")
 
     def _phase(self, title: str, detail: str | None = None) -> None:
         if title:

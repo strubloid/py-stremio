@@ -52,12 +52,12 @@ py-stremio/
 │   │   ├── stremio/                  # Stremio API integration
 │   │   ├── download/                 # Download execution + filter
 │   │   ├── debrid/                   # RealDebrid API
-│   │   ├── addons/                   # 64+ addon classes + types/
+│   │   ├── addons/                   # Built-in addon classes + types/
 │   │   ├── collect/                  # Addon discovery/collection
 │   │   ├── reports/                  # Terminal + email reports
 │   │   └── errors/                   # Error deduplication
 │   └── utils/                        # Shared utilities
-├── tests/                            # 388 tests across 30+ files
+├── tests/                            # 451 tests, including live network checks
 └── scripts/
     └── audit_addons.py
 ```
@@ -69,7 +69,7 @@ py-stremio/
 ```
 AppService.run_pipeline()
   → ScanService.run() → Scanner.scan()
-  → MetadataService.run() → fetch Cinemeta/IMDb IDs
+  → MetadataService.run() → enrich series and movie configs
   → DownloadService.run()
     → process_season_folder() / process_movie_folder()
       → search_and_download()
@@ -78,6 +78,26 @@ AppService.run_pipeline()
         → resolve_stream_download_url()
         → download_stream_to_file()          # HTTP with resume + stall detection
 ```
+
+### Movie-folder contract
+
+Every direct child of `movies/` represents exactly one movie. `MetadataService` resolves its
+title through Cinemeta's movie catalog, stores the canonical title and IMDb ID, and asks IMDb
+title markup for languages. `process_movie_folder()` searches once using
+`content_type="movie"` with `season=None` and `episode=None`; it does not use series episode
+tracking.
+
+`PREFERRED_LANGUAGES` applies to new series-season configs only. Movie configs stay
+language-neutral until IMDb language metadata is available; they must never inherit an unrelated
+global language. For ambiguous movie names, set `imdb_id` explicitly in that folder's
+`download-config.json` before downloading.
+
+### Verified addon-server cache
+
+`download-config.json` `servers` is a per-folder cache of completed-download providers, not a
+discovery result. Preflight responders may be used for the current attempt, but they are saved
+only after a media transfer succeeds. If no download succeeds, do not retain a newly discovered
+provider as verified.
 
 ### 2. Legacy Path (maintained)
 
@@ -112,9 +132,21 @@ Downloads that stop receiving bytes are aborted via httpx's `read` timeout
 translated to `StreamStallError`, which cleans up the `.part` file and falls
 through to the next stream without attempting a RealDebrid retry.
 
+## Movie Partial-Download Safety
+
+Movie transfers write to `{movie}.mkv.part` and resume only when a source
+honours the `Range` request (`206 Partial Content`). If a movie source ignores
+the request and responds with a fresh full body, that source is skipped and the
+existing partial is kept unchanged. The downloader tries another stream rather
+than silently truncating the partial and restarting at zero. A hard shutdown
+therefore leaves a real transferred partial available for a later run; sources
+that do not support byte-range resume cannot complete it, but must not destroy
+it. This protection is intentionally confined to the movie path; existing
+series handling is unchanged.
+
 ## Addon System
 
-**67+ built-in addon classes** across 9 categories:
+**Built-in addon classes** are organized across these categories:
 
 | Category | Count | Examples |
 |----------|-------|----------|
@@ -154,15 +186,15 @@ skipped, not replaced.
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % |
 | INTERNET_MAX_SPEED_MBPS | auto-probed | Line speed |
 | DRY_RUN | false | No actual downloads |
-| PREFERRED_LANGUAGES | english | Language filter |
+| PREFERRED_LANGUAGES | english | Default filter for new series-season configs; movie metadata determines movie languages |
 | TORRENT_PROXY_URL | None | Local proxy for info-hash streams |
 | STREMIO_ADDON_URL | None | Override addon base URL |
 
 ## Testing
 
 ```bash
-pytest tests/ -v                        # 388 tests
-pytest --ignore=tests/test_new_servers.py  # skip network tests
+pytest tests/ -v                        # 451 tests, including live endpoint checks
+pytest --ignore=tests/test_new_servers.py  # 441 deterministic tests
 pytest --cov=py_stremio --cov-report=term-missing  # coverage
 ```
 
@@ -183,8 +215,9 @@ URL redaction: `apikey`, `api_key`, `token`, `realdebrid`, `rd`, `key`, `passwor
 ## Current Status
 
 - Modern Stremio addon-based download path is primary
-- 67+ built-in addons + unlimited URL-based addons
-- 388 tests all passing
+- Built-in addons + unlimited URL-based addons
+- Movie metadata and download flow are separate from series seasons
+- 441 deterministic tests passing; live-network tests depend on third-party endpoint availability
 - Diacritics-insensitive title matching
 - Release-group-aware title signal detection
 - Finished-release marker heuristic
