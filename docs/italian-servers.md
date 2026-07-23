@@ -6,7 +6,7 @@
 
 `https://torrentio.strem.fun/language=italian/`
 
-When RealDebrid is configured, py-stremio injects the runtime key into the addon URL and does not write the key to `addons.txt` or source control.
+When RealDebrid is configured, py-stremio injects the runtime key into the addon URL and does not write the key to `addons/addons.txt` or source control.
 
 Live verification on 2026-07-20:
 
@@ -22,7 +22,7 @@ The local `.env` preference is now `PREFERRED_LANGUAGES=italian`, so the final s
 
 ## Not added as a shared server
 
-MammaMia is actively maintained and advertises Italian movies, series, anime, and live TV, but its README requires a user-hosted deployment and a TMDB key. It is not a stable public manifest URL, so it was deliberately not added to `addons.txt`. A self-hosted installation can be added later as a custom addon URL after it is deployed and its manifest plus a real stream request both pass validation.
+MammaMia is actively maintained and advertises Italian movies, series, anime, and live TV, but its README requires a user-hosted deployment and a TMDB key. It is not a stable public manifest URL, so it was deliberately not added to `addons/addons.txt`. A self-hosted installation can be added later as a custom addon URL after it is deployed and its manifest plus a real stream request both pass validation.
 
 ## Use
 

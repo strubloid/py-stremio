@@ -1,4 +1,5 @@
 """Addon manager construction helpers."""
+from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from py_stremio.components.configs.app_settings import settings
@@ -75,10 +76,12 @@ from .types.builtin_addons import (
 )
 from .manager import AddonManager
 from .models import StreamInfo
+from .paths import custom_addons_path, stremio_addons_path
 
 
-def load_addons_from_file(filepath: str = "addons.txt") -> list[str]:
+def load_addons_from_file(filepath: str | Path | None = None) -> list[str]:
     """Load addon URLs from file."""
+    filepath = filepath or custom_addons_path()
     try:
         with open(filepath, "r") as f:
             return [unquote(line.strip()) for line in f if line.strip() and not line.startswith("#")]
@@ -94,13 +97,13 @@ def _addon_identity(url: str) -> str:
 def load_addon_urls() -> list[str]:
     """Load clean addon URLs plus final Stremio manifest URLs.
 
-    `addons.txt` remains the editable clean-base source. `addons.stremio` is a
+    `addons/addons.txt` remains the editable clean-base source. `addons/stremio.txt` is a
     final-product file where each URL may point directly to `manifest.json`.
     Both are loaded, with duplicates removed by their queryable addon base.
     """
     urls: list[str] = []
     seen: set[str] = set()
-    for filepath in ("addons.stremio", "addons.txt"):
+    for filepath in (stremio_addons_path(), custom_addons_path()):
         for url in load_addons_from_file(filepath):
             identity = _addon_identity(url)
             if identity in seen:
@@ -199,7 +202,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
 
 
 def _is_covered_by_builtin(url: str, manager: AddonManager) -> bool:
-    """Check if a URL from addons.txt is already covered by a built-in addon.
+    """Check if a URL from addons/addons.txt is already covered by a built-in addon.
 
     Uses host (netloc) comparison so that Torrentio variants etc. loaded
     from file are skipped in favour of the built-in class, which handles
@@ -227,7 +230,7 @@ def create_addon_manager() -> AddonManager:
     Strategy:
       1. Always register built-in addons (Torrentio, MediaFusion, Comet,
          etc.) — they handle RD key injection in their own get_url().
-      2. Supplement with addons from addons.txt for any extra URLs not
+      2. Supplement with addons from addons/stremio.txt and addons/addons.txt
          already covered by built-ins.
       3. Apply the RD key from settings to every addon.
     """

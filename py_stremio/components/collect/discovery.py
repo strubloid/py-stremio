@@ -6,6 +6,7 @@ from pathlib import Path
 from .sources import run_all_sources, scrape_stremio_addons_collection
 from .tester import test_urls
 from .merger import merge_new_addons
+from py_stremio.components.addons.paths import custom_addons_path
 
 
 def _find_project_root() -> Path:
@@ -27,10 +28,10 @@ def discover_new_addons(
 
     1. Scrape known sources for addon manifest URLs.
     2. Test each URL for reachability.
-    3. Merge working URLs into addons.txt.
+    3. Merge working URLs into addons/addons.txt.
 
     Args:
-        addon_txt_path: Path to addons.txt (default: project root).
+        addon_txt_path: Path to addons/addons.txt (default: project root).
         max_test_workers: Parallelism for the URL tester.
         verbose: Print progress.
 
@@ -39,7 +40,7 @@ def discover_new_addons(
     """
     project_root = Path(addon_txt_path).resolve().parent if addon_txt_path else _find_project_root()
     if addon_txt_path is None:
-        addon_txt_path = str(project_root / "addons.txt")
+        addon_txt_path = str(custom_addons_path())
 
     if verbose:
         print(f"  Addons file: {addon_txt_path}", flush=True)
@@ -108,7 +109,7 @@ def discover_official_stremio_addons(
     """
     project_root = Path(addon_txt_path).resolve().parent if addon_txt_path else _find_project_root()
     if addon_txt_path is None:
-        addon_txt_path = str(project_root / "addons.txt")
+        addon_txt_path = str(custom_addons_path())
 
     if verbose:
         print(f"  Addons file: {addon_txt_path}", flush=True)

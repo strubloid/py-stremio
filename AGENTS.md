@@ -20,7 +20,11 @@ py-stremio/
 ├── README.md                          # User documentation
 ├── docs/project.md                         # Technical documentation
 ├── AGENTS.md                          # This file - agent context
-├── addons.txt                         # Custom addon URLs (optional)
+├── addons/                            # Addon inventories
+│   ├── addons.txt                     # Local/discovered URLs (gitignored)
+│   ├── addons.txt.example             # Custom inventory template
+│   ├── stremio.txt                    # Tracked baseline manifests
+│   └── experimental.txt               # Option 7 output (gitignored)
 ├── py_stremio/                        # Package root
 │   ├── __init__.py                    # Public exports
 │   ├── main.py                        # CLI entry point
@@ -75,8 +79,8 @@ py-stremio/
 │       │   ├── base.py                # BaseAddon, HttpAddon, UrlAddon ABCs
 │       │   ├── addon.py               # Addon URL configuration registry (11 configurers)
 │       │   ├── addon_search_service.py # Concurrent addon stream search (preflight scan)
-│       │   ├── addon_validator.py     # Validate addon URLs from addons.txt
-│       │   ├── factory.py             # AddonManager construction (types/ + addons.txt)
+│       │   ├── addon_validator.py     # Validate URLs from addons/addons.txt
+│       │   ├── factory.py             # AddonManager construction (types/ + addon files)
 │       │   ├── manager.py             # AddonManager: search addons for streams
 │       │   ├── models.py              # StreamInfo dataclass
 │       │   └── types/                 # 64 addon classes, organized by category
@@ -97,7 +101,7 @@ py-stremio/
 │       │   ├── discovery.py           # Main addon discovery orchestrator
 │       │   ├── sources.py             # Addon source scrapers
 │       │   ├── tester.py              # URL validation and testing
-│       │   └── merger.py              # Merge discovered addons with addons.txt
+│       │   └── merger.py              # Merge discovered addons with addons/addons.txt
 │       ├── reports/                   # Reporting
 │       │   ├── __init__.py
 │       │   ├── report.py              # Terminal + email report generation
@@ -253,7 +257,7 @@ Uses regex patterns in `utils.parse_episode_number()`:
    - Uses responders for the current attempt only; cache them only after a successful completed download
 2. Known working addon URLs from config.servers (per-folder verified cache)
 3. Built-in addons (64 classes in types/, organized by category — Torrentio, Comet, MediaFusion, etc.)
-4. Custom addons from addons.txt (if file exists)
+4. Baseline/custom addons from `addons/stremio.txt` and `addons/addons.txt`
 ```
 
 ### Provider Selection (Legacy Path Only)
@@ -354,12 +358,12 @@ pytest tests/ --cov=py_stremio --cov-report=term-missing
   - `regional/` (11: NoTorrent, LatinMovies, RicosStremio, FTV, FigaroCorso, Einthusan, VStremio, Dubbindo, MaineLocalNews, FenixFlix, MicoLeaoDublado)
   - `misc/` (4: WatchHub, YouTubePro, FShare, Consumet)
 
-### Addon Loading Behavior (addons.txt + Built-ins)
+### Addon Loading Behavior (addon files + Built-ins)
 
 When `create_addon_manager()` is called (via `factory.py`):
 1. **Always loads all built-in addons first** — these have correct RealDebrid key injection in their `get_url()` methods
-2. **Supplements with addons from `addons.txt`** (if file exists) — loads URLs from `addons.txt` and `addons.stremio`
-3. **Deduplicates by hostname** — any URL from addons.txt whose hostname matches a built-in addon is skipped (reported as "covered by built-in")
+2. **Supplements with addon files** — loads tracked `addons/stremio.txt`, then local `addons/addons.txt`
+3. **Deduplicates by hostname** — file URLs whose hostname matches a built-in addon are skipped (reported as "covered by built-in")
 4. **Wraps file URLs as `UrlAddon`** — URLs from file become generic UrlAddon instances
 5. **Applies RealDebrid API key** to all addons (built-in and file-loaded)
 
@@ -367,7 +371,7 @@ The loader reports the current file-addon count and the number skipped as covere
 Those values are live inventory, not stable project constants; do not copy them into docs or
 assume that a loaded addon is verified for a particular folder.
 
-**Important**: Many URLs in addons.txt are **non-stream addons** (subtitles, catalogs, metadata, ratings, trackers). These are still loaded but won't return downloadable streams:
+**Important**: Many file URLs are **non-stream addons** (subtitles, catalogs, metadata, ratings, trackers). These are still loaded but won't return downloadable streams:
 - Subtitle addons: OpenSubtitles, Addic7ed, Napisy24, Subscene, Podnapisi, YifySubtitles
 - Catalog/metadata: IMDB Catalogs, TMDB, RPDB, Trakt, RottenTomatoes, Netflix Catalog
 - Ratings/tracking: Ratings Aggregator, MyTrakt, Serializd, Simkl, Discussio
@@ -382,8 +386,9 @@ When these non-stream addons are queried for `/stream/`, they either:
 
 - **11 URL configurers** colocated with their addon families (in `addon.py` registry)
 - **Verified URL tracking**: only addon URLs that completed an actual download are saved to `config.servers` per folder; stream-only/non-downloading addons are not persisted
-- **Custom addons**: create `addons.txt` in project root with one URL per line (URLs augment built-ins, not replace)
-- **Addon Discovery**: `py-stremio --discover` scrapes addon sources, tests URLs, and merges working ones into `addons.txt`
+- **Custom addons**: create `addons/addons.txt` with one URL per line (URLs augment built-ins, not replace)
+- **Addon Discovery**: `py-stremio --discover` scrapes addon sources, tests URLs, and merges working ones into `addons/addons.txt`
+- **Experimental discovery**: interactive option 7 generates gitignored `addons/experimental.txt`
 - **Preflight scan**: `preflight_discover_working_addons()` queries all addons concurrently on first run per folder to populate working server cache
 - **Addon HTTP client**: addon stream endpoints use `httpx` first for reliable per-request timeouts; `tls_client`/`cloudscraper` remain fallbacks. The per-host rate limiter uses a re-entrant lock because success/429 reporting can happen while the request lock is still held.
 

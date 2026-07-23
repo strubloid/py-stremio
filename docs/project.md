@@ -25,8 +25,11 @@ py-stremio/
 ├── pyproject.toml                    # Package config with hatch
 ├── .env.example                      # Environment template
 ├── AGENTS.md                         # AI agent context (stays at root)
-├── addons.txt                        # Custom addon URLs (optional, data file)
-├── addons_experimental.txt           # Experimental addon URLs (optional, data file)
+├── addons/                           # External addon inventories
+│   ├── addons.txt                    # Local/discovered URLs (gitignored)
+│   ├── addons.txt.example            # Custom inventory template
+│   ├── stremio.txt                   # Tracked baseline manifests
+│   └── experimental.txt              # Option 7 output (gitignored)
 ├── README.md                         # User documentation
 ├── docs/                             # Detailed documentation
 │   ├── project.md                    # This file — technical reference
@@ -167,8 +170,8 @@ GuindexAddonConfigurer, StremioAddonConfigurer, NyaaAddonConfigurer,
 YomiAddonConfigurer, IntellDebridSearchAddonConfigurer, MeteorAddonConfigurer,
 SootioAddonConfigurer.
 
-**Loading**: Built-ins always loaded first, then addons.txt supplement.
-Deduplication by hostname — addons.txt URLs matching a built-in are
+**Loading**: Built-ins always loaded first, then `addons/stremio.txt` and `addons/addons.txt` supplements.
+Deduplication by hostname — file URLs matching a built-in are
 skipped, not replaced.
 
 ## Environment Variables

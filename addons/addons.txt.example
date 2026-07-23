@@ -1,5 +1,5 @@
 # Stremio Addon URLs
-# Copy this to addons.txt and configure as needed.
+# Copy this to addons/addons.txt and configure as needed.
 #
 # Each line is an addon manifest URL.
 # Lines starting with # are ignored.

@@ -88,6 +88,20 @@ def test_menu_choice_four_asks_threads_and_speed_before_download(monkeypatch):
     assert calls == [(None, True, 4, 60)]
 
 
+def test_menu_choice_seven_generates_experimental_addons(monkeypatch, capsys):
+    answers = iter(["7", "8"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    monkeypatch.setattr(
+        "py_stremio.components.addons.experimental.generate_experimental_urls",
+        lambda: ["https://example.test"],
+    )
+
+    application.run_menu()
+
+    output = capsys.readouterr().out
+    assert "Generated 1 URL(s) in addons/experimental.txt" in output
+
+
 def test_menu_choice_one_prints_library_sync_status_before_blocking_work(monkeypatch, capsys):
     answers = iter(["1", "2", "100", "8"])
     folders = []

@@ -106,7 +106,7 @@ RealDebrid's cache very likely has the file (the show has been cached since
    - Fetch Cinemeta metadata for "90 Day Fiance" s05 (resolves to `tt9170070`)
    - Write `download-config.json` with the IMDb ID and episode count
    - Validate addon URLs (`py-stremio --validate`)
-   - Run the preflight scan against all 64 built-in + addons.txt addons
+   - Run the preflight scan against all built-in and `addons/` inventory addons
    - For each missing episode, run `search_and_download()` against working
      addons, then fall through to the full addon universe
    - Download via the best-quality stream, with RealDebrid fallback for
@@ -446,7 +446,7 @@ returned, then:
 2. **Run the live verification** (`debug/12_test_90_day_fiance_s05e01.py`)
    to see what each addon returns
 3. **Check `.env`** — make sure `REAL_DEBRID_API_KEY` is set and the
-   `addons.txt` file has Torrentio, MediaFusion, Comet, or ThePirateBay+
+   `addons/addons.txt` file has Torrentio, MediaFusion, Comet, or ThePirateBay+
    uncommented
 4. **If still nothing**, try Tier 2 (EasyNews+) — the Usenet path is the
    strongest single source for TV

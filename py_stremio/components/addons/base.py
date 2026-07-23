@@ -255,7 +255,7 @@ def build_guindex_config_url(base_url: str, api_key: str) -> str:
 
 
 class UrlAddon(HttpAddon):
-    """Generic addon backed by a configured URL from addons.txt or other sources.
+    """Generic addon backed by a configured URL from addons/addons.txt or other sources.
 
     The RD key is injected at request time via `get_url(api_key)` when the
     URL matches a registered injection pattern — no key is stored in the file.

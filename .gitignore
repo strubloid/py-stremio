@@ -152,9 +152,9 @@ activemq-data/
 .envrc
 .venv
 
-# Addons file with API keys
-addons.txt
-addons.stremio
+# Local/generated addon inventories
+/addons/addons.txt
+/addons/experimental.txt
 env/
 venv/
 ENV/

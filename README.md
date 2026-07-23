@@ -128,7 +128,7 @@ AppService.run_pipeline()
   → ScanService.run()              # scan folders, detect missing episodes
     → MetadataService.run()         # fetch Cinemeta/IMDb metadata
   → DownloadService.run()           # download via concurrent addon search
-    → Stremio addons queried       # 64+ built-in + custom addons from addons.txt
+    → Stremio addons queried       # 64+ built-in + custom addons from addons/addons.txt
       → Filter by title + episode  # IMDB cross-validation, diacritics-insensitive,
                                     # release-group-aware, finished-release detection
       → resolve_stream_download()  # local proxy → RealDebrid API → direct URL
@@ -149,7 +149,7 @@ The filter pipeline (`select_quality_streams`) is the gate before any download:
 ## Key Features
 
 - **64+ built-in Stremio addons** across 8 categories (Torrentio, Comet, aggregators,
-  anime, IPTV, regional, misc, debrid) + unlimited URL-based addons via `addons.txt`
+  anime, IPTV, regional, misc, debrid) + unlimited URL-based addons via `addons/addons.txt`
 - **Concurrent addon search** — 10 at a time via ThreadPoolExecutor (≈12s for all)
 - **RealDebrid support** — magnet → torrent → direct URL with short capped polling
 - **Local torrent proxy** — info-hash streams resolved through a local Stremio-compatible proxy
@@ -159,7 +159,7 @@ The filter pipeline (`select_quality_streams`) is the gate before any download:
 - **Bandwidth limiting** — fair-share across active download threads
 - **Working addon caching** — only addons that completed a download are saved to `servers`
 - **Movie-specific metadata** — one folder → one IMDb-backed movie request; no season/episode tracking
-- **Addon discovery** — `py-stremio --discover` scrapes sources, tests URLs, merges into `addons.txt`
+- **Addon discovery** — `py-stremio --discover` scrapes sources, tests URLs, and merges into `addons/addons.txt`
 - **Error reporting** — deduplicated, URL-redacted; full tracebacks only in debug mode
 - **Email reports** — optional SMTP summary after each run
 

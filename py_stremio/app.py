@@ -337,16 +337,14 @@ class AppService:
         """Submenu for experimental addon management."""
         from py_stremio.components.addons.experimental import (
             EXPERIMENTAL_FILE,
+            generate_experimental_urls,
             load_experimental_urls,
         )
 
         print(_c("\n🧪 Experimental Addons", ACCENT))
-        urls = load_experimental_urls()
+        print("  Discovering and validating broad addon candidates...")
+        urls = generate_experimental_urls()
         if urls:
-            print(f"  {len(urls)} URL(s) loaded from {EXPERIMENTAL_FILE}:")
-            for url in urls:
-                print(f"    └─ {url}")
+            print(_c(f"  Generated {len(urls)} URL(s) in {EXPERIMENTAL_FILE}", GREEN))
         else:
-            print(f"  No experimental addons loaded")
-            print(f"  Add URLs to {EXPERIMENTAL_FILE} at project root")
-            print("  (one per line, '#' for comments)")
+            print(_c("  No reachable experimental addons found", YELLOW))

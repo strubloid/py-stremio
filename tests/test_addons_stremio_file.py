@@ -1,4 +1,4 @@
-"""Tests for the root addons.stremio manifest-url addon file."""
+"""Tests for addon inventory loading."""
 
 from pathlib import Path
 
@@ -26,16 +26,17 @@ def test_url_addon_loaded_from_manifest_url_queries_stream_endpoint():
 
 def test_load_addon_urls_reads_addons_txt_and_addons_stremio(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    Path("addons.txt").write_text(
+    Path("addons").mkdir()
+    Path("addons/addons.txt").write_text(
         "# clean base URLs\nhttps://base.example/addon\nhttps://duplicate.example/addon\n",
     )
-    Path("addons.stremio").write_text(
+    Path("addons/stremio.txt").write_text(
         "# final manifest URLs\n"
         "https://manifest.example/addon/manifest.json\n"
         "https://duplicate.example/addon/manifest.json\n",
     )
 
-    assert load_addons_from_file("addons.stremio") == [
+    assert load_addons_from_file("addons/stremio.txt") == [
         "https://manifest.example/addon/manifest.json",
         "https://duplicate.example/addon/manifest.json",
     ]

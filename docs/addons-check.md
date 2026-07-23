@@ -172,7 +172,7 @@ If the addon supports RealDebrid, verify that:
       one is provided.
 - [ ] For multi-tenant RD addons (Torrentio, Comet, etc.), the URL
       configurer in `addon.py` handles the pattern.
-- [ ] The RD key is **not** stored in the class file or in `addons.txt`.
+- [ ] The RD key is **not** stored in the class file or in `addons/addons.txt`.
 
 ### 3.6 Blacklisting behaviour
 

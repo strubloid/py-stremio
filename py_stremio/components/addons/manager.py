@@ -135,7 +135,7 @@ class AddonManager:
         return self.search_all(type_, id_, max_addons=len(self.addons))
 
 
-def load_addons_from_file(filepath: str = "addons.txt") -> list[str]:
+def load_addons_from_file(filepath: str | None = None) -> list[str]:
     """Load addon URLs from file."""
     from .factory import load_addons_from_file as load
     return load(filepath)

@@ -1,6 +1,6 @@
 """Addon URL configuration registry.
 
-Clean addon URLs are stored in addons.txt and per-folder server caches.  This
+Clean addon URLs are stored in addons/addons.txt and per-folder server caches.  This
 module chooses the host-specific rule that turns a clean URL into the runtime
 URL required by that addon, usually by injecting the RealDebrid key from .env.
 """

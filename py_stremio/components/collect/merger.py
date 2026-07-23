@@ -1,4 +1,4 @@
-"""Merge newly discovered addon URLs into addons.txt."""
+"""Merge newly discovered addon URLs into addons/addons.txt."""
 
 import re
 from collections.abc import Iterable
@@ -96,7 +96,7 @@ def merge_new_addons(
     dead_urls: list[str],
     verbose: bool = True,
 ) -> dict[str, int]:
-    """Merge newly discovered URLs into addons.txt.
+    """Merge newly discovered URLs into addons/addons.txt.
 
     Reads the existing file, extracts existing URL bases for dedup,
     then inserts new working URLs into the appropriate sections and
@@ -236,7 +236,7 @@ def merge_new_addons(
     new_lines.append(f"# Total commented (dead): {dead_count}")
     new_lines.append(f"# Grand total lines: {len(new_lines)}")
 
-    # Write atomically so addon discovery cannot leave addons.txt truncated.
+    # Write atomically so addon discovery cannot leave the inventory truncated.
     atomic_write_text(path, "\n".join(new_lines) + "\n")
 
     if verbose:

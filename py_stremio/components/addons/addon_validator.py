@@ -1,11 +1,11 @@
-"""Validate addon URLs from addons.txt by testing manifest + stream endpoints.
+"""Validate addon URLs from addons/addons.txt by testing manifest + stream endpoints.
 
 Addon URLs are tested with the RealDebrid key injected (if configured in .env),
 so the validator tests the same URL the app would use at runtime.
 
 Usage:
-    validate_and_update("addons.txt")   # Test all URLs, comment out failing ones
-    validate_all_addons("addons.txt")   # Test all URLs, return (working, failed) lists
+    validate_and_update("addons/addons.txt")   # Test all URLs, comment out failing ones
+    validate_all_addons("addons/addons.txt")   # Test all URLs, return (working, failed) lists
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -132,7 +132,7 @@ def check_addon_url(url: str, api_key: str | None = None) -> dict:
 # ── Batch validation ─────────────────────────────────────────────────────
 
 def validate_all_addons(
-    filepath: str = "addons.txt",
+    filepath: str | None = None,
     *,
     quiet: bool = False,
 ) -> tuple[list[str], list[str]]:
@@ -143,6 +143,9 @@ def validate_all_addons(
     import sys
     import itertools
 
+    if filepath is None:
+        from .paths import custom_addons_path
+        filepath = str(custom_addons_path())
     lines, candidates = _extract_lines(filepath)
 
     if not candidates:
@@ -203,7 +206,7 @@ def validate_all_addons(
 
 
 def update_addons_file(
-    filepath: str = "addons.txt",
+    filepath: str | None = None,
     *,
     working: list[str] | None = None,
     failed: list[str] | None = None,
@@ -213,6 +216,9 @@ def update_addons_file(
     Preserves all existing comments, section headers, and blank lines.
     URLs in *working* are left untouched.  Returns number of lines changed.
     """
+    if filepath is None:
+        from .paths import custom_addons_path
+        filepath = str(custom_addons_path())
     working_set = set(working or [])
     failed_set = set(failed or [])
 
@@ -276,7 +282,7 @@ def update_addons_file(
 
 
 def validate_and_update(
-    filepath: str = "addons.txt",
+    filepath: str | None = None,
     *,
     quiet: bool = False,
 ) -> tuple[int, int]:
@@ -284,6 +290,9 @@ def validate_and_update(
 
     Returns ``(working_count, failed_count)``.
     """
+    if filepath is None:
+        from .paths import custom_addons_path
+        filepath = str(custom_addons_path())
     print()
     print(f"\033[96m🛠  Validate addons\033[0m")
     if not quiet:
