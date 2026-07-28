@@ -60,6 +60,7 @@ class AppService:
         interactive: bool | None = None,
         default_max_workers: int | None = None,
         default_speed_percent: int | None = None,
+        cli_overrides: dict[str, str] | None = None,
     ) -> None:
         """CLI entry point.
 
@@ -73,6 +74,7 @@ class AppService:
                 interactive=interactive,
                 default_max_workers=default_max_workers,
                 default_speed_percent=default_speed_percent,
+                cli_overrides=cli_overrides or {},
             )
         except KeyboardInterrupt:
             self._interrupted()
@@ -82,6 +84,7 @@ class AppService:
         interactive: bool | None = None,
         default_max_workers: int | None = None,
         default_speed_percent: int | None = None,
+        cli_overrides: dict[str, str] | None = None,
     ) -> None:
         raw_args = sys.argv[1:]
         args = set(raw_args)
@@ -89,6 +92,7 @@ class AppService:
         action = positional[0] if positional else None
         max_workers = max(1, default_max_workers if default_max_workers is not None else 2)
         speed_percent = default_speed_percent
+        self.cli_overrides = dict(cli_overrides or {})
 
         if "--run" in args or "--all" in args:
             max_workers = int(positional[0]) if positional and positional[0].isdigit() else max_workers
@@ -276,6 +280,13 @@ class AppService:
         print(_c("╰────────────────────────────────────╯", ACCENT))
         print(f"  Mode: {_c(mode, GREEN if settings.DRY_RUN else YELLOW)}")
         print(f"  Root: {settings.ROOT_FOLDER}")
+        # Echo any --root / --key overrides so a network-share user
+        # can see at a glance that their override actually took effect
+        # (vs being silently ignored by a stale ``.env``).
+        overrides = getattr(self, "cli_overrides", None) or {}
+        if overrides:
+            pretty = ", ".join(f"{k}={v!r}" for k, v in overrides.items())
+            print(_c(f"  Overrides: {pretty}", YELLOW))
 
     def _menu(self) -> None:
         print()

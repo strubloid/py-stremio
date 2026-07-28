@@ -1,0 +1,202 @@
+"""Tests for ``cron.sh`` — the cronjob installer for py-stremio.
+
+These tests use a temporary ``crontab`` so the host's real crontab
+is never touched.  The script reads from / writes to the real
+``crontab`` binary, so each test backs up and restores the host's
+crontab around its run.
+"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CRON_SH = REPO_ROOT / "cron.sh"
+
+
+def _has_crontab() -> bool:
+    return shutil.which("crontab") is not None
+
+
+pytestmark = pytest.mark.skipif(not _has_crontab(), reason="crontab(1) not on PATH")
+
+
+@pytest.fixture
+def crontab_sandbox(tmp_path):
+    """Snapshot the real crontab and put a temp one in its place for
+    the duration of the test.  The fixture is robust against the test
+    being interrupted (KeyboardInterrupt, sys.exit, exception) — the
+    real crontab is always restored on teardown.
+    """
+    real = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
+    backup = tmp_path / "real_crontab.txt"
+    backup.write_text(real.stdout)
+
+    # Start from a clean slate so the test's assertions are
+    # deterministic regardless of what's in the real crontab.
+    subprocess.run(["crontab", "-r"], capture_output=True, check=False)
+    try:
+        yield tmp_path
+    finally:
+        # Restore the real crontab, even on failure.
+        subprocess.run(
+            ["crontab", str(backup)],
+            capture_output=True,
+            check=False,
+        )
+
+
+def _run_cron_sh(*args, env=None, cwd=None):
+    """Invoke ``cron.sh`` and capture combined output + exit code."""
+    cmd = ["bash", str(CRON_SH), *args]
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=cwd or REPO_ROOT,
+        env={**os.environ, **(env or {})},
+        check=False,
+    )
+
+
+def _read_crontab() -> str:
+    return subprocess.run(
+        ["crontab", "-l"], capture_output=True, text=True, check=False
+    ).stdout
+
+
+def test_dry_run_does_not_touch_crontab(crontab_sandbox):
+    """dry-run must NOT modify the host crontab."""
+    result = _run_cron_sh("dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "0 */3 * * *" in result.stdout
+    assert "py-stremio-managed" in result.stdout
+    # The real crontab is untouched — see the fixture.
+    assert _read_crontab().strip() == ""
+
+
+def test_install_uninstall_round_trip(crontab_sandbox):
+    """install followed by uninstall leaves the crontab empty."""
+    install = _run_cron_sh("install")
+    assert install.returncode == 0, install.stderr
+    installed = _read_crontab()
+    assert "py-stremio-managed" in installed
+    # All four jobs are present.
+    for name in ("scan-light", "scan-full", "download", "combined"):
+        assert f"[{name}]" in installed
+
+    uninstall = _run_cron_sh("uninstall")
+    assert uninstall.returncode == 0, uninstall.stderr
+    assert _read_crontab().strip() == ""
+
+
+def test_install_preserves_existing_user_entries(crontab_sandbox):
+    """install must NOT touch lines the user added themselves."""
+    user_line = "*/15 * * * * /usr/local/bin/my-backup.sh"
+    subprocess.run(
+        ["crontab", "-"],
+        input=user_line + "\n",
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    _run_cron_sh("install")
+    crontab = _read_crontab()
+    assert user_line in crontab
+    assert "py-stremio-managed" in crontab
+
+    _run_cron_sh("uninstall")
+    crontab = _read_crontab()
+    # User line is still there; our entries are gone.
+    assert user_line in crontab
+    assert "py-stremio-managed" not in crontab
+
+
+def test_install_is_idempotent(crontab_sandbox):
+    """Re-running install replaces the existing py-stremio block
+    rather than appending a second copy."""
+    _run_cron_sh("install")
+    first = _read_crontab()
+    _run_cron_sh("install")
+    second = _read_crontab()
+    # Same number of marker comments in both — install did not double them.
+    assert first.count("py-stremio-managed") == second.count("py-stremio-managed")
+
+
+def test_show_lists_existing_entries(crontab_sandbox):
+    _run_cron_sh("install")
+    show = _run_cron_sh("show")
+    assert show.returncode == 0
+    for name in ("scan-light", "scan-full", "download", "combined"):
+        assert f"[{name}]" in show.stdout
+
+
+def test_install_speed_percent_is_honoured(crontab_sandbox):
+    """The user can override the speed cap without editing the script."""
+    _run_cron_sh("install", env={"PY_STREMIO_CRON_SPEED": "25"})
+    crontab = _read_crontab()
+    assert "INTERNET_SPEED_LIMIT=25" in crontab
+    assert "INTERNET_SPEED_LIMIT=50" not in crontab
+
+
+def test_install_root_path_is_honoured(crontab_sandbox):
+    """The user can override the install root (for non-standard layouts)."""
+    _run_cron_sh(
+        "install",
+        env={"PY_STREMIO_ROOT": "/srv/py-stremio"},
+    )
+    crontab = _read_crontab()
+    assert "PY_STREMIO_ROOT=/srv/py-stremio" in crontab
+
+
+def test_cron_lines_have_valid_schedule():
+    """Every emitted schedule must be a valid 5-field cron expression."""
+    proc = _run_cron_sh("dry-run")
+    assert proc.returncode == 0
+    for line in proc.stdout.splitlines():
+        if "py-stremio-managed:" not in line:
+            continue
+        if "[scan-light]" not in line and "[scan-full]" not in line \
+                and "[download]" not in line and "[combined]" not in line:
+            continue
+        # Schedule is the first 5 space-separated fields.  The 6th
+        # field is the marker comment, then the command.  Strip the
+        # redirect (>>) and anything after to get just the schedule.
+        fields = line.split()
+        schedule = fields[:5]
+        assert len(schedule) == 5, f"bad schedule in line: {line!r}"
+        # All fields must be valid cron tokens (digits, *, ranges,
+        # steps, or comma-lists).
+        for f in schedule:
+            assert re.fullmatch(r"[\d*/,\-]+", f), f"bad schedule field {f!r} in {line!r}"
+
+
+def test_cron_lines_invoke_correct_subcommand():
+    """Each job must map to the right py-stremio-cron subcommand."""
+    proc = _run_cron_sh("dry-run")
+    assert proc.returncode == 0
+    expectations = {
+        "scan-light": "--scan >>",
+        "scan-full": "--scan --metadata >>",
+        "download": "--download >>",
+        "combined": "--update-and-download >>",
+    }
+    for name, marker in expectations.items():
+        assert marker in proc.stdout, f"job {name} missing subcommand {marker!r}"
+
+
+def test_uninstall_when_no_entries_is_safe(crontab_sandbox):
+    """uninstall with no py-stremio entries is a no-op (idempotent)."""
+    result = _run_cron_sh("uninstall")
+    assert result.returncode == 0
+    assert _read_crontab().strip() == ""
+
+
+def test_show_with_no_entries_reports_cleanly(crontab_sandbox):
+    result = _run_cron_sh("show")
+    assert result.returncode == 0
+    assert "no py-stremio cron entries" in result.stdout

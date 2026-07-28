@@ -177,6 +177,7 @@ def test_cron_entrypoint_delegates_to_same_appservice_with_presets(monkeypatch):
             "interactive": False,
             "default_max_workers": 5,
             "default_speed_percent": 80,
+            "cli_overrides": {},
         }
     ]
 
@@ -237,3 +238,62 @@ def test_run_pipeline_ctrl_c_exits_cleanly(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Interrupted" in output
     assert "shutting down" in output.lower()
+
+
+def test_root_cli_flag_overrides_env(monkeypatch):
+    """The ``--root PATH`` flag must override the ``.env``-loaded
+    ``ROOT_FOLDER`` without requiring the user to edit the shared
+    ``.env``.  Critical for the network-share workflow where the
+    ``.env`` lives on a mount that is read-only on some clients."""
+    import sys
+    from py_stremio import main
+    from py_stremio.components.configs.app_settings import settings
+
+    # Pretend the .env says /mnt/d/shared/stremio-downloads, which
+    # is the original author's machine.  The user on the network
+    # share wants to point at their own /home/strubloid/windows/...
+    # path instead.
+    original_root = settings.ROOT_FOLDER
+    sys.argv = ["py-stremio", "--root", "/home/strubloid/windows/stremio-downloads"]
+    try:
+        overrides = main._apply_cli_env_overrides()
+    finally:
+        sys.argv = ["py-stremio"]
+    assert overrides == {"ROOT_FOLDER": "/home/strubloid/windows/stremio-downloads"}
+    assert settings.ROOT_FOLDER.as_posix() == "/home/strubloid/windows/stremio-downloads"
+    assert settings.SERIES_FOLDER.as_posix() == "/home/strubloid/windows/stremio-downloads/series"
+    assert settings.MOVIES_FOLDER.as_posix() == "/home/strubloid/windows/stremio-downloads/movies"
+    # Restore so we do not leak the override into other tests.
+    settings.reapply_root(original_root)
+
+
+def test_root_cli_flag_equals_syntax(monkeypatch):
+    """``--root=PATH`` (single-arg form) must also work."""
+    import sys
+    from py_stremio import main
+    from py_stremio.components.configs.app_settings import settings
+
+    original_root = settings.ROOT_FOLDER
+    sys.argv = ["py-stremio", "--root=/tmp/alt-library"]
+    try:
+        overrides = main._apply_cli_env_overrides()
+    finally:
+        sys.argv = ["py-stremio"]
+    assert overrides == {"ROOT_FOLDER": "/tmp/alt-library"}
+    assert settings.ROOT_FOLDER.as_posix() == "/tmp/alt-library"
+    settings.reapply_root(original_root)
+
+
+def test_key_cli_flag_overrides_env(monkeypatch):
+    """The ``--key NAME=VALUE`` flag must promote a one-off env var."""
+    import os
+    import sys
+    from py_stremio import main
+
+    sys.argv = ["py-stremio", "--key", "DOWNLOAD_THREADS=8"]
+    try:
+        overrides = main._apply_cli_env_overrides()
+    finally:
+        sys.argv = ["py-stremio"]
+    assert overrides == {"DOWNLOAD_THREADS": "8"}
+    assert os.environ.get("DOWNLOAD_THREADS") == "8"

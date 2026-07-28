@@ -261,13 +261,38 @@ fi
 
 # ── Ship a default .env if missing ──────────────────────────────────────
 hr
-if [[ ! -f "$INSTALL_ROOT/.env" && -f "$INSTALL_ROOT/.env.example" ]]; then
+if [[ -f "$INSTALL_ROOT/.env" ]]; then
+    ok ".env already present — leaving it alone"
+else
     info "creating default .env from .env.example"
     $SUDO cp "$INSTALL_ROOT/.env.example" "$INSTALL_ROOT/.env"
     $SUDO chmod 600 "$INSTALL_ROOT/.env"
-    ok "wrote ${INSTALL_ROOT}/.env (fill in REAL_DEBRID_API_KEY to enable downloads)"
-else
-    ok ".env already present — leaving it alone"
+    ok "wrote ${INSTALL_ROOT}/.env"
+
+    # ROOT_FOLDER is the only env var the user MUST set before the
+    # first scan or py-stremio will report "found 0 managed folder(s)".
+    # Ask for it interactively when stdin is a tty so a fresh install
+    # on a network share does not silently point at the original
+    # author's home directory.  Fall back to the example default when
+    # stdin is piped (non-interactive installs).
+    DEFAULT_ROOT="$(grep -E '^ROOT_FOLDER=' "$INSTALL_ROOT/.env" | head -1 | cut -d= -f2-)"
+    ROOT_FOLDER_PROMPT="$DEFAULT_ROOT"
+    if [[ -t 0 ]]; then
+        printf '  %sWhere will your library live?%s\n' "$C_BOLD" "$C_RESET" >&2
+        printf '  This is the folder that contains the series/ and movies/ subfolders.\n' >&2
+        printf '  Press Enter to keep the example (%s).\n' "$DEFAULT_ROOT" >&2
+        printf '  ROOT_FOLDER> ' >&2
+        IFS= read -r entered || true
+        if [[ -n "$entered" ]]; then
+            ROOT_FOLDER_PROMPT="$entered"
+        fi
+    fi
+    $SUDO sed -i "s|^ROOT_FOLDER=.*|ROOT_FOLDER=${ROOT_FOLDER_PROMPT}|" "$INSTALL_ROOT/.env"
+    $SUDO chmod 600 "$INSTALL_ROOT/.env"
+    ok "ROOT_FOLDER set to ${ROOT_FOLDER_PROMPT}"
+    if [[ "$ROOT_FOLDER_PROMPT" == "$DEFAULT_ROOT" && ! -d "$DEFAULT_ROOT" ]]; then
+        warn "${DEFAULT_ROOT} does not exist on this machine — create it and re-run, or edit .env"
+    fi
 fi
 
 # ── Symlink the entry points ───────────────────────────────────────────
