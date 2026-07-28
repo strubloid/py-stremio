@@ -110,13 +110,27 @@ class DownloadState:
                 self.failed_items.pop(key, None)
 
     def _clear_in_progress_for_filename(self, filename: str) -> None:
-        """Remove any ``in_progress`` entry that points to the same episode."""
+        """Remove any ``in_progress`` entry that points to the same episode.
+
+        In-progress markers use the ``episode_N`` key shape (no file
+        extension) so they share a namespace with :attr:`failed_items`
+        and :attr:`preflight_indeterminate`. The legacy forms
+        ``episode_N.mkv`` and ``episode_N.something`` are also accepted
+        for backward compatibility with state files written by older
+        pipeline versions.
+        """
         stem = Path(filename).stem
         episode_number = _episode_number_from_stem(stem)
         for key in list(self.in_progress):
-            if key == filename or key == f"episode_{episode_number}.mkv":
+            if key == filename:
+                self.in_progress.pop(key, None)
+            elif episode_number and key in {
+                f"episode_{episode_number}",
+                f"episode_{episode_number}.mkv",
+            }:
                 self.in_progress.pop(key, None)
             elif episode_number and key.startswith(f"episode_{episode_number}."):
+                # Legacy ``episode_N.mkv`` form, regardless of extension.
                 self.in_progress.pop(key, None)
 
     def get_addon_url(self, filename: str) -> str:

@@ -296,11 +296,14 @@ class TestInProgress:
     def test_add_download_clears_in_progress(self, state):
         """A successful download must drop the in-progress marker so the
         next run does not think the episode is still being downloaded."""
-        state.mark_in_progress("episode_10.mkv", part_bytes=999)
+        state.mark_in_progress("episode_10", part_bytes=999)
         state.add_download("Rick and Morty_s09e10.mkv", "1080p", "stremio")
-        assert not state.is_in_progress("episode_10.mkv")
-        # The sanitised form is also cleared.
-        assert not state.is_in_progress("Rick and Morty_s09e10.mkv")
+        assert not state.is_in_progress("episode_10")
+        # The legacy ``episode_10.mkv`` form is also cleared for
+        # state files written by older pipeline versions.
+        state.mark_in_progress("episode_11.mkv", part_bytes=999)
+        state.add_download("Some Show_s01e11.mkv", "1080p", "stremio")
+        assert not state.is_in_progress("episode_11.mkv")
 
     def test_mark_failed_clears_in_progress(self, state):
         """A permanent failure also clears the in-progress marker — the

@@ -187,8 +187,8 @@ def test_setup_season_folder_persists_in_progress_markers(tmp_path):
     with open(season_folder / ".download-state.json") as f:
         data = json.load(f)
     assert "in_progress" in data
-    assert "episode_2.mkv" in data["in_progress"]
-    assert data["in_progress"]["episode_2.mkv"]["part_bytes"] == 512
+    assert "episode_2" in data["in_progress"]
+    assert data["in_progress"]["episode_2"]["part_bytes"] == 512
 
 
 def test_setup_season_folder_prunes_stale_marker_from_previous_run(tmp_path):
@@ -197,7 +197,7 @@ def test_setup_season_folder_prunes_stale_marker_from_previous_run(tmp_path):
     be cleaned up by the next run."""
     season_folder, config, state = _write_config_and_state(tmp_path, episode_count=3)
     # Simulate a stale marker from a previous run.
-    state.mark_in_progress("episode_1.mkv", part_bytes=999)
+    state.mark_in_progress("episode_1", part_bytes=999)
     save_state(season_folder, state)
 
     config.servers = ["https://torrentio.strem.fun/manifest.json"]
@@ -238,7 +238,7 @@ def test_legacy_colon_part_file_is_recognized_as_resume(tmp_path):
         season_folder, config, 4, state, config.episode_count
     )
     assert in_progress == [2]
-    assert state.is_in_progress("episode_2.mkv")
+    assert state.is_in_progress("episode_2")
 
 
 # ── In-progress marking around the actual download call ─────────────
@@ -262,7 +262,7 @@ def test_download_marks_in_progress_before_search_and_clears_on_success(
         # Capture the in_progress state at the moment the download
         # attempt begins.
         state = load_state(season_folder)
-        download_markers.append(state.is_in_progress(f"episode_{kwargs['episode']}.mkv"))
+        download_markers.append(state.is_in_progress(f"episode_{kwargs['episode']}"))
         return {
             "success": True,
             "filename": f"Test Show_s01k{kwargs['episode']:02d}.mkv".replace("k", "e"),
