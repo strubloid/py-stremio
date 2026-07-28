@@ -264,6 +264,14 @@ do_install() {
     hr
     info "installed entries"
     crontab -l | grep -F -e "$CRON_MARKER" || true
+    # The per-job environment (speed cap, install root, PATH) lives
+    # in the wrapper, not the crontab.  Echo its location so the
+    # user knows where to look when they wonder "why didn't --speed
+    # 55 show up in the cron line?"
+    echo
+    info "wrapper (owns the per-job environment)"
+    printf '  %s%s%s\n' "$C_DIM" "$WRAPPER_PATH" "$C_RESET"
+    printf '  speed cap: %s%%\n' "$SPEED_PERCENT"
 }
 
 # ── Uninstall ───────────────────────────────────────────────────────────
@@ -287,10 +295,37 @@ do_uninstall() {
 }
 
 # ── Show ────────────────────────────────────────────────────────────────
+# Print the current py-stremio cron entries AND the resolved wrapper
+# settings (speed cap, install root).  The speed is NOT visible in
+# the crontab itself — it lives in the wrapper script — so this
+# ``show`` is the only place a user can confirm what the cron jobs
+# are actually configured to do.
 do_show() {
-    crontab -l 2>/dev/null | grep -F -e "$CRON_MARKER" || {
+    local entries
+    entries="$(crontab -l 2>/dev/null | grep -F -e "$CRON_MARKER" || true)"
+    if [[ -z "$entries" ]]; then
         echo "(no py-stremio cron entries installed — run ./cron.sh install)"
-    }
+        return
+    fi
+    printf '%s' "$entries"
+    echo
+    if [[ -f "$WRAPPER_PATH" ]]; then
+        # Pull the resolved speed out of the wrapper so the user
+        # can confirm ``--speed 55`` (or env-var) actually took.
+        local resolved_speed
+        resolved_speed="$(grep -E '^export INTERNET_SPEED_LIMIT=' "$WRAPPER_PATH" \
+            | head -1 | sed -E 's/^export INTERNET_SPEED_LIMIT="?([0-9]+)"?.*/\1/')"
+        echo
+        if [[ -n "$resolved_speed" ]]; then
+            printf '  %swrapper:%s %s  (speed: %s%%)\n' \
+                "$C_DIM" "$C_RESET" "$WRAPPER_PATH" "$resolved_speed"
+        else
+            printf '  %swrapper:%s %s\n' "$C_DIM" "$C_RESET" "$WRAPPER_PATH"
+        fi
+    else
+        printf '  %s! wrapper missing:%s %s (run ./cron.sh install to recreate)\n' \
+            "$C_YELLOW" "$C_RESET" "$WRAPPER_PATH"
+    fi
 }
 
 # ── Validate ────────────────────────────────────────────────────────────

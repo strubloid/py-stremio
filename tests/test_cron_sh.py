@@ -461,3 +461,50 @@ def test_each_job_writes_to_its_own_log(crontab_sandbox):
                 f"job {name!r} logs to {log_path.name!r} — "
                 f"expected {name}.log.  Copy-paste bug?"
             )
+
+
+def test_install_echoes_wrapper_path_and_speed(crontab_sandbox):
+    """The speed cap is set in the wrapper, not the crontab.  A
+    user who runs ``./cron.sh install --speed 55`` and then looks
+    at the crontab would not see the value.  The install output
+    must explicitly echo the wrapper path and the resolved speed
+    so the user can confirm ``--speed`` actually took effect.
+    """
+    result = _run_cron_sh("install", "--speed", "55")
+    assert result.returncode == 0
+    assert "wrapper" in result.stdout
+    assert "55%" in result.stdout, (
+        "install output did not surface the resolved speed cap — "
+        "the user has no way to confirm --speed was honoured"
+    )
+    assert _read_wrapper_path() in result.stdout, (
+        "install output did not echo the wrapper path"
+    )
+
+
+def test_show_reports_resolved_speed(crontab_sandbox):
+    """``show`` must display the speed cap that was baked into the
+    wrapper, not just dump the crontab (which has no speed in it).
+    """
+    _run_cron_sh("install", "--speed", "33")
+    result = _run_cron_sh("show")
+    assert result.returncode == 0
+    assert "33%" in result.stdout, (
+        "show output did not display the wrapper's speed cap"
+    )
+
+
+def test_show_warns_when_wrapper_missing(crontab_sandbox):
+    """If the crontab entries exist but the wrapper is gone (someone
+    deleted it manually), ``show`` should warn the user so they
+    know the cron jobs will fail.
+    """
+    _run_cron_sh("install")
+    wrapper = Path(_read_wrapper_path())
+    assert wrapper.exists()
+    wrapper.unlink()
+    result = _run_cron_sh("show")
+    assert result.returncode == 0
+    assert "wrapper missing" in result.stdout, (
+        "show did not warn the user about the missing wrapper"
+    )
