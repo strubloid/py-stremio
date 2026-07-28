@@ -1,6 +1,6 @@
 # Debug Scripts for py-stremio
 
-This directory contains diagnostic scripts used during the investigation of addon availability for "90 Day Fiancé: Pillow Talk" S33E05 (IMDb: tt10955614).
+This directory contains diagnostic scripts used during the investigation of addon availability for "episode".
 
 ## Scripts Overview
 

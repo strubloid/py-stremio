@@ -177,8 +177,69 @@ def test_metadata_refresh_updates_existing_episode_list_when_config_already_has_
 
     with open(season_folder / "download-config.json") as f:
         config = json.load(f)
-    assert config["episode_count"] == 2
-    assert config["available_episodes"] == [1, 2]
+    # User-set episode_count (8) is larger than Cinemeta's count (2).
+    # A shrink to 2 would silently drop episodes the user wants — the
+    # metadata service must keep the larger user-set value so the
+    # next refresh (when Cinemeta catches up) does not require a
+    # manual config edit. See the TBA bug investigation in
+    # isues-with-downloading.md.
+    assert config["episode_count"] == 8
+    assert sorted(config["available_episodes"]) == [1, 2]
+
+
+def test_metadata_refresh_preserves_user_added_episode_in_tba_shrink(tmp_path, monkeypatch):
+    """Regression: House of the Dragon S03E06 — Cinemeta returns the
+    latest episode as a TBA row that does not count toward
+    ``available_episodes``. If the user has already advanced
+    ``episode_count`` past Cinemeta's number (e.g. via a manual edit
+    or a previous Cinemeta refresh that picked up the new episode),
+    the metadata service must NOT shrink the list back when a later
+    refresh sees the stale TBA row.
+    """
+    from py_stremio.components.configs.config_file import DownloadConfig, save_config
+
+    season_folder = tmp_path / "series" / "House of the Dragon" / "s03"
+    season_folder.mkdir(parents=True)
+    (tmp_path / "movies").mkdir()
+    save_config(
+        season_folder / "download-config.json",
+        DownloadConfig(
+            type="series",
+            title="House of the Dragon",
+            imdb_id="tt11198330",
+            season=3,
+            episode_count=6,
+            available_episodes=[1, 2, 3, 4, 5, 6],
+            current_episode_download=1,
+        ),
+    )
+    test_settings = SimpleNamespace(
+        ROOT_FOLDER=tmp_path,
+        SERIES_FOLDER=tmp_path / "series",
+        MOVIES_FOLDER=tmp_path / "movies",
+        **BASE_SETTINGS,
+    )
+    monkeypatch.setattr("py_stremio.components.configs.app_settings.settings", test_settings)
+    monkeypatch.setattr("py_stremio.components.library.library_scanner.settings", test_settings)
+    # Cinemeta returns only [1..5] because episode 6 is still a TBA row.
+    mock_meta = lambda title, season: {
+        "imdb_id": "tt11198330",
+        "title": "House of the Dragon",
+        "episode_count": 5,
+        "available_episodes": [1, 2, 3, 4, 5],
+        "season_exists": True,
+    }
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.get_series_metadata", mock_meta)
+    monkeypatch.setattr("py_stremio.services.metadata.get_series_metadata", mock_meta)
+
+    application.update_config_imdb_ids(quiet=True)
+
+    with open(season_folder / "download-config.json") as f:
+        config = json.load(f)
+    # Both the user-set episode_count and the previously-known available
+    # list must be preserved across the stale TBA refresh.
+    assert config["episode_count"] == 6
+    assert sorted(config["available_episodes"]) == [1, 2, 3, 4, 5, 6]
 
 
 def test_full_run_metadata_uses_fresh_cache_without_network_lookup(tmp_path, monkeypatch):

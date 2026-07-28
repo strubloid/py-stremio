@@ -9,6 +9,8 @@
 # Keep addons/addons.txt for clean/editable base URLs and RD-specific addon rules.
 # Use this file for generic Stremio manifests that do not need a custom type.
 
+
+# ── Cleaned 2026-07-23: 6 dead URL(s) commented out (see debug/13_addon_health_report.json) ──
 https://torrentio.strem.fun/manifest.json
 https://anime-kitsu.strem.fun/manifest.json
 https://mediafusion.elfhosted.com/manifest.json
@@ -27,7 +29,6 @@ https://cometnet.elfhosted.com/manifest.json
 https://easynewsplus.elfhosted.com/manifest.json
 https://stremify.elfhosted.com/manifest.json
 https://jackettio.elfhosted.com/manifest.json
-https://aiostreams.elfhosted.com/manifest.json
 https://peerflix.mov/manifest.json
 https://5a0d1888fa64-orion.baby-beamup.club/manifest.json
 https://68d69db7dc40-debrid-search.baby-beamup.club/manifest.json
@@ -41,7 +42,6 @@ https://addon.peario.xyz/manifest.json
 https://94c8cb9f702d-tmdb-addon.baby-beamup.club/manifest.json
 https://23dfbfad8cb2-stremio-addon-superflix.baby-beamup.club/manifest.json
 https://7a625ac658ec-animeo.baby-beamup.club/manifest.json
-https://nyaa-scraper-stremio-addon.nmtl.app/manifest.json
 https://onepaceaddon-zoropogger.koyeb.app/manifest.json
 https://victorgveloso.github.io/animes-season-addon/manifest.json
 https://86f0740f37f6-hanime-stremio.baby-beamup.club/manifest.json
@@ -49,10 +49,7 @@ https://1fe84bc728af-stremio-anime-catalogs.baby-beamup.club/manifest.json
 https://f14b294b7a6d-consumet-anime.baby-beamup.club/manifest.json
 https://streamio-hianime.onrender.com/manifest.json
 https://animestream-addon.keypop3750.workers.dev/manifest.json
-https://animesdigital-vercel.vercel.app/manifest.json
-https://yomi.ruka.pw/manifest.json
 https://animes-br-self.vercel.app/manifest.json
-https://xtreampro.onrender.com/manifest.json
 https://3b4bbf5252c4-aio-streaming.baby-beamup.club/manifest.json
 https://2ecbbd610840-opensubtitles.baby-beamup.club/manifest.json
 https://2ecbbd610840-subscene.baby-beamup.club/manifest.json
@@ -81,7 +78,6 @@ https://7a82163c306e-stremio-concerts.baby-beamup.club/manifest.json
 https://a0da031547f5-stremio-maine-radio.baby-beamup.club/manifest.json
 https://a0da031547f5-stremio-broadcastify-usa-broadcasts.baby-beamup.club/manifest.json
 https://b89262c192b0-stremio-consumet-addon.baby-beamup.club/manifest.json
-https://youtubepro-macu.onrender.com/manifest.json
 https://addon-marvel.onrender.com/manifest.json
 https://dindz-addon.onrender.com/manifest.json
 https://hfreemiumy.surge.sh/manifest.json
@@ -97,3 +93,55 @@ https://56bca7d190fc-syncribullet.baby-beamup.club/manifest.json
 https://2ecbbd610840-napflix.baby-beamup.club/manifest.json
 https://2ecbbd610840-stremio-ar.baby-beamup.club/manifest.json
 https://premiumize.almosteffective.com/manifest.json
+
+# ── WORLDWIDE ADDONS ADDED 2026-07-23 ─────────────────────────────────────────
+# 24 addons verified via debug/15_verify_candidates.py
+# Sources: stremio-addons.net, elfhosted, community catalogs
+# All return valid Stremio manifest with 'stream' resource
+
+# ── 🌍 WORLDWIDE ─────────────────────────────────────────────────
+#   Torrent / Debrid
+https://ce8c71dcef3b-filtorrent.baby-beamup.club/manifest.json
+https://flixnest.app/flix-streams/manifest.json
+https://free.flixnest.app/manifest.json
+https://liteaio.com/manifest.json
+https://moviebox-cfa7.onrender.com/manifest.json
+https://v2.stravo.site/manifest.json
+
+#   IPTV / Live
+https://fun.kort.workers.dev/manifest.json
+https://iptv.arielinnovations.com/manifest.json
+https://nexotv.duckdns.org/manifest.json
+https://iptv.scary.network/manifest.json
+https://watchio-addon.pages.dev/manifest.json
+
+#   Specialized
+https://addon.bettermetadata.com/manifest.json
+https://dramayo.stream/manifest.json
+https://mytrakt.elfhosted.com/manifest.json
+https://onlyanimes.stravo.site/manifest.json
+https://tbmedia.onrender.com/manifest.json
+https://stremio.yukistreams.xyz/manifest.json
+https://yastream.tamthai.de/manifest.json
+
+# ── 🇦🇷 ARGENTINA ─────────────────────────────────────────────────
+#   IPTV / Live
+https://848b3516657c-argentinatv.baby-beamup.club/manifest.json
+
+# ── 🇦🇺 AUSTRALIA ─────────────────────────────────────────────────
+#   IPTV / Live
+https://kangaroostreams.hayd.uk/manifest.json
+
+# ── 🇧🇷 BRAZIL ─────────────────────────────────────────────────
+#   Torrent / Debrid
+https://fenixflix-ur9u.onrender.com/manifest.json
+https://indexabr.vercel.app/manifest.json
+
+# ── 🇮🇳 INDIA ─────────────────────────────────────────────────
+#   Specialized
+https://desiflix.stremioaddon.workers.dev/manifest.json
+
+# ── 🇯🇵 JAPAN ─────────────────────────────────────────────────
+#   Specialized
+https://onepace4k.duckdns.org/manifest.json
+

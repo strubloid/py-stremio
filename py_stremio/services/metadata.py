@@ -191,6 +191,7 @@ class MetadataService:
                 changed = True
             season_exists = metadata.get("season_exists")
             episode_count = metadata.get("episode_count")
+            current_episode_count = config.get("episode_count")
             if season_exists is False:
                 # Don't touch enabled/episode_count/available_episodes — those are
                 # user preferences and manual overrides. The data source
@@ -199,13 +200,43 @@ class MetadataService:
                 # would be destructive.
                 status_row = [canonical_title, season_label, "--", "--", "not found"]
             else:
-                if episode_count and config.get("episode_count") != episode_count:
-                    config["episode_count"] = episode_count
+                # When Cinemeta shrinks the available-episodes list to a
+                # count LOWER than the user-set episode_count, it usually
+                # means the next episode(s) have not yet been indexed
+                # (e.g. an episode aired but Cinemeta still shows TBA).
+                # Overwriting the user's value with the smaller count
+                # silently removes the new episode from the missing list.
+                # Keep the larger value in that case so the next metadata
+                # refresh — when Cinemeta catches up — does not need the
+                # user to re-edit the config.
+                new_episode_count = episode_count
+                if (
+                    current_episode_count is not None
+                    and new_episode_count is not None
+                    and new_episode_count < current_episode_count
+                ):
+                    new_episode_count = current_episode_count
+                if new_episode_count and config.get("episode_count") != new_episode_count:
+                    config["episode_count"] = new_episode_count
                     changed = True
-                if "available_episodes" in metadata and config.get("available_episodes") != metadata.get("available_episodes"):
-                    config["available_episodes"] = metadata.get("available_episodes")
-                    changed = True
-                ep_display = str(episode_count) if episode_count else "?"
+                new_available = metadata.get("available_episodes")
+                if isinstance(new_available, list):
+                    current_available = config.get("available_episodes")
+                    if (
+                        current_episode_count is not None
+                        and current_available is not None
+                    ):
+                        # Keep any episode number the user has already
+                        # declared wanted, even if Cinemeta dropped it.
+                        union = sorted(set(current_available) | set(new_available))
+                        cap = new_episode_count or current_episode_count
+                        union = [ep for ep in union if 1 <= ep <= cap]
+                        if union != new_available:
+                            new_available = union
+                    if config.get("available_episodes") != new_available:
+                        config["available_episodes"] = new_available
+                        changed = True
+                ep_display = str(config.get("episode_count")) if config.get("episode_count") else "?"
                 imdb_display = config.get("imdb_id") or "--"
                 status_row = [canonical_title, season_label, ep_display, imdb_display, "✓"]
         else:

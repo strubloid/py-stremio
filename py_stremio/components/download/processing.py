@@ -22,12 +22,21 @@ from py_stremio.utils.cancellation import (
 )
 from py_stremio.components.download.stream_download import build_media_filename, _minimum_completed_video_bytes
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
-from py_stremio.components.addons.addon_search_service import preflight_discover_working_addons
+from py_stremio.components.addons.addon_search_service import (
+    PreflightResult,
+    _coerce_preflight,
+    preflight_discover_working_addons,
+)
 from py_stremio.components.stremio.stremio_ids import build_stremio_id
 from py_stremio.components.addons.experimental import load_experimental_urls
 
 # Module-level flag to print the experimental addon count once, not per-folder
 _experimental_announced: list[bool] = [False]
+
+# When the preflight returns zero working addons, retry once after this
+# backoff. Lets the rate-limiter's per-host window clear before we give up
+# on a folder for this run.
+_PREFLIGHT_BACKOFF_SECONDS = 3.0
 
 
 # ── Task descriptor for global thread pool scheduling ────────────────────
@@ -63,6 +72,18 @@ class SeasonFolderTask:
     # skip the full per-episode addon search to avoid re-searching all
     # 54 addons for every single missing episode.
     no_working_addons: bool = False
+    # When True, the preflight's zero-result was caused by rate-limit
+    # saturation on every addon's host. The per-episode search must still
+    # run because the next attempt may find a free slot in the per-host
+    # window — the negative result is transient, not structural.
+    preflight_indeterminate: bool = False
+    # Episodes whose .part file is on disk when the run starts. They
+    # are already at the head of ``missing_episodes`` thanks to the
+    # resume-first ordering in ``setup_season_folder``, but tracking
+    # the set here is useful for diagnostics and for the download
+    # path to know it should mark ``state.in_progress`` before opening
+    # the network stream.
+    in_progress_episodes: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -155,6 +176,41 @@ def setup_season_folder(
     start_episode = max(1, config.current_episode_download or 1)
     missing = _missing_episodes(folder_path, config, state, season, existing_episodes)
 
+    # ── Resume-first ordering ─────────────────────────────────────────────
+    # Sync the in_progress markers with the actual .part files on disk,
+    # then put any resume-eligible episodes at the head of the missing
+    # list. Without this re-ordering a user who restarts py-stremio after
+    # an interruption has to wait for the fresh-episode addon searches
+    # to drain before the resume candidates get their turn.
+    in_progress_episodes = _sync_in_progress_with_disk(
+        folder_path, config, season, state, config.episode_count or 0
+    )
+    # Persist the in_progress reconciliation so a Ctrl+C between this
+    # line and the first download attempt still leaves the state file
+    # in sync with the on-disk .part files.
+    save_state(folder_path, state)
+    if in_progress_episodes and not quiet_output:
+        size_total = 0
+        for ep in in_progress_episodes:
+            part_path = _part_path_for_episode(folder_path, config, season, ep)
+            if part_path is not None:
+                try:
+                    size_total += part_path.stat().st_size
+                except OSError:
+                    pass
+        size_mb = size_total / (1024 * 1024)
+        size_gb = size_mb / 1024
+        human = f"{size_gb:.1f} GB" if size_gb >= 1 else f"{size_mb:.0f} MB"
+        print(
+            f"      ↻ {len(in_progress_episodes)} episode(s) with .part files "
+            f"({human} on disk) — resuming first"
+        )
+    if in_progress_episodes:
+        resume_first, fresh = _partition_missing_by_in_progress(
+            missing, in_progress_episodes
+        )
+        missing = [*resume_first, *fresh]
+
     if missing:
         _set_current_episode(config, config_path, missing[0])
     elif start_episode <= (config.episode_count or 1) and config.available_episodes is None:
@@ -168,26 +224,70 @@ def setup_season_folder(
         if len(filtered) < len(servers):
             servers = filtered
     no_working_addons = False
+    preflight_indeterminate = False
     if missing and not servers and config.imdb_id:
         first_episode = missing[0]
         stremio_id = build_stremio_id(config.imdb_id, title, season, first_episode)
-        discovered = preflight_discover_working_addons(
-            "series",
-            stremio_id,
-            title=title,
-            season=season,
-            episode=first_episode,
-            imdb_id=config.imdb_id,
+        preflight_result = _coerce_preflight(
+            preflight_discover_working_addons(
+                "series",
+                stremio_id,
+                title=title,
+                season=season,
+                episode=first_episode,
+                imdb_id=config.imdb_id,
+            )
         )
-        if discovered:
-            servers = discovered
+        # When the first pass is empty but some addons are 'indeterminate'
+        # (rate-limited), retry once after a short backoff so the
+        # rate-limiter's per-host window can free a slot. This prevents a
+        # single bad burst from cascading into a permanent skip.
+        if not preflight_result.has_working and preflight_result.has_unknown:
             if not quiet_output:
-                print(f"      Using {len(discovered)} preflight addon candidate(s)")
+                print(
+                    f"      Preflight found {len(preflight_result.indeterminate)} "
+                    f"indeterminate addon(s) (rate-limited) — retrying in "
+                    f"{_PREFLIGHT_BACKOFF_SECONDS:.0f}s"
+                )
+            time.sleep(_PREFLIGHT_BACKOFF_SECONDS)
+            preflight_result = _coerce_preflight(
+                preflight_discover_working_addons(
+                    "series",
+                    stremio_id,
+                    title=title,
+                    season=season,
+                    episode=first_episode,
+                    imdb_id=config.imdb_id,
+                )
+            )
+        if preflight_result.has_working:
+            servers = preflight_result.alive
+            if not quiet_output:
+                print(
+                    f"      Using {len(preflight_result.alive)} preflight addon candidate(s)"
+                    + (
+                        f" ({len(preflight_result.indeterminate)} still rate-limited)"
+                        if preflight_result.has_unknown
+                        else ""
+                    )
+                )
         else:
             if not quiet_output:
-                print(f"      No working addons found — skipping repeated per-episode searches")
+                if preflight_result.has_unknown:
+                    print(
+                        f"      No working addons after retry — "
+                        f"{len(preflight_result.indeterminate)} addons still rate-limited. "
+                        f"Will re-check per episode."
+                    )
+                else:
+                    print(
+                        f"      No working addons found — skipping repeated per-episode searches"
+                    )
 
-        no_working_addons = len(discovered) == 0
+        no_working_addons = not preflight_result.has_working
+        preflight_indeterminate = (
+            not preflight_result.has_working and preflight_result.has_unknown
+        )
     elif not servers and missing:
         if not quiet_output:
             print(f"      No server cache and no IMDB ID — will search all per-episode")
@@ -209,6 +309,8 @@ def setup_season_folder(
         bandwidth_limiter=bandwidth_limiter,
         quiet_output=quiet_output,
         no_working_addons=no_working_addons,
+        preflight_indeterminate=preflight_indeterminate,
+        in_progress_episodes=list(in_progress_episodes),
     )
 
 
@@ -239,11 +341,23 @@ def _do_download_one_episode(
     # stale tasks or stale missing-episode lists created before state/config was
     # reconciled.
     generated_filename = _generated_episode_filename(task.folder_path, task.config, task.season, episode_num)
-    if (task.folder_path / generated_filename).exists():
+    existing_path = task.folder_path / generated_filename
+    # Also recognise the legacy unsanitised filename (e.g. with a `:`)
+    # so the post-fix pipeline does not force a re-download of files
+    # that the pre-fix pipeline already wrote to disk.
+    if not existing_path.exists():
+        legacy_filename = _legacy_generated_filename(
+            task.folder_path, task.config, task.season, episode_num
+        )
+        if legacy_filename is not None:
+            legacy_path = task.folder_path / legacy_filename
+            if legacy_path.exists():
+                existing_path = legacy_path
+                generated_filename = legacy_filename
+    if existing_path.exists():
         # Validate existing file before skipping: if it's too small, it's
         # likely an incomplete download from a previous failed run and must
         # be re-downloaded instead of silently skipped.
-        existing_path = task.folder_path / generated_filename
         existing_size = existing_path.stat().st_size
         min_bytes = _minimum_completed_video_bytes()
         if min_bytes > 0 and existing_size < min_bytes:
@@ -357,8 +471,32 @@ def _do_download_one_episode(
 
     # Preflight has already searched every configured addon for this exact
     # show/season/episode. With no usable result, another full search for every
-    # missing episode only multiplies timeouts and rate-limit cooldowns.
-    skip_full = task.no_working_addons
+    # missing episode only multiplies timeouts and rate-limit cooldowns —
+    # UNLESS the zero-result was due to rate-limit saturation, in which
+    # case a per-episode re-search is the only way to escape the bad
+    # state without waiting for the next process.
+    skip_full = task.no_working_addons and not task.preflight_indeterminate
+
+    # Mark the episode as in-progress so an interrupted run (Ctrl+C,
+    # crash, OOM) is resumed on the next start. Use the existing
+    # ``.part`` file size as the part_bytes so the next run has a
+    # useful starting point without re-stat'ing the disk. The key
+    # shape ``episode_{N}`` (no extension) matches the keys used by
+    # ``mark_failed`` and ``mark_preflight_indeterminate`` so the
+    # cleanup paths find the right entry.
+    part_path = _part_path_for_episode(
+        task.folder_path, task.config, task.season, episode_num
+    )
+    existing_part_bytes = 0
+    if part_path is not None:
+        try:
+            existing_part_bytes = part_path.stat().st_size
+        except OSError:
+            existing_part_bytes = 0
+    task.state.mark_in_progress(
+        f"episode_{episode_num}", part_bytes=existing_part_bytes
+    )
+    save_state(task.folder_path, task.state)
 
     result: dict[str, Any] = {}
     error: BaseException | None = None
@@ -489,9 +627,14 @@ def _movie_target_path(folder_path: Path, config) -> Path:
     Uses the configured title (preferred) or the folder name as a
     fallback, matching the ``build_media_filename`` output used by the
     download path so the two halves of the pipeline agree on the
-    expected output location.
+    expected output location. The title is run through
+    :func:`sanitize_filename` to keep the path portable to NTFS
+    shares and to match the on-disk file the downloader will write.
     """
-    title = config.title or folder_path.name
+    from py_stremio.utils.media import sanitize_filename
+
+    raw_title = config.title or folder_path.name
+    title = sanitize_filename(raw_title)
     return folder_path / f"{title}.mkv"
 
 
@@ -508,9 +651,37 @@ def _movie_partial_path(folder_path: Path, config) -> Path:
 
 
 def _is_completed_generated_file(folder_path: Path, config, season: int, episode: int) -> bool:
-    """Return True when the final generated media file is already present."""
+    """Return True when the final generated media file is already present.
+
+    Also accepts the legacy unsanitised filename form so that
+    previously-downloaded files (e.g. titles containing ``:`` written
+    before :func:`build_media_filename` was sanitised) are still
+    recognised as completed. This avoids a one-time forced re-download
+    after the colon fix.
+    """
     expected = _generated_episode_filename(folder_path, config, season, episode)
-    return (folder_path / expected).exists()
+    if (folder_path / expected).exists():
+        return True
+    legacy = _legacy_generated_filename(folder_path, config, season, episode)
+    return legacy is not None and (folder_path / legacy).exists()
+
+
+def _legacy_generated_filename(folder_path: Path, config, season: int, episode: int) -> str | None:
+    """Return the unsanitised form of the generated filename, or None.
+
+    The pre-fix pipeline wrote ``{title}_s{NN}e{NN}.mkv`` without
+    sanitising ``title``. Older libraries may have such files on disk
+    and the new pipeline must keep recognising them as completed.
+    """
+    from py_stremio.utils.media import sanitize_filename
+
+    raw_title = config.title or ""
+    sanitised = sanitize_filename(raw_title)
+    if not raw_title or raw_title == sanitised:
+        return None
+    if season:
+        return f"{raw_title}_s{season:02d}e{episode:02d}.mkv"
+    return f"{raw_title}.mkv"
 
 
 def _maybe_convert_tiny_untracked_file_to_partial(folder_path: Path, config, season: int, episode: int, state) -> bool:
@@ -538,6 +709,88 @@ def _is_resume_candidate(folder_path: Path, config, season: int, episode: int, s
     """Return True when a .part download exists but was not marked complete."""
     expected = _generated_episode_filename(folder_path, config, season, episode)
     return (folder_path / f"{expected}.part").exists() and not state.is_downloaded(expected)
+
+
+def _part_path_for_episode(
+    folder_path: Path, config, season: int, episode: int
+) -> Path | None:
+    """Return the absolute path of the ``.part`` file for one episode.
+
+    Handles both the new sanitised filename and the legacy unsanitised
+    filename so an in-progress download from a previous pipeline
+    version is still recognised as a resume candidate.
+    """
+    expected = _generated_episode_filename(folder_path, config, season, episode)
+    sanitised = folder_path / f"{expected}.part"
+    if sanitised.exists():
+        return sanitised
+    legacy = _legacy_generated_filename(folder_path, config, season, episode)
+    if legacy:
+        legacy_path = folder_path / f"{legacy}.part"
+        if legacy_path.exists():
+            return legacy_path
+    return None
+
+
+def _sync_in_progress_with_disk(
+    folder_path: Path,
+    config,
+    season: int,
+    state: DownloadState,
+    episode_count: int,
+) -> list[int]:
+    """Reconcile the in-progress markers with the .part files on disk.
+
+    Walks the season folder, finds every ``.part`` file, marks the
+    corresponding episode in ``state.in_progress`` and returns the
+    list of in-progress episode numbers (sorted ascending).
+
+    Stale markers (in state but not on disk) are pruned by
+    :meth:`DownloadState.prune_stale_in_progress` after age filtering.
+    """
+    in_progress_episodes: list[int] = []
+    for ep in range(1, max(1, episode_count) + 1):
+        part_path = _part_path_for_episode(folder_path, config, season, ep)
+        if part_path is None:
+            continue
+        try:
+            size = part_path.stat().st_size
+        except OSError:
+            size = 0
+        key = f"episode_{ep}"
+        state.mark_in_progress(key, part_bytes=size)
+        in_progress_episodes.append(ep)
+    # Drop markers that are too old regardless of the .part check.
+    state.prune_stale_in_progress()
+    # Also drop markers for keys not in the live scan (i.e. no .part
+    # file exists for them on disk). The on-disk check is folded in
+    # here so we do not have to invent a "find the .part for this
+    # state key" lookup — the sync above already did that mapping.
+    keep_keys = {f"episode_{ep}" for ep in in_progress_episodes}
+    for key in list(state.in_progress):
+        if key not in keep_keys:
+            state.clear_in_progress(key)
+    return in_progress_episodes
+
+
+def _partition_missing_by_in_progress(
+    missing: list[int],
+    in_progress_episodes: list[int],
+) -> tuple[list[int], list[int]]:
+    """Split *missing* into (resume_first, fresh) buckets.
+
+    ``resume_first`` contains the episodes with live ``.part`` files
+    on disk, in their natural order. ``fresh`` contains every other
+    missing episode, preserving the input order.
+
+    The caller should concatenate the two buckets so the download
+    worker picks up the resume-eligible episodes before doing a fresh
+    addon search for the rest.
+    """
+    in_progress_set = set(in_progress_episodes)
+    resume_first = [ep for ep in missing if ep in in_progress_set]
+    fresh = [ep for ep in missing if ep not in in_progress_set]
+    return resume_first, fresh
 
 
 def _missing_episodes(folder_path: Path, config, state, season: int, existing_episodes: set[int]) -> list[int]:
@@ -733,7 +986,15 @@ def process_season_folder(
                     disabled_set = set(new_disabled)
                     task.servers = [s for s in task.servers if s not in disabled_set]
             failure_reason = result.get("error", "failed")
-            task.state.mark_failed(f"episode_{episode_num}", failure_reason, 1)
+            if task.preflight_indeterminate and failure_reason == "Preflight found no working addons":
+                # Rate-limit cascade — record a transient preflight marker
+                # instead of a permanent failure so the next run is allowed
+                # to retry without first burning through MAX_DOWNLOAD_ATTEMPTS.
+                task.state.mark_preflight_indeterminate(
+                    f"episode_{episode_num}", failure_reason
+                )
+            else:
+                task.state.mark_failed(f"episode_{episode_num}", failure_reason, 1)
             failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {failure_reason}")
             failed += 1
 
@@ -805,7 +1066,15 @@ def process_season_folder(
     if not shutdown_requested():
         for episode_num in queue:
             reason = "All retry rounds exhausted"
-            task.state.mark_failed(f"episode_{episode_num}", reason, max_attempts)
+            if task.preflight_indeterminate:
+                # All retry rounds were skipped because the preflight was
+                # rate-limited. Mark the episode as transient rather than
+                # permanent so the next run can re-attempt.
+                task.state.mark_preflight_indeterminate(
+                    f"episode_{episode_num}", reason
+                )
+            else:
+                task.state.mark_failed(f"episode_{episode_num}", reason, max_attempts)
             failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {reason}")
             failed += 1
 
@@ -912,11 +1181,16 @@ def process_movie_folder(
     # Pre-flight addon discovery for movies
     stremio_id = build_stremio_id(config.imdb_id, title, None, None) if config.imdb_id else build_stremio_id(None, title, None, None)
     if not servers:
-        discovered = preflight_discover_working_addons("movie", stremio_id)
-        if discovered:
-            servers = discovered
-        else:
-            pass
+        movie_preflight = _coerce_preflight(
+            preflight_discover_working_addons("movie", stremio_id)
+        )
+        if not movie_preflight.has_working and movie_preflight.has_unknown:
+            time.sleep(_PREFLIGHT_BACKOFF_SECONDS)
+            movie_preflight = _coerce_preflight(
+                preflight_discover_working_addons("movie", stremio_id)
+            )
+        if movie_preflight.has_working:
+            servers = movie_preflight.alive
 
     movie_stage_tracker = StageTracker()
     movie_progress_lock = threading.Lock()
@@ -978,6 +1252,14 @@ def process_movie_folder(
     error: BaseException | None = None
     try:
         raise_if_shutdown_requested()
+        # Mark the movie as in-progress so a crashed run is resumed
+        # on the next start. Movies have a single target file so the
+        # state key is the same regardless of season/episode.
+        state.mark_in_progress(
+            _movie_partial_path(folder_path, config).name,
+            part_bytes=resume_state.get("partial_bytes", 0),
+        )
+        save_state(folder_path, state)
         result = search_and_download(
             title=title,
             imdb_id=config.imdb_id,

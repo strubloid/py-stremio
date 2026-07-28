@@ -28,10 +28,42 @@ def is_video_file(file_path: Path) -> bool:
 
 
 def iter_video_files(folder_path: Path) -> list[Path]:
-    """List supported video files in a folder."""
+    """List supported video files in a folder.
+
+    The scan is intentionally non-recursive: only top-level files are
+    considered. A warning is printed at the first call for a folder that
+    contains subfolders so the user is not silently confused by an
+    "invisible" file in a nested directory.
+    """
     if not folder_path.exists():
         return []
-    return [file_path for file_path in folder_path.iterdir() if is_video_file(file_path)]
+    files = [file_path for file_path in folder_path.iterdir() if is_video_file(file_path)]
+    _maybe_warn_about_subfolders(folder_path)
+    return files
+
+
+def _maybe_warn_about_subfolders(folder_path: Path) -> None:
+    """Print a one-shot warning if *folder_path* contains nested subfolders.
+
+    A separate warning is shown per folder to keep the behaviour local
+    and easily suppressible; repeated calls for the same folder would
+    re-print because per-folder scan loops are typically short.
+    """
+    try:
+        has_subdirs = any(p.is_dir() for p in folder_path.iterdir())
+    except OSError:
+        return
+    if not has_subdirs:
+        return
+    subdirs = sorted(p.name for p in folder_path.iterdir() if p.is_dir())
+    names = ", ".join(subdirs[:3])
+    if len(subdirs) > 3:
+        names += f", … (+{len(subdirs) - 3} more)"
+    print(
+        f"  ⚠ {folder_path} contains subfolder(s) "
+        f"({names}) — only top-level files are scanned. "
+        f"Move files out of any subfolder before running py-stremio."
+    )
 
 
 def scan_episode_files(folder_path: Path) -> list[MediaFile]:

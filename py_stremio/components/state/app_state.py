@@ -1,11 +1,27 @@
 """Download state management."""
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
+import re
 from typing import Any
 
 from py_stremio.utils.atomic_write import atomic_write_json
+
+# How long an indeterminate preflight result is honoured before the
+# per-episode pipeline is allowed to re-attempt the full search.
+# Short enough that a one-off rate-limit burst does not block a season
+# for long, long enough that the next preflight within the same
+# process is not needlessly re-run.
+PREFLIGHT_INDETERMINATE_TTL_SECONDS = 30 * 60
+
+# Maximum age of an ``in_progress`` marker before the next run treats
+# it as stale and discards it. The .part file is the ground truth —
+# this TTL is a safety net for crashed runs that left the marker
+# without a matching file (e.g. process killed between the marker
+# write and the .part write). 24 hours is well past the longest
+# realistic single-episode download for a 4K file.
+IN_PROGRESS_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 @dataclass
@@ -26,6 +42,19 @@ class DownloadState:
     last_scan: str = field(default_factory=lambda: datetime.now().isoformat())
     total_downloaded: int = 0
     failed_items: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Transient bookmarks that are NOT counted as permanent failures.
+    # Used to mark "this run could not complete the preflight because
+    # every addon's host was rate-limit saturated" — the per-episode
+    # pipeline should still attempt a fresh search the next time
+    # (until the TTL expires).
+    preflight_indeterminate: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Episodes whose download is currently in progress — a ``.part``
+    # file is on disk and the next run should resume them before
+    # touching any other episode. The on-disk ``.part`` file is the
+    # ground truth; this field is the persisted cross-run cache that
+    # lets the next process start with resume-first ordering instead
+    # of starting the addon search from scratch for every episode.
+    in_progress: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def add_download(self, filename: str, quality: str, provider: str,
                      addon_url: str = "", server: str = "") -> None:
@@ -48,6 +77,47 @@ class DownloadState:
             timestamp=datetime.now().isoformat(),
         )
         self.total_downloaded += 1
+        # A successful download means the episode was resolved. Drop any
+        # stale failure record for the same logical episode so the state
+        # file no longer claims "failed" for an item that is now on disk.
+        self._clear_failed_for_filename(filename)
+        # A successful download is no longer "in progress". Drop the
+        # in-progress marker for this episode and any sibling form
+        # (``episode_N.mkv``) so the state file no longer claims the
+        # file is being downloaded.
+        self._clear_in_progress_for_filename(filename)
+
+    def _clear_failed_for_filename(self, filename: str) -> None:
+        """Remove any ``failed_items`` entry that points to the same episode.
+
+        The state file uses two key shapes for an episode:
+        - The final filename (with sanitised title, e.g.
+          ``Rick and Morty_s09e10.mkv``)
+        - The legacy ``episode_N.mkv`` key
+
+        Either may show up in ``failed_items`` after a previous failed
+        attempt. When a successful download lands, both should be dropped
+        to avoid the misleading "state says failed but file is on disk"
+        pattern called out in the download-issues investigation.
+        """
+        stem = Path(filename).stem
+        episode_number = _episode_number_from_stem(stem)
+        for key in list(self.failed_items):
+            if key == filename or key == f"episode_{episode_number}.mkv":
+                self.failed_items.pop(key, None)
+            elif episode_number and key.startswith(f"episode_{episode_number}."):
+                # Legacy ``episode_N.mkv`` form, regardless of extension.
+                self.failed_items.pop(key, None)
+
+    def _clear_in_progress_for_filename(self, filename: str) -> None:
+        """Remove any ``in_progress`` entry that points to the same episode."""
+        stem = Path(filename).stem
+        episode_number = _episode_number_from_stem(stem)
+        for key in list(self.in_progress):
+            if key == filename or key == f"episode_{episode_number}.mkv":
+                self.in_progress.pop(key, None)
+            elif episode_number and key.startswith(f"episode_{episode_number}."):
+                self.in_progress.pop(key, None)
 
     def get_addon_url(self, filename: str) -> str:
         if filename in self.items:
@@ -67,6 +137,111 @@ class DownloadState:
             "attempt": attempt,
             "timestamp": datetime.now().isoformat(),
         }
+        # A permanent failure means the .part file has been cleaned up
+        # (see _delete_invalid_download in stream_download). The episode
+        # is no longer "in progress".
+        self.clear_in_progress(item_key)
+
+    def mark_in_progress(self, item_key: str, part_bytes: int = 0) -> None:
+        """Record that *item_key*'s download is currently in progress.
+
+        Called when the downloader opens a ``.part`` file and starts
+        writing bytes. The marker is cleared by :meth:`add_download`
+        (success) and :meth:`mark_failed` (permanent failure) and by
+        the next :meth:`prune_stale_in_progress` pass if the
+        corresponding ``.part`` file disappears.
+        """
+        self.in_progress[item_key] = {
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "part_bytes": int(part_bytes),
+        }
+
+    def clear_in_progress(self, item_key: str) -> None:
+        self.in_progress.pop(item_key, None)
+
+    def is_in_progress(self, item_key: str) -> bool:
+        return item_key in self.in_progress
+
+    def prune_stale_in_progress(
+        self,
+        keep_keys: set[str] | None = None,
+        folder_path: Path | None = None,
+        config=None,
+    ) -> list[str]:
+        """Remove ``in_progress`` markers that are no longer valid.
+
+        A marker is stale when ANY of the following is true:
+        - The corresponding ``.part`` file is missing on disk
+        - The marker is older than :data:`IN_PROGRESS_MAX_AGE_SECONDS`
+        - The marker is NOT in *keep_keys* (the live scan of .part files
+          that the downloader is about to resume)
+
+        Returns the list of keys that were removed.
+        """
+        now = datetime.now(timezone.utc)
+        removed: list[str] = []
+        for key in list(self.in_progress):
+            entry = self.in_progress.get(key)
+            if not entry:
+                continue
+            if keep_keys is not None and key in keep_keys:
+                continue
+            # Age check
+            try:
+                stamp = datetime.fromisoformat(str(entry.get("started_at", "")))
+            except (TypeError, ValueError):
+                stamp = None
+            if stamp is not None:
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                if (now - stamp) > timedelta(seconds=IN_PROGRESS_MAX_AGE_SECONDS):
+                    self.in_progress.pop(key, None)
+                    removed.append(key)
+                    continue
+            # Filesystem check
+            if folder_path is not None:
+                part_path = folder_path / f"{key}.part"
+                if not part_path.exists():
+                    self.in_progress.pop(key, None)
+                    removed.append(key)
+        return removed
+
+    def mark_preflight_indeterminate(self, item_key: str, error: str) -> None:
+        """Record a transient preflight 'no working addons' outcome.
+
+        Unlike :meth:`mark_failed`, this entry does not count toward
+        ``MAX_DOWNLOAD_ATTEMPTS`` and is automatically cleared by
+        :meth:`is_preflight_indeterminate` once the TTL has elapsed.
+        """
+        self.preflight_indeterminate[item_key] = {
+            "error": error,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def is_preflight_indeterminate(self, item_key: str) -> bool:
+        """Return True if the preflight for this key was rate-limit-blocked
+        within the last :data:`PREFLIGHT_INDETERMINATE_TTL_SECONDS` seconds.
+        """
+        entry = self.preflight_indeterminate.get(item_key)
+        if not entry:
+            return False
+        try:
+            stamp = datetime.fromisoformat(str(entry.get("timestamp", "")))
+        except (TypeError, ValueError):
+            return False
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - stamp
+        if age > timedelta(seconds=PREFLIGHT_INDETERMINATE_TTL_SECONDS):
+            self.preflight_indeterminate.pop(item_key, None)
+            return False
+        return True
+
+    def clear_preflight_indeterminate(self, item_key: str | None = None) -> None:
+        if item_key is None:
+            self.preflight_indeterminate.clear()
+        else:
+            self.preflight_indeterminate.pop(item_key, None)
 
     def is_downloaded(self, filename: str) -> bool:
         return filename in self.items
@@ -75,6 +250,26 @@ class DownloadState:
         if item_key in self.failed_items:
             return self.failed_items[item_key]["attempt"]
         return 0
+
+
+_EPISODE_NUMBER_RE = re.compile(r"s\d+e(\d+)", re.IGNORECASE)
+
+
+def _episode_number_from_stem(stem: str) -> int | None:
+    """Extract the season-relative episode number from a filename stem.
+
+    Examples:
+        ``Rick and Morty_s09e10`` -> 10
+        ``Bleach_s04e01``        -> 1
+        ``Michael``              -> None
+    """
+    match = _EPISODE_NUMBER_RE.search(stem)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
 
 
 def load_state(folder_path: Path) -> DownloadState:
@@ -115,6 +310,8 @@ def load_state(folder_path: Path) -> DownloadState:
         last_scan=data.get("last_scan", ""),
         total_downloaded=data.get("total_downloaded", 0),
         failed_items=data.get("failed_items", {}),
+        preflight_indeterminate=data.get("preflight_indeterminate", {}),
+        in_progress=data.get("in_progress", {}),
     )
 
 
@@ -126,5 +323,7 @@ def save_state(folder_path: Path, state: DownloadState) -> None:
         "last_scan": state.last_scan,
         "total_downloaded": state.total_downloaded,
         "failed_items": state.failed_items,
+        "preflight_indeterminate": state.preflight_indeterminate,
+        "in_progress": state.in_progress,
     }
     atomic_write_json(state_path, data, indent=2)

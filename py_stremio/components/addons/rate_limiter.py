@@ -13,6 +13,14 @@ same host.
 Requests to *different hosts* run in parallel (no shared bottleneck),
 which is safe since different services have independent rate limits.
 
+The hard cap is **windowed** rather than lifetime: ``_MAX_REQUESTS_PER_HOST``
+is the maximum number of requests in any rolling ``_WINDOW_SECONDS`` window.
+Old timestamps are trimmed on every check, so the budget continuously
+refills as the window slides forward. When the budget is exhausted the
+caller sleeps until the oldest entry leaves the window — preferable to
+failing the entire download. The cap can be disabled with
+``PY_STREMIO_RATE_LIMIT_CAP=0`` for debugging.
+
 Usage::
 
     with limiter.request("https://torrentio.strem.fun/..."):
@@ -25,6 +33,7 @@ from contextlib import contextmanager
 import os
 import threading
 import time
+from collections import deque
 from typing import Generator
 from urllib.parse import urlparse
 
@@ -33,7 +42,27 @@ from urllib.parse import urlparse
 MIN_GAP = 2.0           # minimum seconds between requests to the same host
 COOLDOWN_BASE = 60      # seconds to ban a host after a 429
 _MAX_COOLDOWN = 3600    # 1 hour cap
-_MAX_REQUESTS_PER_HOST = 50  # max requests per host per RateLimiter lifetime
+
+# Windowed per-host cap. The budget is a sliding count of requests in
+# the last ``_WINDOW_SECONDS`` seconds — replaces the previous lifetime
+# counter that would lock popular hosts out for the rest of the process.
+_DEFAULT_MAX_REQUESTS_PER_HOST = 50
+_DEFAULT_WINDOW_SECONDS = 300.0  # 5 minutes
+_MAX_SLEEP_ON_CAP = 30.0  # never wait more than this when the cap blocks us
+
+
+def _env_flag(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+_MAX_REQUESTS_PER_HOST = _env_flag("PY_STREMIO_RATE_LIMIT_CAP", _DEFAULT_MAX_REQUESTS_PER_HOST)
+_WINDOW_SECONDS = float(_env_flag("PY_STREMIO_RATE_LIMIT_WINDOW", int(_DEFAULT_WINDOW_SECONDS)))
 
 # Disable delays when running under pytest (set PY_STREMIO_RATE_LIMIT=0)
 _DISABLE_DELAYS = os.environ.get("PY_STREMIO_RATE_LIMIT") == "0"
@@ -46,7 +75,7 @@ class _HostState:
 
     __slots__ = (
         "lock", "last_request", "cooldown_until",
-        "consecutive_429s", "request_count",
+        "consecutive_429s", "request_count", "request_timestamps",
     )
 
     def __init__(self) -> None:
@@ -54,7 +83,10 @@ class _HostState:
         self.last_request: float = 0.0
         self.cooldown_until: float = 0.0
         self.consecutive_429s: int = 0
+        # Lifetime counter kept for diagnostics (visible in state dumps).
         self.request_count: int = 0
+        # Sliding window of recent request timestamps (monotonic seconds).
+        self.request_timestamps: "deque[float]" = deque()
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
@@ -104,13 +136,6 @@ class RateLimiter:
         # Held for the ENTIRE HTTP request so no overlapping requests
         # to the same host are possible.
         with state.lock:
-            # Per-session request cap — prevent runaway queries to one host
-            if _MAX_REQUESTS_PER_HOST > 0 and state.request_count >= _MAX_REQUESTS_PER_HOST:
-                raise RuntimeError(
-                    f"Rate limit cap reached: {host} — "
-                    f"{state.request_count} requests (max {_MAX_REQUESTS_PER_HOST})"
-                )
-
             now = time.monotonic()
 
             # 429 cooldown — skip a banned host for this query instead of
@@ -125,7 +150,36 @@ class RateLimiter:
                     f"Rate limited: {host} cooling down for {wait:.0f}s"
                 )
 
+            # Windowed cap — keep the host's recent request count below
+            # ``_MAX_REQUESTS_PER_HOST`` over the last ``_WINDOW_SECONDS``.
+            # When the cap is hit, sleep until the oldest entry leaves the
+            # window (capped at ``_MAX_SLEEP_ON_CAP``) instead of raising —
+            # a transient wait is far better than failing the whole season.
+            if _MAX_REQUESTS_PER_HOST > 0:
+                self._trim_window(state, now)
+                while len(state.request_timestamps) >= _MAX_REQUESTS_PER_HOST:
+                    oldest = state.request_timestamps[0]
+                    wait = (oldest + _WINDOW_SECONDS) - now
+                    if wait <= 0:
+                        # Should not normally happen — trim and re-check.
+                        self._trim_window(state, now)
+                        continue
+                    if wait > _MAX_SLEEP_ON_CAP:
+                        # Cap is saturated for too long — signal it so the
+                        # preflight can mark this addon "indeterminate"
+                        # instead of "dead". Do NOT raise here; the caller
+                        # is already inside a download context.
+                        raise RuntimeError(
+                            f"Rate limit cap saturated: {host} — "
+                            f"{len(state.request_timestamps)} requests in last "
+                            f"{_WINDOW_SECONDS:.0f}s, would need to wait {wait:.0f}s"
+                        )
+                    time.sleep(min(wait, _MAX_SLEEP_ON_CAP))
+                    now = time.monotonic()
+                    self._trim_window(state, now)
+
             state.request_count += 1
+            state.request_timestamps.append(now)
 
             if not _DISABLE_DELAYS:
 
@@ -139,6 +193,19 @@ class RateLimiter:
 
             # Yield — caller makes the HTTP request with the lock held
             yield url
+
+    @staticmethod
+    def _trim_window(state: "_HostState", now: float) -> None:
+        """Drop timestamps older than the window from the head of the deque.
+
+        A timestamp is "in the window" while its age is strictly less than
+        ``_WINDOW_SECONDS``. A request made at exactly ``now - window`` has
+        already left the window and must be dropped.
+        """
+        window_start = now - _WINDOW_SECONDS
+        timestamps = state.request_timestamps
+        while timestamps and timestamps[0] <= window_start:
+            timestamps.popleft()
 
     def report_429(self, url: str) -> None:
         """Register that *url*'s host returned HTTP 429.
@@ -183,6 +250,27 @@ class RateLimiter:
 
     def is_banned(self, url: str) -> bool:
         return self.get_cooldown_seconds(url) > 0
+
+    def is_saturated(self, url: str) -> bool:
+        """Return True when *url*'s host is currently at or above the per-host cap.
+
+        Used by the preflight search to distinguish a "dead" addon (no streams
+        returned because the host is genuinely down or empty) from an
+        "indeterminate" addon (no streams returned because the local
+        rate-limit budget is exhausted and a wait would be needed).
+        """
+        if _MAX_REQUESTS_PER_HOST <= 0:
+            return False
+        host = _extract_host(url)
+        if not host:
+            return False
+        state = self._hosts.get(host)
+        if state is None:
+            return False
+        with state.lock:
+            now = time.monotonic()
+            self._trim_window(state, now)
+            return len(state.request_timestamps) >= _MAX_REQUESTS_PER_HOST
 
     def reset_host(self, url: str) -> None:
         """Remove all state for *url*'s host."""

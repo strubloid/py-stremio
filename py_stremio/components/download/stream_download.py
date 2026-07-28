@@ -1008,11 +1008,21 @@ def build_media_filename(
     episode: int | None = None,
     folder_path: str | None = None,
 ) -> str:
-    """Build the output filename for a movie or episode."""
+    """Build the output filename for a movie or episode.
+
+    The title is run through :func:`sanitize_filename` so that names
+    with characters that are illegal on Windows / NTFS (e.g. ``:``)
+    never reach the filesystem. This also keeps the on-disk name in
+    agreement with the legacy ``library/series.py`` path which already
+    sanitised titles.
+    """
+    from py_stremio.utils.media import sanitize_filename
+
+    safe_title = sanitize_filename(title or "")
     if season:
-        filename = f"{title}_s{season:02d}e{episode:02d}.mkv"
+        filename = f"{safe_title}_s{season:02d}e{episode:02d}.mkv"
     else:
-        filename = f"{title}.mkv"
+        filename = f"{safe_title}.mkv"
 
     if folder_path:
         return f"{folder_path}/{filename}"

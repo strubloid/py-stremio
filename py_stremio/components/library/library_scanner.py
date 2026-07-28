@@ -40,7 +40,35 @@ class Scanner:
                 folders.append(folder)
         for movie_path in self._find_movie_folders():
             folders.append(self._create_movie_folder(movie_path))
+        self._warn_about_ignored_subfolders(folders)
         return folders
+
+    def _warn_about_ignored_subfolders(self, folders: list[ScannedFolder]) -> None:
+        """Print a warning for any season/movie folder that contains
+        nested subfolders.
+
+        :func:`py_stremio.components.library.media_file.iter_video_files`
+        intentionally only looks at the top level of a season folder.
+        If a user moves an episode into a subfolder, the downloader
+        cannot see it — the file is silently invisible. This warning
+        surfaces the situation at scan time so the user can act.
+        """
+        for folder in folders:
+            if not folder.path.exists():
+                continue
+            try:
+                subdirs = [p for p in folder.path.iterdir() if p.is_dir()]
+            except OSError:
+                continue
+            if subdirs:
+                names = ", ".join(sorted(p.name for p in subdirs[:3]))
+                if len(subdirs) > 3:
+                    names += f", … (+{len(subdirs) - 3} more)"
+                print(
+                    f"  ⚠ {folder.path} contains subfolder(s) "
+                    f"({names}) — only top-level files are scanned. "
+                    f"Move files out of any subfolder before running py-stremio."
+                )
 
     def _find_series_folders(self) -> list[Path]:
         """Find all series season folders."""

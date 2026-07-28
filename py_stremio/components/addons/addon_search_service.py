@@ -10,6 +10,67 @@ from py_stremio.components.stremio.stremio_url import normalize_manifest_url, un
 from py_stremio.utils.cancellation import request_shutdown, shutdown_executor_now, shutdown_requested
 
 
+# Result of one preflight probe. The three states matter:
+#   ALIVE          — addon returned usable streams
+#   INDETERMINATE  — addon's host was rate-limit saturated; we don't know
+#                    whether the addon is genuinely empty for this content
+#   DEAD           — addon returned no streams and was not rate-limited
+PreflightStatus = str  # one of "alive", "indeterminate", "dead"
+
+
+class PreflightResult:
+    """Structured outcome of a preflight pass.
+
+    Attributes:
+        alive: Addons that returned at least one usable stream.
+        indeterminate: Addons that could not be probed because their host
+            was rate-limit saturated.  Their status is unknown — the next
+            preflight pass may find them alive.
+        dead: Addons that returned no usable streams AND were not
+            rate-limited.  Safe to skip for the rest of the run.
+    """
+
+    __slots__ = ("alive", "indeterminate", "dead")
+
+    def __init__(
+        self,
+        alive: list[str] | None = None,
+        indeterminate: list[str] | None = None,
+        dead: list[str] | None = None,
+    ) -> None:
+        self.alive: list[str] = list(alive or [])
+        self.indeterminate: list[str] = list(indeterminate or [])
+        self.dead: list[str] = list(dead or [])
+
+    @property
+    def has_working(self) -> bool:
+        return bool(self.alive)
+
+    @property
+    def has_unknown(self) -> bool:
+        return bool(self.indeterminate)
+
+    def __bool__(self) -> bool:
+        return self.has_working
+
+    def to_url_set(self) -> set[str]:
+        return set(self.alive) | set(self.indeterminate) | set(self.dead)
+
+
+def _coerce_preflight(value: Any) -> "PreflightResult":
+    """Accept either a :class:`PreflightResult` or a plain list of URLs.
+
+    Plain lists are treated as a fully-alive result for backward
+    compatibility with tests and call sites that still pass raw lists.
+    Returning a uniform :class:`PreflightResult` keeps callers simple.
+    """
+    if isinstance(value, PreflightResult):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return PreflightResult(alive=list(value))
+    return PreflightResult()
+
+
 def query_addon_for_streams(addon_url: str, type_: str, id_: str) -> list[StreamInfo]:
     """Query a Stremio addon for streams via cloudscraper."""
     streams = []
@@ -280,15 +341,25 @@ def preflight_discover_working_addons(
     season: int | None = None,
     episode: int | None = None,
     imdb_id: str | None = None,
-) -> list[str]:
-    """Query ALL configured addons for one representative ID and return
-    only the URLs of addons that returned usable streams.
+) -> PreflightResult:
+    """Query ALL configured addons for one representative ID and classify
+    them into alive / indeterminate / dead buckets.
 
     This is a one-time cost per season/movie — subsequent episode searches
     should only query addons that passed this preflight check, dramatically
     reducing per-episode latency.
 
-    Returns a list of normalized addon URLs that returned at least one stream.
+    The result is a :class:`PreflightResult` with three lists:
+
+    - ``alive`` — addons that returned at least one usable stream
+    - ``indeterminate`` — addons whose host was rate-limit saturated when
+      probed; the next preflight pass may find them alive
+    - ``dead`` — addons that returned no usable streams and were not
+      rate-limited; safe to skip for the rest of the run
+
+    Backward-compat: callers that only need the alive list should call
+    :meth:`PreflightResult.alive` or pass the result to
+    ``list(preflight(...).alive)``.
     """
     import concurrent.futures
 
@@ -296,12 +367,19 @@ def preflight_discover_working_addons(
 
     manager = addons.create_addon_manager()
     if not manager.addons:
-        return []
+        return PreflightResult()
 
     total = len(manager.addons)
 
     alive: list[str] = []
+    indeterminate: list[str] = []
+    dead: list[str] = []
     result_lock = threading.Lock()
+
+    from .cloudscraper_client import CloudscraperError
+    from .rate_limiter import get_rate_limiter
+
+    limiter = get_rate_limiter()
 
     executor = concurrent.futures.ThreadPoolExecutor(
         max_workers=SEARCH_CONCURRENCY
@@ -309,9 +387,26 @@ def preflight_discover_working_addons(
     futures = {}
     try:
 
-        def _try_one(addon: BaseAddon) -> tuple[str, bool]:
+        def _try_one(addon: BaseAddon) -> tuple[str, PreflightStatus]:
+            try:
+                url = addon.get_url(None)
+            except TypeError:
+                url = addon.get_url()
+            url = normalize_manifest_url(url)
+            if not url:
+                return url, "dead"
             try:
                 streams = addon.get_streams(type_, stremio_id)
+            except CloudscraperError as exc:
+                # The HTTP client wraps a per-host rate-limit cap as a
+                # CloudscraperError. Distinguish that from a real failure
+                # so the caller does not silence-cap the whole season.
+                if limiter.is_saturated(url) or "Rate limit" in str(exc):
+                    return url, "indeterminate"
+                return url, "dead"
+            except Exception:
+                return url, "dead"
+            try:
                 live = _preflight_streams_are_usable(
                     streams,
                     title=title,
@@ -321,11 +416,7 @@ def preflight_discover_working_addons(
                 )
             except Exception:
                 live = False
-            try:
-                url = addon.get_url(None)
-            except TypeError:
-                url = addon.get_url()
-            return normalize_manifest_url(url), live
+            return url, ("alive" if live else "dead")
 
         futures = {}
         # Stagger addon submission by 150ms to avoid an initial burst
@@ -339,14 +430,19 @@ def preflight_discover_working_addons(
                 break
             addon = futures[future]
             try:
-                url, live = future.result(timeout=timeout_per_addon + 5)
+                url, status = future.result(timeout=timeout_per_addon + 5)
             except Exception:
-                url, live = None, False
+                url, status = None, "dead"
 
-            if url and live:
-                with result_lock:
-                    if url not in alive:
-                        alive.append(url)
+            if not url:
+                continue
+            with result_lock:
+                if status == "alive" and url not in alive:
+                    alive.append(url)
+                elif status == "indeterminate" and url not in indeterminate:
+                    indeterminate.append(url)
+                elif status == "dead" and url not in dead:
+                    dead.append(url)
     except KeyboardInterrupt:
         request_shutdown()
         shutdown_executor_now(executor, futures.keys())
@@ -354,4 +450,4 @@ def preflight_discover_working_addons(
     else:
         executor.shutdown(wait=True)
 
-    return alive
+    return PreflightResult(alive=alive, indeterminate=indeterminate, dead=dead)

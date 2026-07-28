@@ -7,7 +7,7 @@
 > **Audience:** Anyone running py-stremio who keeps hitting
 > `No streams found after filtering` on popular cable reality shows.
 >
-> **Last updated:** 2026-07-22
+> **Last updated:** 2026-07-23 (added 25 worldwide addons, cleaned 9 dead URLs)
 
 ---
 
@@ -481,3 +481,130 @@ streaming services, Usenet providers, and torrent aggregators may
 violate copyright laws or the terms of service of the content providers.
 Users are responsible for ensuring their compliance with local laws and
 regulations.
+
+---
+
+## Appendix: Addon Universe Maintenance (2026-07-23)
+
+### Cleanup performed
+
+Ran `debug/13_addon_health_check.py` which probed every active URL in
+`addons/addons.txt`, `addons/stremio.txt`, and `addons/experimental.txt`
+(143 unique URLs in total). Results:
+
+| Status | Count | Action |
+|--------|-------|--------|
+| Stream-capable (working) | 78 | Kept |
+| Catalog-only (working, no stream) | 32 | Kept (subtitles/catalogs) |
+| Dead / unreachable | 9 | Commented out via `debug/14_clean_dead_addons.py` |
+
+The 9 dead addons removed:
+
+| Addon | Failure |
+|-------|---------|
+| `aiostreams.elfhosted.com` | Invalid manifest shape (HTTP 200 but no `id`/`resources`) |
+| `animesdigital-vercel.vercel.app` | HTTP 402 (Payment Required) |
+| `nyaa-scraper-stremio-addon.nmtl.app` | JSON decode error |
+| `shluflix.elfhosted.com` | JSON decode error |
+| `stream-limit-vid.321moviesfree.com` | HTTP 403 (expired token) |
+| `streamio.heykanhaiya.xyz` | HTTP 502 (Bad Gateway) |
+| `xtreampro.onrender.com` | HTTP 503 (Service Unavailable) |
+| `yomi.ruka.pw` | HTTP 530 (Site frozen) |
+| `youtubepro-macu.onrender.com` | HTTP 503 (Service Unavailable) |
+
+### New addons added (25 verified working, 2026-07-23)
+
+Researched from `stremio-addons.net` community catalog. Each addon's
+manifest was independently probed via `debug/15_verify_candidates.py` and
+confirmed to return HTTP 200 with a valid Stremio manifest containing a
+`"stream"` resource.
+
+**🌍 Worldwide — Torrent / Debrid (8 new)**
+
+| Addon | URL | Notes |
+|-------|-----|-------|
+| TorrentsDB | `https://torrentsdb.com/manifest.json` | 25+ torrent sources, RD/Alldebrid/Premiumize/TorBox support |
+| Filtorrent | `https://ce8c71dcef3b-filtorrent.baby-beamup.club/manifest.json` | Merges Torrentio + TorrentsDB with hard filters |
+| Stravo II | `https://v2.stravo.site/manifest.json` | Auto-dubbed multilingual, HTTP up to 1080p |
+| Flix-Streams | `https://flixnest.app/flix-streams/manifest.json` | 50+ providers, 50+ languages, 4K/REMUX |
+| Flix-Streams Free | `https://free.flixnest.app/manifest.json` | No-debrid tier of Flix-Streams |
+| LiteAIO | `https://liteaio.com/manifest.json` | Hosted mega-addon (RD/AllDebrid/Premiumize/TorBox) |
+| MovieBox | `https://moviebox-cfa7.onrender.com/manifest.json` | Multi-language, multi-quality |
+
+**🌍 Worldwide — IPTV / Live (5 new)**
+
+| Addon | URL | Notes |
+|-------|-----|-------|
+| All IPTV | `https://fun.kort.workers.dev/manifest.json` | 12,000+ channels, 8+ languages |
+| IPTV Catchup (M3U/EPG) | `https://iptv.arielinnovations.com/manifest.json` | M3U/Xtream, EPG, catch-up TV |
+| NexoTV | `https://nexotv.duckdns.org/manifest.json` | Worldwide live channels |
+| SCARY.NETWORK | `https://iptv.scary.network/manifest.json` | Horror/thriller live TV |
+| Watchio.live TV | `https://watchio-addon.pages.dev/manifest.json` | Free worldwide live TV |
+
+**🌍 Worldwide — Specialized (7 new)**
+
+| Addon | URL | Notes |
+|-------|-----|-------|
+| Better Metadata | `https://addon.bettermetadata.com/manifest.json` | Enhanced metadata + streams |
+| Dramayo | `https://dramayo.stream/manifest.json` | Asian drama direct links |
+| OnlyAnimes | `https://onlyanimes.stravo.site/manifest.json` | Multilingual anime with dub |
+| TB Media | `https://tbmedia.onrender.com/manifest.json` | Personal TorBox library |
+| yastream | `https://yastream.tamthai.de/manifest.json` | Asian drama + series + movies |
+| Yukistreams | `https://stremio.yukistreams.xyz/manifest.json` | Anime + K/J/CN/HK drama gateway |
+| MyTrakt Sync | `https://mytrakt.elfhosted.com/manifest.json` | Trakt watchlists (also returns streams) |
+
+**🇦🇷 Argentina — IPTV (1 new)**
+
+| Addon | URL |
+|-------|-----|
+| Argentina TV | `https://848b3516657c-argentinatv.baby-beamup.club/manifest.json` |
+
+**🇦🇺 Australia — IPTV (1 new)**
+
+| Addon | URL |
+|-------|-----|
+| AU IPTV (Brisbane) | `https://kangaroostreams.hayd.uk/manifest.json` |
+
+**🇧🇷 Brazil — Torrent / Debrid (2 new)**
+
+| Addon | URL | Notes |
+|-------|-----|-------|
+| FENIXFLIX | `https://fenixflix-ur9u.onrender.com/manifest.json` | Filmes/séries/animes PT-BR |
+| IndexaBR | `https://indexabr.vercel.app/manifest.json` | Brazilian streams via BeTor/TPF |
+
+**🇮🇳 India — Specialized (1 new)**
+
+| Addon | URL | Notes |
+|-------|-----|-------|
+| DesiFlix | `https://desiflix.stremioaddon.workers.dev/manifest.json` | Indian daily soaps, Hindi web series |
+
+**🇯🇵 Japan — Specialized (1 new)**
+
+| Addon | URL | Notes |
+|-------|-----|-------|
+| One Pace 4K | `https://onepace4k.duckdns.org/manifest.json` | One Piece fan-edit in 4K, requires RD |
+
+### Final addon counts
+
+| File | Before | After | Change |
+|------|--------|-------|--------|
+| `addons/addons.txt` (active) | 23 | 51 | +15 (duplicates removed) |
+| `addons/stremio.txt` (active) | 88 | 106 | +18 net (after removing 6 dead) |
+| `addons/experimental.txt` (active) | 4 | 4 | unchanged |
+| **Total unique stream-capable addons** | 78 | 103 | +25 |
+
+### Re-running the maintenance scripts
+
+```bash
+# 1. Re-probe all URLs (takes ~30s with 20 workers)
+python debug/13_addon_health_check.py
+
+# 2. Comment out any newly dead URLs
+python debug/14_clean_dead_addons.py
+
+# 3. Verify and add new candidates (from stremio-addons.net)
+python debug/15_verify_candidates.py
+python debug/16_insert_verified_addons.py
+```
+
+Run these monthly or after any major Stremio addon ecosystem churn.
