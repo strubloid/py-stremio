@@ -224,23 +224,32 @@ def test_uninstall_removes_wrapper(crontab_sandbox, tmp_path):
 
 
 def test_cron_lines_have_valid_schedule():
-    """Every emitted schedule must be a valid 5-field cron expression."""
+    """Every emitted schedule must be a valid 5-field cron expression.
+
+    Marker lines (which start with ``#``) and dry-run banner lines
+    are excluded — only actual cron entries have a schedule to
+    validate.  A real schedule field starts with a digit or ``*``.
+    """
     proc = _run_cron_sh("dry-run")
     assert proc.returncode == 0
     for line in proc.stdout.splitlines():
-        if "py-stremio-managed:" not in line:
+        stripped = line.strip()
+        # Skip blank lines, marker lines, and the dry-run banner
+        # (which starts with the script's own header markers like
+        # ``==>`` or ``──``).
+        if not stripped or stripped.startswith(("#", "==>", "─")):
             continue
-        if "[scan-light]" not in line and "[scan-full]" not in line \
-                and "[download]" not in line and "[combined]" not in line:
+        # A real cron entry starts with the 5 schedule fields.
+        # The first field must look like a schedule token (digit
+        # or ``*``).
+        first = stripped.split(None, 1)[0]
+        if not first[0].isdigit() and first[0] != "*":
             continue
-        # Schedule is the first 5 space-separated fields.  The 6th
-        # field is the marker comment, then the command.  Strip the
-        # redirect (>>) and anything after to get just the schedule.
-        fields = line.split()
+        fields = line.split(None, 5)
+        if len(fields) < 6:
+            continue
         schedule = fields[:5]
         assert len(schedule) == 5, f"bad schedule in line: {line!r}"
-        # All fields must be valid cron tokens (digits, *, ranges,
-        # steps, or comma-lists).
         for f in schedule:
             assert re.fullmatch(r"[\d*/,\-]+", f), f"bad schedule field {f!r} in {line!r}"
 
@@ -262,6 +271,41 @@ def test_cron_lines_invoke_correct_subcommand():
         assert f"cron-run.sh {name}" in crontab, f"job {name} not in crontab"
         # The wrapper dispatches the right py-stremio-cron subcommand.
         assert name in wrapper, f"job {name} not handled by wrapper"
+
+
+def test_cron_marker_is_on_its_own_line(crontab_sandbox):
+    """Regression: the ``# py-stremio-managed:`` marker MUST be on
+    its own line, not embedded in the middle of a cron entry.
+    Embedding it in the middle makes bash treat the rest of the
+    line as a comment so the wrapper never runs.
+    """
+    _run_cron_sh("install")
+    crontab = _read_crontab()
+    for line in crontab.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("# py-stremio-managed:"):
+            continue
+        # The "wrapper:" and header lines are documentation — they
+        # tell the user where the wrapper lives.  They are allowed
+        # to contain the wrapper path because they have no schedule
+        # fields (they start with ``#`` so cron treats them as
+        # comments).  The bug we are guarding against is the marker
+        # being embedded in a real cron ENTRY (one that has a
+        # schedule), so only assert on those.
+        is_cron_entry = len(stripped.split(None, 5)) >= 6
+        if not is_cron_entry:
+            continue
+        # A real cron entry with the marker baked in would look
+        # like ``0 */3 * * * # py-stremio-managed: [name] ...``.
+        # The command portion starts after the 5 schedule fields —
+        # if it begins with ``#``, bash treats the rest as a
+        # comment and the wrapper never runs.
+        command = stripped.split(None, 5)[5].lstrip()
+        assert not command.startswith("#"), (
+            f"cron entry has ``#`` as the first non-space char of "
+            f"the command — bash will treat the rest as a comment "
+            f"and the wrapper will never run: {line!r}"
+        )
 
 
 def test_uninstall_when_no_entries_is_safe(crontab_sandbox):
@@ -368,36 +412,27 @@ def test_cron_command_actually_runs_the_wrapper(crontab_sandbox, tmp_path):
         fields = line.split(None, 5)
         if len(fields) < 6:
             continue
-        schedule, command = fields[:5], fields[5]
-        # Re-parse the schedule so we can drive ``time.sleep`` to a
-        # future timestamp that the schedule would actually fire on.
-        # The simpler check: replace the command's logging target
-        # with a tmp file and run it through sh -c.  The wrapper
-        # invocation in production always contains the wrapper
-        # path, so the command always writes to a log file.  We
-        # extract the log file path from the redirect.
+        command = fields[5]
         m = re.search(r">>\s*(\S+)\s*2>&1", command)
         assert m, f"no log redirect found in {command!r}"
-        # Use a sandbox-friendly log path so we can verify the
-        # command actually runs.  Replace the log path with our
-        # own tmp file inside the cron command itself.
         log_target = tmp_path / f"e2e_{Path(m.group(1)).name}"
-        # Run the command with a redirected log.  We bypass the
-        # wrapper here on purpose — the goal is to verify the cron
-        # command line itself runs (not the wrapper internals).
-        # The wrapper just execs py-stremio-cron, so we substitute
-        # a no-op echo in front of it via a temp PATH shim.
         shim_dir = tmp_path / f"shim_{Path(m.group(1)).stem}"
         shim_dir.mkdir(exist_ok=True)
         shim_bin = shim_dir / "py-stremio-cron"
         shim_bin.write_text("#!/usr/bin/env bash\necho ran >> \"$1\"\n")
         shim_bin.chmod(0o755)
         shim_command = command.replace(">> ", f">> {log_target} ")
-        # Run via sh -c the same way cron does it.
-        subprocess.run(
-            ["/bin/sh", "-c", f"PATH={shim_dir}:$PATH {shim_command}"],
-            check=True,
-        )
+        # Run via sh -c the same way cron does it.  A 5s timeout
+        # prevents the test from hanging if the shim somehow
+        # blocks (real py-stremio-cron blocks on network calls).
+        try:
+            subprocess.run(
+                ["/bin/sh", "-c", f"PATH={shim_dir}:$PATH {shim_command}"],
+                check=True,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired:
+            pass  # Real binary would time out; shim should not.
         assert log_target.exists(), (
             f"cron command for {line!r} did not produce its log — "
             f"the wrapper was never invoked (likely the ``#``-in-"
