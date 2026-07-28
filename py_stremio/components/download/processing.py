@@ -530,6 +530,23 @@ def _do_download_one_episode(
         error = exc
         raise
     finally:
+        # When the interpreter is shutting down (Ctrl+C, atexit
+        # handler, etc.) the executor.submit() in the parallel retry
+        # round raises ``RuntimeError("cannot schedule new futures
+        # after interpreter shutdown")``.  Surface that as a quiet
+        # cancellation rather than a noisy per-episode failure — the
+        # episode will simply be retried on the next run.  We suppress
+        # the re-raised exception via this ``return`` so the caller
+        # does not see a stack trace for a teardown race.
+        if isinstance(error, RuntimeError) and "interpreter shutdown" in str(error):
+            return {
+                "episode": episode_num,
+                "result": {
+                    "success": False,
+                    "error": "interrupted",
+                    "interrupted": True,
+                },
+            }
         cancelled = isinstance(error, (DownloadCancelled, KeyboardInterrupt)) or shutdown_requested()
         emit({
             "type": "episode_done",
@@ -1039,30 +1056,55 @@ def process_season_folder(
                 queue.append(episode_num)
 
     initial_workers = _current_workers()
+    # Build ONE shared executor for the lifetime of this season folder.
+    # Creating a fresh pool every retry round used to be the source of
+    # the "cannot schedule new futures after interpreter shutdown" spam
+    # the user saw when they pressed Ctrl+C mid-run: the outer pool
+    # was already torn down, the main thread was on its way out, the
+    # ``atexit`` handler had flipped the global ``_shutdown`` flag, and
+    # the next round's ``executor.submit()`` raised ``RuntimeError``
+    # for every still-queued episode.  A single long-lived pool is
+    # cleaned up explicitly on every exit path instead.
+    shared_executor: ThreadPoolExecutor | None = None
     if initial_workers > 1 and total_missing > 1:
-        for round_num in range(max_attempts):
-            if shutdown_requested() or not queue:
-                break
-            round_items = list(queue)
-            queue.clear()
-            if round_num == 0:
-                print(f"  Downloading {len(round_items)} episodes")
-            elif len(round_items) > 1:
-                pass  # silently retry deferred episodes
-            current_workers = _current_workers()
-            if current_workers <= 1:
-                # User dialed the limit below the parallel threshold.
-                # Defer the remaining items to the single-worker loop
-                # below so we do not start a fresh pool with zero slots.
-                queue.extend(round_items)
-                break
-            executor = ThreadPoolExecutor(max_workers=max(1, current_workers))
-            futures = []
-            try:
-                futures = [
-                    executor.submit(_download_episode_with_slot, idx, ep_num)
-                    for idx, ep_num in enumerate(round_items, start=1)
-                ]
+        shared_executor = ThreadPoolExecutor(max_workers=max(1, initial_workers))
+    try:
+        if shared_executor is not None:
+            executor = shared_executor
+            for round_num in range(max_attempts):
+                if shutdown_requested() or not queue:
+                    break
+                round_items = list(queue)
+                queue.clear()
+                if round_num == 0:
+                    print(f"  Downloading {len(round_items)} episodes")
+                elif len(round_items) > 1:
+                    pass  # silently retry deferred episodes
+                current_workers = _current_workers()
+                if current_workers <= 1:
+                    # User dialed the limit below the parallel threshold.
+                    # Defer the remaining items to the single-worker
+                    # loop below so we do not start a fresh pool with
+                    # zero slots.
+                    queue.extend(round_items)
+                    break
+                futures = []
+                try:
+                    futures = [
+                        executor.submit(_download_episode_with_slot, idx, ep_num)
+                        for idx, ep_num in enumerate(round_items, start=1)
+                    ]
+                except RuntimeError as exc:
+                    # ``ThreadPoolExecutor.submit`` raises RuntimeError
+                    # when the interpreter is shutting down (e.g. the
+                    # main thread exited after Ctrl+C and the atexit
+                    # handler flipped the global ``_shutdown`` flag).
+                    # The remaining episodes will be retried on the
+                    # next run — no need to mark them as failures now.
+                    if "interpreter shutdown" in str(exc) or "shutdown" in str(exc):
+                        queue.extend(round_items)
+                        break
+                    raise
                 future_map = {future: ep_num for future, ep_num in zip(futures, round_items)}
                 deferred: set[int] = set()
                 for future in as_completed(future_map):
@@ -1077,40 +1119,40 @@ def process_season_folder(
                     else:
                         deferred.add(item["episode"])
                 queue.extend(ep_num for ep_num in round_items if ep_num in deferred)
-            except KeyboardInterrupt:
-                request_shutdown()
-                shutdown_executor_now(executor, futures)
-                raise
-            else:
                 if shutdown_requested():
-                    shutdown_executor_now(executor, futures)
-                else:
-                    executor.shutdown(wait=True)
+                    break
 
-    # Single-worker branch — also serves as the drain when the user
-    # dials the live limit below the parallel threshold mid-run.
-    if queue and not shutdown_requested():
-        # If the parallel branch already ran above, it has produced a
-        # populated queue (deferred episodes + the dial-down batch).
-        # Otherwise the original ``max_workers<=1`` / single-episode
-        # path runs here from scratch.
-        if initial_workers > 1 and total_missing > 1:
-            # Parallel branch ran first; we are the drain.
-            for round_num in range(max_attempts):
-                if shutdown_requested() or not queue:
-                    break
-                round_items = list(queue)
-                queue.clear()
-                _run_single_worker_round()
-        else:
-            for round_num in range(max_attempts):
-                if shutdown_requested() or not queue:
-                    break
-                round_items = list(queue)
-                queue.clear()
-                if round_num > 0:
-                    pass  # silently retry deferred episodes
-                _run_single_worker_round()
+        # Single-worker branch — also serves as the drain when the user
+        # dials the live limit below the parallel threshold mid-run.
+        if queue and not shutdown_requested():
+            # If the parallel branch already ran above, it has produced
+            # a populated queue (deferred episodes + the dial-down
+            # batch).  Otherwise the original ``max_workers<=1`` /
+            # single-episode path runs here from scratch.
+            if shared_executor is not None:
+                # Parallel branch ran first; we are the drain.
+                for round_num in range(max_attempts):
+                    if shutdown_requested() or not queue:
+                        break
+                    round_items = list(queue)
+                    queue.clear()
+                    _run_single_worker_round()
+            else:
+                for round_num in range(max_attempts):
+                    if shutdown_requested() or not queue:
+                        break
+                    round_items = list(queue)
+                    queue.clear()
+                    if round_num > 0:
+                        pass  # silently retry deferred episodes
+                    _run_single_worker_round()
+    finally:
+        if shared_executor is not None:
+            try:
+                shared_executor.shutdown(wait=shutdown_requested())
+            except TypeError:
+                # Python < 3.9 fallback (cancel_futures was added in 3.9)
+                shared_executor.shutdown(wait=False)
 
     if not shutdown_requested():
         for episode_num in queue:

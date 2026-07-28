@@ -13,6 +13,7 @@ download pipeline.
 """
 
 import json
+import threading
 
 import pytest
 
@@ -331,13 +332,16 @@ def _fake_settings():
     return _S()
 
 
-def test_process_season_folder_rereads_workers_ref_each_round(tmp_path, monkeypatch):
-    """The bottom-bar ``[+/-]`` controls mutate ``workers_ref[0]`` while
-    downloads are running.  ``process_season_folder`` must re-read the
-    ref before building each round's ``ThreadPoolExecutor`` so the new
-    limit takes effect on the next round.  Pre-fix the pool was sized
-    once from the ``max_workers`` argument and the user's dial-down was
-    silently ignored.
+def test_process_season_folder_uses_one_shared_executor_across_rounds(
+    tmp_path, monkeypatch
+):
+    """Regression: a single shared ``ThreadPoolExecutor`` is built for
+    the whole ``process_season_folder`` call so the retry rounds do
+    not re-create pools.  Pre-fix the code created one pool per round
+    and submitted new futures into it even after the main thread had
+    exited, which raised ``RuntimeError("cannot schedule new futures
+    after interpreter shutdown")`` for every still-queued episode
+    when the user pressed Ctrl+C.
     """
     from py_stremio.components.download import processing
     from py_stremio.utils.cancellation import clear_shutdown
@@ -351,16 +355,9 @@ def test_process_season_folder_rereads_workers_ref_each_round(tmp_path, monkeypa
     config.servers = ["https://torrentio.strem.fun/manifest.json"]
     save_config(season_folder / "download-config.json", config)
 
-    pool_sizes: list[int] = []
     workers_ref = [3]
-    round_observed = {"current": 0}
 
     def fake_search_and_download(**kwargs):
-        if round_observed["current"] == 0:
-            # Round 1: dial the limit down to 2 between rounds so the
-            # next pool is sized from the new value, not the initial 3.
-            workers_ref[0] = 2
-        round_observed["current"] += 1
         return {
             "success": False,
             "error": "transient",
@@ -369,9 +366,12 @@ def test_process_season_folder_rereads_workers_ref_each_round(tmp_path, monkeypa
         }
 
     real_executor = processing.ThreadPoolExecutor
+    pool_count = {"n": 0}
+    pool_sizes: list[int] = []
 
     class _RecordingExecutor(real_executor):
         def __init__(self, max_workers=None, **kwargs):
+            pool_count["n"] += 1
             pool_sizes.append(max_workers)
             super().__init__(max_workers=max_workers, **kwargs)
 
@@ -379,21 +379,45 @@ def test_process_season_folder_rereads_workers_ref_each_round(tmp_path, monkeypa
     monkeypatch.setattr(processing, "settings", _fake_settings())
     monkeypatch.setattr(processing, "ThreadPoolExecutor", _RecordingExecutor)
 
+    # Dial the limit to 1 mid-run; the test must still drain the
+    # remaining queue through the single-worker fallback without
+    # spawning a second pool.
+    def _dial_down(_episode_num):
+        workers_ref[0] = 1
+
+    # The first call dials the limit down to 1.  All subsequent calls
+    # just report transient so the loop keeps retrying.
+    seen = {"n": 0}
+
+    def fake_search_dial(**kwargs):
+        seen["n"] += 1
+        if seen["n"] == 3:
+            _dial_down(kwargs["episode"])
+        return {
+            "success": False,
+            "error": "transient",
+            "working_urls": [],
+            "permanent_failure": False,
+        }
+
+    monkeypatch.setattr(processing, "search_and_download", fake_search_dial)
+
     processing.process_season_folder(
         season_folder, max_workers=3, workers_ref=workers_ref
     )
 
-    # Round 1 was sized from the initial workers_ref (3); round 2
-    # re-read the ref after the dial-down (2).
-    assert pool_sizes[0] == 3, f"expected round 1 pool to be sized from initial ref, got {pool_sizes[0]}"
-    assert any(size == 2 for size in pool_sizes[1:]), (
-        f"expected a later round pool to be sized from the dialed-down ref=2, got {pool_sizes!r}"
+    # Exactly one shared pool was created; the dial-down to 1 dropped
+    # us into the single-worker drain instead of starting a second
+    # pool.  Pre-fix the same scenario spawned one pool per round.
+    assert pool_count["n"] == 1, (
+        f"expected exactly one shared pool, got {pool_count['n']} ({pool_sizes!r})"
     )
+    assert pool_sizes[0] == 3, f"shared pool must be sized from initial ref=3, got {pool_sizes[0]}"
 
 
 def test_process_season_folder_dials_down_to_single_worker_path(tmp_path, monkeypatch):
     """If the user dials the worker count to 0/1 mid-run, the parallel
-    branch must stop creating new pools and fall back to the
+    branch must stop using the shared pool and fall back to the
     single-worker loop so episodes still drain."""
     from py_stremio.components.download import processing
     from py_stremio.utils.cancellation import clear_shutdown
@@ -435,10 +459,9 @@ def test_process_season_folder_dials_down_to_single_worker_path(tmp_path, monkey
         season_folder, max_workers=2, workers_ref=workers_ref
     )
 
-    # Exactly one parallel pool was created for round 1; round 2 saw
-    # the dialed-down ref=1 and broke out of the parallel branch.
+    # Exactly one shared pool was created for the entire season.
     assert parallel_pools["n"] == 1, (
-        f"expected exactly 1 parallel pool before the dial-down, got {parallel_pools['n']}"
+        f"expected exactly 1 shared pool, got {parallel_pools['n']}"
     )
     # Round 1 (parallel) attempts both episodes, then the single-worker
     # drain runs MAX_DOWNLOAD_ATTEMPTS=5 more rounds of both episodes
@@ -446,4 +469,89 @@ def test_process_season_folder_dials_down_to_single_worker_path(tmp_path, monkey
     assert len(attempts) == 1 * 2 + 5 * 2, (
         f"expected 1 parallel round + 5 single-worker rounds (12 attempts), got {len(attempts)}"
     )
+
+
+def test_process_season_folder_swallows_interpreter_shutdown_runtime_error(
+    tmp_path, monkeypatch
+):
+    """Regression: when the user presses Ctrl+C mid-run the outer
+    executor is torn down with ``wait=False`` and the atexit handler
+    flips the global ``_shutdown`` flag.  A still-running retry round
+    that calls ``ThreadPoolExecutor.submit()`` after that point
+    raises ``RuntimeError("cannot schedule new futures after
+    interpreter shutdown")``.  Pre-fix the error was caught by the
+    per-episode ``except BaseException`` and reported as a noisy
+    ``[failed]`` line for every still-queued episode.  The fix
+    short-circuits the per-episode handler so the run exits silently
+    and the next run retries the missing episodes.
+    """
+    from py_stremio.components.download import processing
+    from py_stremio.utils.cancellation import clear_shutdown
+
+    clear_shutdown()
+
+    season_folder, config, _ = _write_config_and_state(tmp_path, episode_count=2)
+    config.servers = ["https://torrentio.strem.fun/manifest.json"]
+    save_config(season_folder / "download-config.json", config)
+
+    calls = {"n": 0}
+
+    def fake_search_and_download(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("cannot schedule new futures after interpreter shutdown")
+        return {
+            "success": False,
+            "error": "transient",
+            "working_urls": [],
+            "permanent_failure": False,
+        }
+
+    # Capture the episode_done events that would have produced a
+    # "failed" line for the user.  The shutdown episode must NOT show
+    # up with the bare RuntimeError text in the reason field.
+    progress_events: list[dict] = []
+
+    def capture(event: dict) -> None:
+        progress_events.append(event)
+
+    monkeypatch.setattr(processing, "search_and_download", fake_search_and_download)
+    monkeypatch.setattr(processing, "settings", _fake_settings())
+    monkeypatch.setattr(processing, "progress_callback", capture, raising=False)
+    # The single-worker branch is reached after the parallel branch
+    # dials itself down.  The test exercises the per-episode handler
+    # directly by calling ``_do_download_one_episode`` instead.
+    task = processing.setup_season_folder(season_folder, quiet_output=True)
+    progress_lock = threading.Lock()
+
+    def emit(event: dict) -> None:
+        with progress_lock:
+            progress_events.append(event)
+
+    with monkeypatch.context() as m:
+        m.setattr(processing, "progress_callback", emit)
+
+        def raising_search(**kwargs):
+            raise RuntimeError("cannot schedule new futures after interpreter shutdown")
+
+        m.setattr(processing, "search_and_download", raising_search)
+        result = processing._do_download_one_episode(
+            task, 1, 1, emit
+        )
+
+    # The handler suppressed the RuntimeError and returned a synthetic
+    # interrupted result instead of a hard failure.
+    assert result["result"].get("interrupted") is True
+    assert result["result"]["success"] is False
+    assert "interpreter shutdown" not in str(result["result"].get("error", ""))
+    # No episode_done event was emitted with the bare RuntimeError
+    # text in the reason field — that is the regression we are
+    # preventing.
+    bad = [
+        event
+        for event in progress_events
+        if event.get("type") == "episode_done"
+        and "interpreter shutdown" in str(event.get("reason", ""))
+    ]
+    assert bad == [], f"got a noisy failed-line for the shutdown race: {bad!r}"
 
