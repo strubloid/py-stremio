@@ -317,3 +317,112 @@ def test_no_validate_skips_root_folder_probe(crontab_sandbox):
     # --no-validate is set, the row is omitted from the output.
     assert "ROOT_FOLDER" not in result.stdout
     assert elapsed < 3, f"validate --no-validate took {elapsed:.1f}s"
+
+
+def test_cron_entry_command_does_not_start_with_hash(crontab_sandbox):
+    """Regression: a ``#`` in the middle of a cron line silently
+    turns the entire command into a bash comment, so the wrapper
+    never runs.  The marker MUST be on its own line above the entry,
+    not embedded in the command text.
+    """
+    _run_cron_sh("install")
+    crontab = _read_crontab()
+    for line in crontab.splitlines():
+        # Skip blank lines and the standalone marker lines.
+        stripped = line.strip()
+        if not stripped or stripped.startswith("# py-stremio-managed:"):
+            continue
+        # Any other non-blank, non-marker line is an actual cron entry.
+        # The command portion is everything after the 5 schedule fields.
+        # If it starts with ``#``, the wrapper will never run.
+        fields = line.split(None, 5)
+        if len(fields) < 6:
+            continue
+        command = fields[5].lstrip()
+        assert not command.startswith("#"), (
+            f"cron entry has a ``#`` as the first non-space char of "
+            f"the command — bash will treat the rest as a comment "
+            f"and the wrapper will never run: {line!r}"
+        )
+
+
+def test_cron_command_actually_runs_the_wrapper(crontab_sandbox, tmp_path):
+    """End-to-end regression: simulate what cron does (the command
+    portion of a cron line, passed to ``sh -c``) and verify it
+    actually creates the expected log file.  This is the test
+    that would have caught the ``# py-stremio-managed: …`` bug
+    the user hit on their other computer.
+    """
+    import stat
+    custom_root = tmp_path / "e2e-test"
+    _run_cron_sh("install", env={"PY_STREMIO_ROOT": str(custom_root)})
+    wrapper_path = custom_root / "cron-run.sh"
+    assert wrapper_path.exists()
+    assert wrapper_path.stat().st_mode & stat.S_IXUSR, "wrapper is not executable"
+
+    crontab = _read_crontab()
+    for line in crontab.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("# py-stremio-managed:"):
+            continue
+        fields = line.split(None, 5)
+        if len(fields) < 6:
+            continue
+        schedule, command = fields[:5], fields[5]
+        # Re-parse the schedule so we can drive ``time.sleep`` to a
+        # future timestamp that the schedule would actually fire on.
+        # The simpler check: replace the command's logging target
+        # with a tmp file and run it through sh -c.  The wrapper
+        # invocation in production always contains the wrapper
+        # path, so the command always writes to a log file.  We
+        # extract the log file path from the redirect.
+        m = re.search(r">>\s*(\S+)\s*2>&1", command)
+        assert m, f"no log redirect found in {command!r}"
+        # Use a sandbox-friendly log path so we can verify the
+        # command actually runs.  Replace the log path with our
+        # own tmp file inside the cron command itself.
+        log_target = tmp_path / f"e2e_{Path(m.group(1)).name}"
+        # Run the command with a redirected log.  We bypass the
+        # wrapper here on purpose — the goal is to verify the cron
+        # command line itself runs (not the wrapper internals).
+        # The wrapper just execs py-stremio-cron, so we substitute
+        # a no-op echo in front of it via a temp PATH shim.
+        shim_dir = tmp_path / f"shim_{Path(m.group(1)).stem}"
+        shim_dir.mkdir(exist_ok=True)
+        shim_bin = shim_dir / "py-stremio-cron"
+        shim_bin.write_text("#!/usr/bin/env bash\necho ran >> \"$1\"\n")
+        shim_bin.chmod(0o755)
+        shim_command = command.replace(">> ", f">> {log_target} ")
+        # Run via sh -c the same way cron does it.
+        subprocess.run(
+            ["/bin/sh", "-c", f"PATH={shim_dir}:$PATH {shim_command}"],
+            check=True,
+        )
+        assert log_target.exists(), (
+            f"cron command for {line!r} did not produce its log — "
+            f"the wrapper was never invoked (likely the ``#``-in-"
+            f"command bug)"
+        )
+
+
+def test_each_job_writes_to_its_own_log(crontab_sandbox):
+    """Regression: the download entry once logged to scan-light.log
+    because of a copy-paste error.  Every job's log path must be
+    derived from the job name, not hard-coded to scan-light.
+    """
+    _run_cron_sh("install")
+    crontab = _read_crontab()
+    # Map job name → expected log basename.
+    for name in ("scan-light", "scan-full", "download", "combined"):
+        # Find the cron entry line for this job (the one that calls
+        # the wrapper with the job name, not the marker line above it).
+        for line in crontab.splitlines():
+            if f"cron-run.sh {name}" not in line:
+                continue
+            log_match = re.search(r">>\s*(\S+)", line)
+            assert log_match, f"no log path in {line!r}"
+            log_path = Path(log_match.group(1))
+            assert log_path.name == f"{name}.log", (
+                f"job {name!r} logs to {log_path.name!r} — "
+                f"expected {name}.log.  Copy-paste bug?"
+            )

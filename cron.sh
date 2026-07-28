@@ -129,7 +129,12 @@ declare -A JOBS=(
     [combined]='0 0,12 * * *|--update-and-download'
 )
 
-# ── Build a single crontab line ─────────────────────────────────────────
+# Wrapper location is derived from the install root and is referenced
+# by both ``filter_crontab`` (to identify lines to remove on
+# uninstall) and ``write_wrapper`` (to write the file).  Compute it
+# up front so both functions see the same value.
+WRAPPER_PATH="$INSTALL_ROOT/cron-run.sh"
+VENV_BIN="$(dirname "$PY_STREMIO_BIN")"
 # Each crontab entry calls a thin wrapper (``cron-run.sh``) that
 # owns all the environment setup (PATH, PY_STREMIO_ROOT, INTERNET_SPEED_LIMIT)
 # and dispatches to the right ``py-stremio-cron`` subcommand.  This
@@ -173,7 +178,6 @@ emit_crontab() {
 # change.  ``cron-run.sh`` is also handy for running a job by hand
 # from a shell (``./cron-run.sh download``) without remembering all
 # the ``--key`` flags.
-WRAPPER_PATH="$INSTALL_ROOT/cron-run.sh"
 write_wrapper() {
     # The install root may not exist yet (e.g. the user only ran the
     # install.sh's ``--no-venv`` path, or they're pointing
@@ -206,10 +210,13 @@ EOF
 # ── Filter the user's crontab ───────────────────────────────────────────
 filter_crontab() {
     # Drop every line that belongs to py-stremio.  A line is ours if:
-    #   - it starts with our marker comment (covers the header AND every entry), OR
-    #   - it invokes our binary path (``py-stremio-cron``)
+    #   - it starts with our marker comment (covers the standalone
+    #     header and per-entry marker lines), OR
+    #   - it invokes our wrapper path (covers the actual cron entries
+    #     — we match on the wrapper because the entry no longer
+    #     contains the marker, which would otherwise break sh)
     # The rest of the user's crontab is preserved verbatim.
-    crontab -l 2>/dev/null | grep -v -F -e "$CRON_MARKER" -e "$PY_STREMIO_BIN" || true
+    crontab -l 2>/dev/null | grep -v -F -e "$CRON_MARKER" -e "$WRAPPER_PATH" || true
 }
 
 # ── Install ─────────────────────────────────────────────────────────────
@@ -382,10 +389,9 @@ do_run_now() {
 }
 
 # ── Pre-flight summary ──────────────────────────────────────────────────
-# Derive the wrapper location up front so it shows in the summary
-# (and so do_install/do_uninstall can refer to it without re-deriving).
-WRAPPER_PATH="$INSTALL_ROOT/cron-run.sh"
-VENV_BIN="$(dirname "$PY_STREMIO_BIN")"
+# (WRAPPER_PATH and VENV_BIN were computed earlier so the filter
+# function and the wrapper-writer both see them.  See the schedule
+# section above.)
 
 # Detect the ROOT_FOLDER override.  Done AFTER the summary is computed
 # so the summary prints immediately — the probe is best-effort and
