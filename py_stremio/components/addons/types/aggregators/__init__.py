@@ -3,6 +3,7 @@
 from .CinAddon import CinAddon
 from .CinescrapeAddon import CinescrapeAddon
 from .EasyNewsPlusAddon import EasyNewsPlusAddon
+from .ExtAddon import ExtAddon
 from .JackettioAddon import JackettioAddon
 from .KnightCrawlerAddon import KnightCrawlerAddon
 from .KodAddon import KodAddon
@@ -32,6 +33,7 @@ __all__ = [
     "CinescrapeAddon",
     "DebridSearchAddon",
     "EasyNewsPlusAddon",
+    "ExtAddon",
     "FlixStreamsAddon",
     "JackettioAddon",
     "KnightCrawlerAddon",

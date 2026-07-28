@@ -55,6 +55,7 @@ _EXPLICIT_NAMES: frozenset[str] = frozenset([
     "KodAddon",
     "CinescrapeAddon",
     "TillAddon",
+    "ExtAddon",
     # anime.py
     "AnimeKitsuAddon",
     "AkumaAddon",

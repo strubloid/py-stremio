@@ -242,10 +242,19 @@ def _search_single_id(
         if stage_tracker:
             stage_tracker.set_servers(len(working_addons))
 
+        def _on_cached_progress(done: int, total: int) -> None:
+            # The renderer treats the T block as a ratio of done/total.
+            # We have to keep `server_total` constant (=len(working_addons))
+            # and re-broadcast done each time, so set the total here too.
+            if stage_tracker is not None:
+                stage_tracker.set_servers(total)
+                stage_tracker.server_done(done)
+
         cached_streams, cached_working_urls = search_working_addons_for_streams(
             id_type,
             stremio_id,
             working_addons,
+            on_progress=_on_cached_progress,
         )
         cached_result = _try_download_streams(
             title=title,
@@ -270,10 +279,16 @@ def _search_single_id(
         if stage_tracker:
             stage_tracker.server_done(stage_tracker.server_total)
 
+        def _on_remaining_progress(done: int, total: int) -> None:
+            if stage_tracker is not None:
+                stage_tracker.set_servers(total)
+                stage_tracker.server_done(done)
+
         remaining_streams, remaining_working_urls = search_remaining_addons_for_streams(
             id_type,
             stremio_id,
             excluded_addons=working_addons,
+            on_progress=_on_remaining_progress,
         )
         combined_working_urls = [*cached_working_urls, *remaining_working_urls]
         if stage_tracker:
@@ -319,7 +334,19 @@ def _search_single_id(
             stage_tracker.live_resolved(0)
         return {"success": False, "error": "Preflight found no working addons",
                 "working_urls": [], "permanent_failure": True}
-    streams, working_urls = search_all_addons_for_streams(id_type, stremio_id, working_addons, preferred_languages=preferred_languages)
+
+    def _on_full_progress(done: int, total: int) -> None:
+        if stage_tracker is not None:
+            stage_tracker.set_servers(total)
+            stage_tracker.server_done(done)
+
+    streams, working_urls = search_all_addons_for_streams(
+        id_type,
+        stremio_id,
+        working_addons,
+        preferred_languages=preferred_languages,
+        on_progress=_on_full_progress,
+    )
     if stage_tracker:
         # Mark T complete — we got streams or not
         stage_tracker.set_servers(1)
@@ -431,7 +458,12 @@ def _try_download_streams(
                 bandwidth_limiter=bandwidth_limiter,
                 thread_id=thread_id,
                 stall_timeout=settings.DOWNLOAD_STALL_TIMEOUT,
-                preserve_partial_on_unsupported_range=season is None,
+                # Always preserve an existing .part file when the
+                # upstream ignores our Range request. Discarding the
+                # partial would force the download to restart from
+                # zero on the next attempt — see the resume bug in
+                # isues-with-downloading.md.
+                preserve_partial_on_unsupported_range=True,
             )
             return _success_result(filename, stream, working_urls)
         except InvalidVideoDownloadError as e:

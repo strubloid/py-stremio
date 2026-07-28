@@ -251,6 +251,9 @@ def test_download_marks_in_progress_before_search_and_clears_on_success(
     opening the network stream, then clear it once the download
     succeeds."""
     from py_stremio.components.download import processing
+    from py_stremio.utils.cancellation import clear_shutdown
+
+    clear_shutdown()
 
     season_folder, config, _ = _write_config_and_state(tmp_path, episode_count=2)
     config.servers = ["https://torrentio.strem.fun/manifest.json"]
@@ -326,3 +329,121 @@ def _fake_settings():
         DRY_RUN: bool = False
 
     return _S()
+
+
+def test_process_season_folder_rereads_workers_ref_each_round(tmp_path, monkeypatch):
+    """The bottom-bar ``[+/-]`` controls mutate ``workers_ref[0]`` while
+    downloads are running.  ``process_season_folder`` must re-read the
+    ref before building each round's ``ThreadPoolExecutor`` so the new
+    limit takes effect on the next round.  Pre-fix the pool was sized
+    once from the ``max_workers`` argument and the user's dial-down was
+    silently ignored.
+    """
+    from py_stremio.components.download import processing
+    from py_stremio.utils.cancellation import clear_shutdown
+
+    # Other test files (notably test_menu.test_run_pipeline_ctrl_c_exits_cleanly)
+    # set the global shutdown event.  Clear it so the round loop does
+    # not bail out before the deferred retry round runs.
+    clear_shutdown()
+
+    season_folder, config, _ = _write_config_and_state(tmp_path, episode_count=3)
+    config.servers = ["https://torrentio.strem.fun/manifest.json"]
+    save_config(season_folder / "download-config.json", config)
+
+    pool_sizes: list[int] = []
+    workers_ref = [3]
+    round_observed = {"current": 0}
+
+    def fake_search_and_download(**kwargs):
+        if round_observed["current"] == 0:
+            # Round 1: dial the limit down to 2 between rounds so the
+            # next pool is sized from the new value, not the initial 3.
+            workers_ref[0] = 2
+        round_observed["current"] += 1
+        return {
+            "success": False,
+            "error": "transient",
+            "working_urls": [],
+            "permanent_failure": False,
+        }
+
+    real_executor = processing.ThreadPoolExecutor
+
+    class _RecordingExecutor(real_executor):
+        def __init__(self, max_workers=None, **kwargs):
+            pool_sizes.append(max_workers)
+            super().__init__(max_workers=max_workers, **kwargs)
+
+    monkeypatch.setattr(processing, "search_and_download", fake_search_and_download)
+    monkeypatch.setattr(processing, "settings", _fake_settings())
+    monkeypatch.setattr(processing, "ThreadPoolExecutor", _RecordingExecutor)
+
+    processing.process_season_folder(
+        season_folder, max_workers=3, workers_ref=workers_ref
+    )
+
+    # Round 1 was sized from the initial workers_ref (3); round 2
+    # re-read the ref after the dial-down (2).
+    assert pool_sizes[0] == 3, f"expected round 1 pool to be sized from initial ref, got {pool_sizes[0]}"
+    assert any(size == 2 for size in pool_sizes[1:]), (
+        f"expected a later round pool to be sized from the dialed-down ref=2, got {pool_sizes!r}"
+    )
+
+
+def test_process_season_folder_dials_down_to_single_worker_path(tmp_path, monkeypatch):
+    """If the user dials the worker count to 0/1 mid-run, the parallel
+    branch must stop creating new pools and fall back to the
+    single-worker loop so episodes still drain."""
+    from py_stremio.components.download import processing
+    from py_stremio.utils.cancellation import clear_shutdown
+
+    clear_shutdown()
+
+    season_folder, config, _ = _write_config_and_state(tmp_path, episode_count=2)
+    config.servers = ["https://torrentio.strem.fun/manifest.json"]
+    save_config(season_folder / "download-config.json", config)
+
+    workers_ref = [2]
+    parallel_pools = {"n": 0}
+    attempts: list[int] = []
+
+    def fake_search_and_download(**kwargs):
+        attempts.append(kwargs["episode"])
+        # After the first transient failure, dial the limit down to
+        # 1.  The next round must break out of the parallel branch.
+        workers_ref[0] = 1
+        return {
+            "success": False,
+            "error": "transient",
+            "working_urls": [],
+            "permanent_failure": False,
+        }
+
+    real_executor = processing.ThreadPoolExecutor
+
+    class _CountingExecutor(real_executor):
+        def __init__(self, max_workers=None, **kwargs):
+            parallel_pools["n"] += 1
+            super().__init__(max_workers=max_workers, **kwargs)
+
+    monkeypatch.setattr(processing, "search_and_download", fake_search_and_download)
+    monkeypatch.setattr(processing, "settings", _fake_settings())
+    monkeypatch.setattr(processing, "ThreadPoolExecutor", _CountingExecutor)
+
+    processing.process_season_folder(
+        season_folder, max_workers=2, workers_ref=workers_ref
+    )
+
+    # Exactly one parallel pool was created for round 1; round 2 saw
+    # the dialed-down ref=1 and broke out of the parallel branch.
+    assert parallel_pools["n"] == 1, (
+        f"expected exactly 1 parallel pool before the dial-down, got {parallel_pools['n']}"
+    )
+    # Round 1 (parallel) attempts both episodes, then the single-worker
+    # drain runs MAX_DOWNLOAD_ATTEMPTS=5 more rounds of both episodes
+    # for a total of 1*2 + 5*2 = 12 attempts.
+    assert len(attempts) == 1 * 2 + 5 * 2, (
+        f"expected 1 parallel round + 5 single-worker rounds (12 attempts), got {len(attempts)}"
+    )
+

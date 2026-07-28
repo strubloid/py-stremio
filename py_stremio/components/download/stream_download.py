@@ -1051,8 +1051,33 @@ def _content_type(headers: httpx.Headers) -> str:
 
 
 def _delete_invalid_download(file_path, partial_path) -> None:
+    """Remove the final file but preserve the ``.part`` file.
+
+    The ``.part`` file holds bytes that are still useful for the next
+    download attempt: a 1.5 GB partial of a 3 GB episode is not garbage
+    the moment a single stream fails — it is the work the user has
+    already paid bandwidth for.  Dropping the partial forces the next
+    run to restart from zero, which is what motivated the original
+    report: "i could see something downloading in a good progress and
+    after [failed] ... also lost the last file ... and now it is
+    starting from 0".  The same reservation already applies to movies
+    (``process_season_folder``'s movie branch and the
+    ``RangeNotSupportedError`` path for series); the only paths that
+    still called ``_delete_invalid_download`` on the partial were the
+    pre-write response check, the read-timeout handler, the
+    content-length mismatch check, and the post-rename size check.
+
+    Cases 3 (post-rename too small) and 6 (rename-validation
+    exception) have already consumed the ``.part`` via
+    ``partial_path.replace(file_path)`` by the time
+    ``_delete_invalid_download`` runs, so deleting the partial is a
+    no-op there — only the final file needs to come down.
+    """
     file_path.unlink(missing_ok=True)
-    partial_path.unlink(missing_ok=True)
+    # The .part file is intentionally left on disk. Callers that have
+    # just produced it (download loop) or that want to start over from
+    # byte zero should unlink it explicitly; the default policy is
+    # "preserve whatever bytes the user has already paid for".
 
 
 def _validate_response_before_download(response, file_path, partial_path, total_size: int) -> None:
@@ -1092,7 +1117,7 @@ def download_stream_to_file(
     bandwidth_limiter=None,
     thread_id: int | None = None,
     stall_timeout: float = 60.0,
-    preserve_partial_on_unsupported_range: bool = False,
+    preserve_partial_on_unsupported_range: bool = True,
 ) -> None:
     """Download a direct stream URL to disk, resuming partial files when possible.
 
@@ -1102,6 +1127,16 @@ def download_stream_to_file(
     "no peers" situation within one minute instead of waiting the full
     5-minute ``httpx`` request timeout.  Pass ``0`` to disable stall
     detection (rely on the request timeout instead).
+
+    When a ``.part`` file already exists and the upstream server does
+    NOT honour the ``Range:`` request (returns ``200 OK`` with the full
+    body instead of ``206 Partial Content``), the partial bytes would
+    be silently discarded. We always raise :class:`RangeNotSupportedError`
+    in that case so the caller can fall through to the next stream
+    instead of restarting from byte zero. Set
+    ``preserve_partial_on_unsupported_range=False`` to opt out of this
+    safety and discard the partial anyway (legacy behaviour, useful
+    only when the caller has no other streams to try).
     """
     from pathlib import Path
     import threading
@@ -1142,9 +1177,20 @@ def download_stream_to_file(
         ) as response:
             raise_if_shutdown_requested()
             response.raise_for_status()
-            if existing_size and response.status_code != 206 and preserve_partial_on_unsupported_range:
+            # When a partial file exists and the server ignores our
+            # Range request, refuse to truncate the partial. The
+            # previous code fell through to ``mode = "wb"`` for
+            # non-movie content, which silently discarded every byte
+            # already on disk and made the user watch the download
+            # restart from zero.
+            if (
+                existing_size
+                and response.status_code != 206
+                and preserve_partial_on_unsupported_range
+            ):
                 raise RangeNotSupportedError(
-                    f"Source does not support byte-range resume for {file_path.name}; preserving the partial file"
+                    f"Source does not support byte-range resume for {file_path.name}; "
+                    f"preserving {existing_size} bytes on disk"
                 )
             resumed = bool(existing_size and response.status_code == 206)
             mode = "ab" if resumed else "wb"
@@ -1156,15 +1202,45 @@ def download_stream_to_file(
                 progress_callback(downloaded, total_size)
 
             with open(partial_path, mode) as file:
+                # ``last_chunk_at`` is the moment the previous chunk
+                # was processed. We measure the gap to the moment the
+                # current chunk is received (top of the next loop
+                # iteration) so a slow trickle of bytes still trips the
+                # in-loop stall check.
+                last_chunk_at = time.monotonic()
                 for chunk in response.iter_bytes(chunk_size=8192):
                     raise_if_shutdown_requested()
+                    now = time.monotonic()
+                    if (
+                        stall_timeout
+                        and stall_timeout > 0
+                        and downloaded > 0
+                        and (now - last_chunk_at) > stall_timeout
+                    ):
+                        # The gap between the previous chunk and
+                        # this one exceeded the stall budget. Bail
+                        # out so the next stream gets a turn. We do
+                        # NOT delete the .part — the bytes already
+                        # written are preserved for the next resume.
+                        raise StreamStallError(
+                            f"No new bytes for {stall_timeout}s; aborting "
+                            f"{file_path.name} (received {downloaded} total)"
+                        )
                     if not chunk:
-                        continue
+                        # Empty chunk — possible when ``iter_bytes``
+                        # signals end-of-stream. Treat it as the
+                        # loop terminator and let the trailing
+                        # content-length check below decide whether
+                        # the partial is valid.
+                        if progress_callback:
+                            progress_callback(downloaded, total_size)
+                        break
                     if bandwidth_limiter:
                         bandwidth_limiter.wait_for(len(chunk), thread_id=active_thread_id)
                     raise_if_shutdown_requested()
                     file.write(chunk)
                     downloaded += len(chunk)
+                    last_chunk_at = time.monotonic()
                     if progress_callback:
                         progress_callback(downloaded, total_size)
     except httpx.ReadTimeout as e:

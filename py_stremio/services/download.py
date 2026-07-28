@@ -175,6 +175,7 @@ class DownloadService:
                 bandwidth_limiter=bandwidth_limiter,
                 worker_semaphore=dynamic_limit,
                 live_configs=live_configs,
+                workers_ref=workers_ref,
             )
 
         def record_result(folder: ScannedFolder, result: dict[str, Any]) -> None:
@@ -324,6 +325,7 @@ class DownloadService:
         bandwidth_limiter=None,
         worker_semaphore: threading.Semaphore | DynamicLimit | None = None,
         live_configs: list | None = None,
+        workers_ref: list[int] | None = None,
     ) -> dict[str, Any]:
         processor = process_series if folder.folder_type == FolderType.SERIES else process_movies
         signature = inspect.signature(processor).parameters
@@ -340,6 +342,8 @@ class DownloadService:
             kwargs["quiet_output"] = quiet
         if live_configs is not None and "live_configs" in signature:
             kwargs["live_configs"] = live_configs
+        if workers_ref is not None and "workers_ref" in signature:
+            kwargs["workers_ref"] = workers_ref
         if quiet:
             with suppress_current_thread_output():
                 return processor(folder.path, **kwargs)

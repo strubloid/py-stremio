@@ -891,6 +891,7 @@ def process_season_folder(
     worker_semaphore: threading.Semaphore | None = None,
     quiet_output: bool = False,
     live_configs: list | None = None,
+    workers_ref: list[int] | None = None,
 ) -> dict:
     """Process a season folder — backward-compatible wrapper around the task system.
 
@@ -899,6 +900,13 @@ def process_season_folder(
     settings live (for example the bottom-bar 4K toggle in the
     interactive UI).  The on-disk config is never written by this
     function for the 4K toggle — it is a session-only override.
+
+    ``workers_ref`` (optional) is a one-element mutable list whose
+    current ``[0]`` value is the live worker limit.  When supplied, each
+    retry round re-reads ``workers_ref[0]`` before building its
+    ``ThreadPoolExecutor`` so the bottom-bar ``[+/-]`` controls can
+    shrink the pool on the fly.  When ``None``, the fixed
+    ``max_workers`` argument is used (legacy / cron / test path).
     """
     task = setup_season_folder(
         folder_path=folder_path,
@@ -1002,7 +1010,36 @@ def process_season_folder(
     queue = deque(missing)
     completed_successes: set[int] = set()
 
-    if max_workers > 1 and total_missing > 1:
+    # Parallel-execution branch — re-read the live worker limit on every
+    # round so the bottom-bar ``[+/-]`` controls can shrink the pool
+    # between rounds.  Inside a single round the executor's
+    # ``max_workers`` is fixed (in-flight downloads are not cancelled
+    # mid-stream) — the ``worker_semaphore`` additionally caps how many
+    # workers are actively in ``_download_episode_with_slot`` at the
+    # same moment.  When the user dials the limit below the parallel
+    # threshold we drop out of this branch and let the single-worker
+    # loop below drain the rest of the queue.
+    def _current_workers() -> int:
+        if workers_ref is not None:
+            return max(0, workers_ref[0])
+        return max_workers
+
+    def _run_single_worker_round() -> None:
+        for index, episode_num in enumerate(round_items, start=1):
+            if shutdown_requested():
+                queue.extend(round_items[index - 1:])
+                return
+            _set_current_episode(task.config, task.config_path, episode_num)
+            item = _download_episode_with_slot(index, episode_num)
+            if item["result"].get("success"):
+                apply_result(item["episode"], item["result"])
+            elif item["result"].get("permanent_failure"):
+                apply_result(item["episode"], item["result"])
+            else:
+                queue.append(episode_num)
+
+    initial_workers = _current_workers()
+    if initial_workers > 1 and total_missing > 1:
         for round_num in range(max_attempts):
             if shutdown_requested() or not queue:
                 break
@@ -1012,7 +1049,14 @@ def process_season_folder(
                 print(f"  Downloading {len(round_items)} episodes")
             elif len(round_items) > 1:
                 pass  # silently retry deferred episodes
-            executor = ThreadPoolExecutor(max_workers=max(1, max_workers))
+            current_workers = _current_workers()
+            if current_workers <= 1:
+                # User dialed the limit below the parallel threshold.
+                # Defer the remaining items to the single-worker loop
+                # below so we do not start a fresh pool with zero slots.
+                queue.extend(round_items)
+                break
+            executor = ThreadPoolExecutor(max_workers=max(1, current_workers))
             futures = []
             try:
                 futures = [
@@ -1042,26 +1086,31 @@ def process_season_folder(
                     shutdown_executor_now(executor, futures)
                 else:
                     executor.shutdown(wait=True)
-    else:
-        for round_num in range(max_attempts):
-            if shutdown_requested() or not queue:
-                break
-            round_items = list(queue)
-            queue.clear()
-            if round_num > 0:
-                pass  # silently retry deferred episodes
-            for index, episode_num in enumerate(round_items, start=1):
-                if shutdown_requested():
-                    queue.extend(round_items[index - 1:])
+
+    # Single-worker branch — also serves as the drain when the user
+    # dials the live limit below the parallel threshold mid-run.
+    if queue and not shutdown_requested():
+        # If the parallel branch already ran above, it has produced a
+        # populated queue (deferred episodes + the dial-down batch).
+        # Otherwise the original ``max_workers<=1`` / single-episode
+        # path runs here from scratch.
+        if initial_workers > 1 and total_missing > 1:
+            # Parallel branch ran first; we are the drain.
+            for round_num in range(max_attempts):
+                if shutdown_requested() or not queue:
                     break
-                _set_current_episode(task.config, task.config_path, episode_num)
-                item = _download_episode_with_slot(index, episode_num)
-                if item["result"].get("success"):
-                    apply_result(item["episode"], item["result"])
-                elif item["result"].get("permanent_failure"):
-                    apply_result(item["episode"], item["result"])
-                else:
-                    queue.append(episode_num)
+                round_items = list(queue)
+                queue.clear()
+                _run_single_worker_round()
+        else:
+            for round_num in range(max_attempts):
+                if shutdown_requested() or not queue:
+                    break
+                round_items = list(queue)
+                queue.clear()
+                if round_num > 0:
+                    pass  # silently retry deferred episodes
+                _run_single_worker_round()
 
     if not shutdown_requested():
         for episode_num in queue:

@@ -180,6 +180,34 @@ The current `Threads` label suggests a stronger live resizing guarantee than the
 
 A future scheduler should use one global download executor or another concurrency primitive whose capacity maps directly to the control.
 
+#### Round-based live resize (current implementation)
+
+As of 2026-07-28, `process_season_folder` accepts an optional
+`workers_ref: list[int]` that is re-read before every retry round.  When
+the interactive `DownloadService` is in charge, it passes the same
+one-element list owned by `RichDownloadUI.workers_ref`, so the bottom-bar
+`[+/-]` controls have a direct effect:
+
+- **Dial up** (e.g. 2 → 5): the next round's `ThreadPoolExecutor` is
+  built with the larger `max_workers`, immediately admitting up to
+  `workers_ref[0]` parallel episodes.
+- **Dial down** (e.g. 5 → 2): the next round is built with
+  `max_workers = workers_ref[0]`.  Episodes that are already past the
+  `worker_semaphore.acquire()` call finish naturally — the
+  `DynamicLimit` cannot kick a thread that has already taken its slot.
+  When the user dials all the way down to 1, the parallel branch
+  breaks out and the queued episodes drain through the single-worker
+  loop so nothing is stranded.
+- **Dial to 0/1** mid-run: same as above — the parallel branch exits
+  early and the single-worker path takes over for the remaining queue.
+
+In-flight downloads (bytes already streaming from a host) are never
+aborted by a worker-limit change.  This is intentional: Python cannot
+safely kill a thread that is in the middle of an httpx read, and
+aborting would discard the partial `.part` bytes the user has already
+paid bandwidth for.  The trade-off is documented in
+`AGENTS.md` under the partial-download safety section.
+
 ### 8. Movie Progress Has a Different, Incomplete Lifecycle
 
 The movie byte callback uses `total_size`, while the renderer expects `bytes_total`. Movie downloads therefore remain in an indeterminate sizing state even when a total is known. They do not calculate `rate_bps` and do not emit a matching completion event, which can leave the active count and row behind.

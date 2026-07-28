@@ -1,4 +1,4 @@
-"""Tests for newly-added Stremio addon classes (CometNet, EasyNews+)."""
+"""Tests for newly-added Stremio addon classes (CometNet, EasyNews+, Ext)."""
 
 import pytest
 
@@ -6,6 +6,7 @@ from py_stremio.components.addons.types.builtin_addons import (
     CometAddon,
     CometNetAddon,
     EasyNewsPlusAddon,
+    ExtAddon,
     HDHubAddon,
     KnightCrawlerAddon,
 )
@@ -223,3 +224,63 @@ class TestFactoryRegistration:
         _register_builtin_addons(manager)
 
         assert len(manager.addons) >= 36  # was ~33+ before, now 36+
+
+
+class TestExtAddon:
+    """Ext – ext.to stream aggregator (Cloudflare-protected from many networks)."""
+
+    def test_name(self):
+        addon = ExtAddon()
+        assert addon.name == "Ext"
+
+    def test_base_url(self):
+        addon = ExtAddon()
+        assert addon.base_url == "https://ext.to"
+
+    def test_get_url_without_api_key(self):
+        addon = ExtAddon()
+        # The RealDebrid key is not used by ext.to — its base URL is returned
+        # unchanged regardless of whether an api_key is provided.
+        assert addon.get_url() == "https://ext.to"
+
+    def test_get_url_with_api_key(self):
+        addon = ExtAddon()
+        addon.api_key = "testkey123"
+        assert addon.get_url("testkey123") == "https://ext.to"
+
+    def test_query_stream_url_series(self):
+        addon = ExtAddon()
+        url = addon.query_stream_url("series", "tt9170070:5:1")
+        assert url == "https://ext.to/stream/series/tt9170070:5:1.json"
+
+    def test_query_stream_url_movie(self):
+        addon = ExtAddon()
+        url = addon.query_stream_url("movie", "tt11378946")
+        assert url == "https://ext.to/stream/movie/tt11378946.json"
+
+    def test_http_addon_subclass(self):
+        """Ext is a regular Stremio HTTP addon — no RD injection needed."""
+        from py_stremio.components.addons.base import HttpAddon
+        assert issubclass(ExtAddon, HttpAddon)
+
+    def test_factory_registers_ext(self):
+        """Ext must be auto-registered alongside the other built-in addons."""
+        from py_stremio.components.addons.factory import _register_builtin_addons
+        from py_stremio.components.addons.manager import AddonManager
+
+        manager = AddonManager()
+        _register_builtin_addons(manager)
+
+        names = [a.name for a in manager.addons]
+        assert "Ext" in names
+
+    def test_ext_in_aggregators_aggregator_folder(self):
+        """The class must live in the aggregators category folder."""
+        from py_stremio.components.addons.types.aggregators import ExtAddon as ExtFromAgg
+        from py_stremio.components.addons.types.builtin_addons import ExtAddon as ExtFromBuiltin
+        assert ExtFromAgg is ExtFromBuiltin
+
+    def test_ext_is_in_explicit_names(self):
+        """The dynamic factory must NOT clobber the explicit class."""
+        from py_stremio.components.addons.types.addon_registry import _EXPLICIT_NAMES
+        assert "ExtAddon" in _EXPLICIT_NAMES

@@ -168,6 +168,149 @@ def test_download_stream_to_file_keeps_existing_partial_when_source_ignores_rang
     assert not target.exists()
 
 
+def test_download_stream_to_file_preserves_series_partial_when_source_ignores_range(
+    tmp_path, monkeypatch
+):
+    """Regression: a series episode (.mkv) must keep its existing
+    .part bytes when the upstream server returns 200 instead of 206.
+    The pre-fix code fell through to ``mode="wb"`` for series
+    downloads and silently overwrote the partial file, making the
+    user watch the download restart from byte zero on every retry.
+    """
+    monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
+    target = tmp_path / "90 Day Fiance_s04e13.mkv"
+    partial = tmp_path / "90 Day Fiance_s04e13.mkv.part"
+    partial.write_bytes(b"partial-from-previous-run")
+    partial_size = partial.stat().st_size
+    captured = {}
+
+    def fake_stream(method, url, **kwargs):
+        captured["headers"] = kwargs.get("headers", {})
+        # Server returns 200 with the FULL body — does not honour
+        # the Range header. This is the case the user reported as
+        # "episode 13 restarted from the beginning".
+        return FakeDownloadResponse(b"full-new-body", status_code=200)
+
+    monkeypatch.setattr(stream_download.httpx, "stream", fake_stream)
+
+    with pytest.raises(RuntimeError, match="does not support byte-range resume"):
+        # No preserve_partial_on_unsupported_range passed — the
+        # default (True) must still protect series partials.
+        stream_download.download_stream_to_file(
+            "https://example.test/episode.mkv",
+            str(target),
+        )
+
+    assert captured["headers"]["Range"] == f"bytes={partial_size}-"
+    assert partial.read_bytes() == b"partial-from-previous-run", (
+        "series partial file must be preserved when the source ignores Range"
+    )
+    assert not target.exists()
+
+
+def test_download_stream_to_file_raises_stall_error_when_chunks_stop(
+    tmp_path, monkeypatch
+):
+    """A connection that delivers one chunk then takes too long for
+    the next one must trip the in-loop stall check, raise
+    ``StreamStallError`` and preserve the partial so the next stream
+    can resume. The check sits in the loop body so it fires for any
+    gap between chunks (the ``httpx.read`` timeout only fires on
+    absolute silence from the server).
+    """
+    monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
+    target = tmp_path / "Stalled.mkv"
+
+    # Fast-forward the clock manually so the test does not actually
+    # sleep. The body of ``iter_bytes`` advances ``fake_now`` past
+    # ``stall_timeout`` on each yielded chunk, which is the gap the
+    # production code measures.
+    fake_now = {"value": 1000.0}
+
+    def fake_monotonic():
+        return fake_now["value"]
+
+    monkeypatch.setattr(stream_download.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(
+        stream_download.time, "sleep", lambda seconds: fake_now.__setitem__("value", fake_now["value"] + seconds)
+    )
+
+    class _TwoChunkResponse:
+        status_code = 200
+        headers = {"content-length": "100"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self, chunk_size=8192):
+            # First chunk arrives at t=1000.
+            yield b"a" * 32
+            # Simulate the network going idle for 30 s (longer than
+            # the 5 s ``stall_timeout`` we pass to the downloader).
+            fake_now["value"] += 30.0
+            # The next yield is the second chunk. The downloader
+            # checks the gap from the previous chunk (t=1000) to
+            # ``now`` (t=1030) at the top of this iteration, which
+            # is exactly 30 s — the stall check fires and the
+            # downloader raises ``StreamStallError`` before we even
+            # need the next ``yield`` to run.
+            yield b"b" * 32
+
+    monkeypatch.setattr(
+        stream_download.httpx,
+        "stream",
+        lambda *a, **kw: _TwoChunkResponse(),
+    )
+
+    with pytest.raises(stream_download.StreamStallError, match="No new bytes"):
+        stream_download.download_stream_to_file(
+            "https://example.test/stalled.mkv",
+            str(target),
+            stall_timeout=5.0,
+        )
+
+    # The .part must survive so the next run can resume from the
+    # 32 bytes we did receive.
+    assert (tmp_path / "Stalled.mkv.part").exists()
+    assert (tmp_path / "Stalled.mkv.part").stat().st_size == 32
+
+
+def test_download_stream_to_file_legacy_opt_out_still_truncates_partial(
+    tmp_path, monkeypatch
+):
+    """Setting ``preserve_partial_on_unsupported_range=False`` keeps
+    the legacy behaviour for callers that explicitly want to discard
+    the partial and re-download from byte zero. Documented but
+    discouraged.
+    """
+    monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
+    target = tmp_path / "Legacy.mkv"
+    partial = tmp_path / "Legacy.mkv.part"
+    partial.write_bytes(b"old-partial")
+
+    def fake_stream(method, url, **kwargs):
+        return FakeDownloadResponse(b"new-full-body", status_code=200)
+
+    monkeypatch.setattr(stream_download.httpx, "stream", fake_stream)
+
+    stream_download.download_stream_to_file(
+        "https://example.test/legacy.mkv",
+        str(target),
+        preserve_partial_on_unsupported_range=False,
+    )
+
+    # The .part was overwritten with the new body and renamed to the
+    # final file. The previous "old-partial" bytes are gone.
+    assert target.read_bytes() == b"new-full-body"
+    assert not partial.exists()
+
+
 def test_download_stream_to_file_rejects_tiny_response_before_writing(tmp_path, monkeypatch):
     monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100)
     target = tmp_path / "episode.mkv"
@@ -209,8 +352,10 @@ def test_download_stream_to_file_rejects_text_error_response(tmp_path, monkeypat
 def test_download_stream_to_file_translates_read_timeout_to_stall_error(tmp_path, monkeypatch):
     """When httpx's read timeout fires (the local torrent proxy has no
     peers and the body has stalled), ``download_stream_to_file`` must
-    raise ``StreamStallError`` and clean up the partial file instead
-    of hanging for the full 5-minute request timeout.
+    raise ``StreamStallError`` and preserve the partial file so the
+    next attempt can resume from the bytes we already received,
+    instead of hanging for the full 5-minute request timeout and
+    forcing the user to restart from zero.
 
     Regression: 90 Day Fiance S12E08 was stuck on "waiting for
     download" for many minutes because the local torrent proxy found
@@ -257,9 +402,131 @@ def test_download_stream_to_file_translates_read_timeout_to_stall_error(tmp_path
     # request timeout.
     assert captured_timeout["value"] is not None
     assert getattr(captured_timeout["value"], "read", None) == 0.5
-    # The partial file must be cleaned up so the user does not see a
-    # stale .part leftover after a stall.
-    assert not (tmp_path / "episode.mkv.part").exists()
+    # The .part file must SURVIVE the stall so the next attempt can
+    # resume from the 4096 bytes we did receive. Dropping the partial
+    # on every stall is what caused the user-reported "lost the last
+    # file ... now it is starting from 0" loop on 90 Day: The Single
+    # Life S03E13.
+    assert (tmp_path / "episode.mkv.part").exists()
+    assert (tmp_path / "episode.mkv.part").stat().st_size == len(first_chunk)
+
+
+def test_download_stream_to_file_preserves_existing_partial_on_text_error_response(
+    tmp_path, monkeypatch
+):
+    """Regression: an upstream that returns text/html (RD error page,
+    captcha wall, dead resolver) for a stream we were already
+    partially downloading must NOT cause the existing ``.part`` to be
+    wiped. The pre-fix code called ``_delete_invalid_download`` in the
+    pre-write response check, which unlinked the partial the user
+    had already paid bandwidth for. The fix leaves the ``.part`` on
+    disk so the next stream in the queue can resume it.
+    """
+    monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100)
+    target = tmp_path / "90 Day Single Life_s03e13.mkv"
+    partial = tmp_path / "90 Day Single Life_s03e13.mkv.part"
+    partial.write_bytes(b"previously-downloaded-bytes")
+
+    def fake_stream(method, url, **kwargs):
+        # status_code=206 so the existing partial is treated as a
+        # valid resume target (the server honoured the Range header
+        # but the body is an error page, not a video).
+        return FakeDownloadResponse(
+            b"<html>error</html>",
+            headers={"content-length": "17", "content-type": "text/html"},
+            status_code=206,
+        )
+
+    monkeypatch.setattr(stream_download.httpx, "stream", fake_stream)
+
+    with pytest.raises(stream_download.InvalidVideoDownloadError, match="text/html"):
+        stream_download.download_stream_to_file("https://example.test/error", str(target))
+
+    assert not target.exists()
+    assert partial.read_bytes() == b"previously-downloaded-bytes", (
+        "existing .part bytes must survive an invalid content-type response"
+    )
+
+
+def test_download_stream_to_file_preserves_existing_partial_on_tiny_response(
+    tmp_path, monkeypatch
+):
+    """Regression: a stream that advertises a Content-Length below
+    ``MIN_COMPLETED_VIDEO_SIZE_MB`` must not wipe the partial already
+    on disk. The next attempt will reuse the partial bytes instead
+    of forcing a full re-download.
+    """
+    monkeypatch.setattr(stream_download.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 100)
+    target = tmp_path / "episode.mkv"
+    partial = tmp_path / "episode.mkv.part"
+    partial.write_bytes(b"x" * 2048)
+
+    def fake_stream(method, url, **kwargs):
+        # status_code=206 so the range check passes and the
+        # content-length check is what triggers the failure.
+        return FakeDownloadResponse(
+            b"too small",
+            headers={"content-length": "8", "content-type": "video/mp4"},
+            status_code=206,
+        )
+
+    monkeypatch.setattr(stream_download.httpx, "stream", fake_stream)
+
+    with pytest.raises(stream_download.InvalidVideoDownloadError, match="only 2056 bytes"):
+        stream_download.download_stream_to_file("https://example.test/tiny", str(target))
+
+    assert not target.exists()
+    assert partial.stat().st_size == 2048, (
+        "existing .part bytes must survive a too-small response"
+    )
+
+
+def test_download_stream_to_file_preserves_existing_partial_on_content_length_mismatch(
+    tmp_path, monkeypatch
+):
+    """Regression: when the server promises more bytes than it sends
+    (premature close, spoofed Content-Length, truncated torrent
+    payload), the partial already on disk must be preserved so the
+    next attempt can resume. Pre-fix this code path also called
+    ``_delete_invalid_download`` and forced a restart from zero.
+    """
+    import threading
+    from py_stremio.components.download import stream_download as sd
+
+    monkeypatch.setattr(sd.settings, "MIN_COMPLETED_VIDEO_SIZE_MB", 0)
+    target = tmp_path / "90 Day Single Life_s03e13.mkv"
+    partial = tmp_path / "90 Day Single Life_s03e13.mkv.part"
+    partial.write_bytes(b"a" * 1024)
+
+    class _TruncatedResponse:
+        status_code = 206
+        headers = {"content-length": "10000", "content-type": "video/mp4"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self, chunk_size=8192):
+            # Server sends 2 KB then closes, well short of the 10 KB it promised.
+            yield b"b" * 2048
+
+    monkeypatch.setattr(sd.httpx, "stream", lambda *a, **kw: _TruncatedResponse())
+
+    with pytest.raises(sd.InvalidVideoDownloadError, match="sent only"):
+        sd.download_stream_to_file("https://example.test/truncated", str(target))
+
+    assert not target.exists()
+    assert partial.exists()
+    # The new bytes are appended on top of the previous 1024, so the
+    # .part grows to 1024 + 2048 = 3072 bytes.
+    assert partial.stat().st_size == 1024 + 2048, (
+        "existing .part bytes must survive a content-length mismatch"
+    )
 
 
 def test_parse_streams_extracts_hash_and_file_idx_from_torrentio_rd_proxy_url():

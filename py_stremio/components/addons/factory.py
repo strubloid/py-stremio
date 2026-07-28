@@ -25,6 +25,7 @@ from .types.builtin_addons import (
     DebridSearchAddon,
     DubbindoAddon,
     EinthusanAddon,
+    ExtAddon,
     FShareAddon,
     FTVStremioAddon,
     FenixFlixAddon,
@@ -149,6 +150,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(VidFastProAddon())
     manager.register(MyCineAddon())
     manager.register(NebulaStreamsAddon())
+    manager.register(ExtAddon())
 
     # ── Comet-family addons (base64 config) ──────────────────────────────
     manager.register(MeteorAddon())

@@ -1,7 +1,7 @@
 """Addon search and stream parsing helpers."""
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 from py_stremio.components.addons.base import BaseAddon
 from py_stremio.components.addons.models import StreamInfo
@@ -172,6 +172,7 @@ def search_working_addons_for_streams(
     type_: str,
     stremio_id: str,
     working_addons: list[str] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list, list[str]]:
     """Search the per-folder verified server cache only."""
     import py_stremio.components.addons as addons
@@ -181,13 +182,16 @@ def search_working_addons_for_streams(
         return [], []
 
     working_manager = addons.create_addon_manager_from_urls(working_urls)
-    return working_manager.search_all_addons_and_collect_working(type_, stremio_id)
+    return working_manager.search_all_addons_and_collect_working(
+        type_, stremio_id, on_progress=on_progress
+    )
 
 
 def search_remaining_addons_for_streams(
     type_: str,
     stremio_id: str,
     excluded_addons: list[str] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list, list[str]]:
     """Search all configured addons except the already-tried URLs."""
     import py_stremio.components.addons as addons
@@ -208,7 +212,9 @@ def search_remaining_addons_for_streams(
 
     if not manager.addons:
         return [], []
-    return manager.search_all_addons_and_collect_working(type_, stremio_id)
+    return manager.search_all_addons_and_collect_working(
+        type_, stremio_id, on_progress=on_progress
+    )
 
 
 def search_all_addons_for_streams(
@@ -217,6 +223,7 @@ def search_all_addons_for_streams(
     working_addons: list[str] | None = None,
     max_addons: int = 3,
     preferred_languages: list[str] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list, list[str]]:
     """Search known working addons first, then remaining configured addons.
 
@@ -226,16 +233,30 @@ def search_all_addons_for_streams(
     streams are found after exhausting all addons, a final pass returns
     *all* streams (unfiltered) as a last resort — this prevents blocking
     downloads entirely when no addon provides confirmed English subs.
+
+    ``on_progress`` is invoked as ``on_progress(done, total)`` after each
+    addon completes across both phases.  The callback receives cumulative
+    counts so the renderer's "Searching addons (X/Y)" stage indicator
+    can show the entire search as one continuous progress bar.
     """
     from py_stremio.components.download.stream_download import filter_for_english_subtitles
 
     need_english = _should_enforce_english(preferred_languages)
+
+    grand_total_estimate = 0
+    if working_addons:
+        grand_total_estimate = len(unique_manifest_urls(working_addons))
+    # Note: we cannot cheaply know the remaining-addon count up front
+    # (it depends on the configured addons), so the callback receives
+    # the phase-local total.  Callers that want a single grand total
+    # should build their own on_progress wrapper.
 
     # ── Phase 1: search working (cached) addons ──
     working_streams, working_urls = search_working_addons_for_streams(
         type_,
         stremio_id,
         working_addons,
+        on_progress=on_progress,
     )
 
     if need_english and working_streams:
@@ -248,6 +269,7 @@ def search_all_addons_for_streams(
         type_,
         stremio_id,
         excluded_addons=working_addons,
+        on_progress=on_progress,
     )
     all_urls = unique_manifest_urls([*working_urls, *remaining_urls])
 
@@ -341,6 +363,7 @@ def preflight_discover_working_addons(
     season: int | None = None,
     episode: int | None = None,
     imdb_id: str | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> PreflightResult:
     """Query ALL configured addons for one representative ID and classify
     them into alive / indeterminate / dead buckets.
@@ -375,6 +398,7 @@ def preflight_discover_working_addons(
     indeterminate: list[str] = []
     dead: list[str] = []
     result_lock = threading.Lock()
+    completed_count = 0
 
     from .cloudscraper_client import CloudscraperError
     from .rate_limiter import get_rate_limiter
@@ -433,6 +457,13 @@ def preflight_discover_working_addons(
                 url, status = future.result(timeout=timeout_per_addon + 5)
             except Exception:
                 url, status = None, "dead"
+
+            completed_count += 1
+            if on_progress is not None:
+                try:
+                    on_progress(completed_count, total)
+                except Exception:
+                    pass
 
             if not url:
                 continue

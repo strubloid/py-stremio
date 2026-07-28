@@ -1,6 +1,7 @@
 """Manager for searching registered Stremio addons."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+from typing import Callable
 
 from .base import BaseAddon, UrlAddon
 from .models import StreamInfo
@@ -47,23 +48,24 @@ class AddonManager:
         return []
 
     def search_all_addons_and_collect_working(
-        self, type_: str, id_: str
+        self,
+        type_: str,
+        id_: str,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[list[StreamInfo], list[str]]:
-        """Search ALL addons concurrently and return streams + working addon URLs."""
-        import itertools
-        import sys
+        """Search ALL addons concurrently and return streams + working addon URLs.
 
+        ``on_progress`` (optional) is invoked as ``on_progress(done, total)``
+        after each addon completes.  Callers use it to drive a per-episode
+        stage indicator on the progress line (e.g. the ``T`` block in
+        ``make_progress_printer``) instead of the old "Searching addons
+        (X/Y)" spinner that used to be printed directly to stdout.
+        """
         if not self.addons:
             return [], []
 
         total = len(self.addons)
-        is_tty = sys.stdout.isatty()
         done_count = 0
-
-        if is_tty:
-            spinner = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-        else:
-            spinner = None
 
         working_addon_urls: list[str] = []
         all_streams: list[StreamInfo] = []
@@ -82,10 +84,12 @@ class AddonManager:
                 if shutdown_requested():
                     break
                 done_count += 1
-                if is_tty and spinner:
-                    char = next(spinner)
-                    sys.stdout.write(f"\r    {char} Searching addons ({done_count}/{total})")
-                    sys.stdout.flush()
+                if on_progress is not None:
+                    try:
+                        on_progress(done_count, total)
+                    except Exception:
+                        # A buggy progress callback must never abort the search.
+                        pass
 
                 addon = futures[future]
                 try:
@@ -113,10 +117,6 @@ class AddonManager:
             raise
         else:
             executor.shutdown(wait=True)
-
-        # Clear spinner line
-        if is_tty:
-            print()
 
         return all_streams, working_addon_urls
 

@@ -112,7 +112,7 @@ class FakeManager:
     def __init__(self, addons):
         self.addons = addons
 
-    def search_all_addons_and_collect_working(self, type_, id_):
+    def search_all_addons_and_collect_working(self, type_, id_, **kwargs):
         all_streams = []
         working_urls = []
         for addon in self.addons:
@@ -210,7 +210,7 @@ def test_search_and_download_completes_for_s05e01(monkeypatch, tmp_path):
     monkeypatch.setattr(
         stremio_client,
         "search_all_addons_for_streams",
-        lambda id_type, stremio_id, working_addons, preferred_languages=None: (
+        lambda id_type, stremio_id, working_addons, preferred_languages=None, **kw: (
             streams,
             ["https://torrentio.strem.fun"],
         ),
