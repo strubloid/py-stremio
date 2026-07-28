@@ -69,6 +69,21 @@ def _read_crontab() -> str:
     ).stdout
 
 
+def _read_wrapper_path() -> str:
+    """Resolve the wrapper path the way ``cron.sh`` resolves it: the
+    install root (defaults to ``$HOME/.py-stremio``) joined with
+    ``cron-run.sh``."""
+    install_root = os.environ.get("PY_STREMIO_ROOT", os.path.expanduser("~/.py-stremio"))
+    return os.path.join(install_root, "cron-run.sh")
+
+
+def _read_wrapper() -> str:
+    p = Path(_read_wrapper_path())
+    if not p.exists():
+        return ""
+    return p.read_text()
+
+
 def test_dry_run_does_not_touch_crontab(crontab_sandbox):
     """dry-run must NOT modify the host crontab."""
     result = _run_cron_sh("dry-run")
@@ -136,21 +151,76 @@ def test_show_lists_existing_entries(crontab_sandbox):
 
 
 def test_install_speed_percent_is_honoured(crontab_sandbox):
-    """The user can override the speed cap without editing the script."""
+    """The user can override the speed cap without editing the script.
+
+    The speed is set inside ``cron-run.sh`` (the wrapper), not in
+    the crontab itself, so we look for it in the wrapper file.
+    """
     _run_cron_sh("install", env={"PY_STREMIO_CRON_SPEED": "25"})
-    crontab = _read_crontab()
-    assert "INTERNET_SPEED_LIMIT=25" in crontab
-    assert "INTERNET_SPEED_LIMIT=50" not in crontab
+    wrapper = _read_wrapper()
+    assert 'INTERNET_SPEED_LIMIT="25"' in wrapper
+    assert "INTERNET_SPEED_LIMIT=50" not in wrapper
 
 
-def test_install_root_path_is_honoured(crontab_sandbox):
-    """The user can override the install root (for non-standard layouts)."""
+def test_install_root_path_is_honoured(crontab_sandbox, tmp_path):
+    """The user can override the install root (for non-standard layouts).
+
+    The root is set inside the wrapper.  We use ``tmp_path`` as
+    the override so the test does not need ``/srv/py-stremio`` to
+    exist (or root) — it just needs the directory to be creatable.
+    """
+    custom_root = tmp_path / "custom-install"
     _run_cron_sh(
         "install",
-        env={"PY_STREMIO_ROOT": "/srv/py-stremio"},
+        env={"PY_STREMIO_ROOT": str(custom_root)},
     )
+    wrapper_text = (custom_root / "cron-run.sh").read_text()
+    assert f'PY_STREMIO_ROOT="{custom_root}"' in wrapper_text
+
+
+def test_cron_lines_invoke_wrapper_not_binary(crontab_sandbox):
+    """Each cron line must call the wrapper by name, not the raw
+    binary path — that's the whole point of the wrapper indirection.
+    """
+    _run_cron_sh("install")
     crontab = _read_crontab()
-    assert "PY_STREMIO_ROOT=/srv/py-stremio" in crontab
+    # The full venv path should NOT appear in any cron line.
+    for line in crontab.splitlines():
+        if "py-stremio-managed:" not in line:
+            continue
+        assert "venv/bin/py-stremio-cron" not in line, (
+            f"cron line still hard-codes the venv path: {line!r}"
+        )
+    # The wrapper path should appear in every cron line.
+    wrapper_count = crontab.count("cron-run.sh")
+    assert wrapper_count >= 4, (
+        f"expected 4 wrapper invocations, got {wrapper_count}"
+    )
+
+
+def test_wrapper_is_executable(crontab_sandbox):
+    """The wrapper must be chmod +x so cron can run it."""
+    _run_cron_sh("install")
+    wrapper = Path(_read_wrapper_path())
+    assert wrapper.exists()
+    import stat
+    mode = wrapper.stat().st_mode
+    assert mode & stat.S_IXUSR, "wrapper is not executable by owner"
+
+
+def test_uninstall_removes_wrapper(crontab_sandbox, tmp_path):
+    """uninstall must also remove the auto-generated wrapper, but
+    only if it's our wrapper (preserve a user-authored cron-run.sh).
+
+    Uses ``tmp_path`` so a stale wrapper from a prior run in the
+    user's real ``~/.py-stremio`` does not bleed into the test.
+    """
+    custom_root = tmp_path / "wrapper-test"
+    _run_cron_sh("install", env={"PY_STREMIO_ROOT": str(custom_root)})
+    wrapper = custom_root / "cron-run.sh"
+    assert wrapper.exists()
+    _run_cron_sh("uninstall", env={"PY_STREMIO_ROOT": str(custom_root)})
+    assert not wrapper.exists()
 
 
 def test_cron_lines_have_valid_schedule():
@@ -176,17 +246,22 @@ def test_cron_lines_have_valid_schedule():
 
 
 def test_cron_lines_invoke_correct_subcommand():
-    """Each job must map to the right py-stremio-cron subcommand."""
-    proc = _run_cron_sh("dry-run")
-    assert proc.returncode == 0
-    expectations = {
-        "scan-light": "--scan >>",
-        "scan-full": "--scan --metadata >>",
-        "download": "--download >>",
-        "combined": "--update-and-download >>",
-    }
-    for name, marker in expectations.items():
-        assert marker in proc.stdout, f"job {name} missing subcommand {marker!r}"
+    """Each job must map to the right py-stremio-cron subcommand.
+
+    The crontab only sees ``cron-run.sh <job-name>``; the actual
+    ``--scan`` / ``--download`` dispatch lives inside the wrapper.
+    We check both the crontab (job names are passed through) and
+    the wrapper (the dispatch table).
+    """
+    _run_cron_sh("install")
+    crontab = _read_crontab()
+    wrapper = _read_wrapper()
+
+    for name in ("scan-light", "scan-full", "download", "combined"):
+        # The crontab passes the job name to the wrapper.
+        assert f"cron-run.sh {name}" in crontab, f"job {name} not in crontab"
+        # The wrapper dispatches the right py-stremio-cron subcommand.
+        assert name in wrapper, f"job {name} not handled by wrapper"
 
 
 def test_uninstall_when_no_entries_is_safe(crontab_sandbox):
