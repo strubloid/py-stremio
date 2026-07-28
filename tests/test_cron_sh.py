@@ -275,3 +275,45 @@ def test_show_with_no_entries_reports_cleanly(crontab_sandbox):
     result = _run_cron_sh("show")
     assert result.returncode == 0
     assert "no py-stremio cron entries" in result.stdout
+
+
+def test_validate_runs_quickly(crontab_sandbox):
+    """validate must NOT hang on a slow ``--show-config`` probe.
+
+    A network-share client often sees the binary's import take
+    10+ seconds (it loads the full py-stremio module plus all the
+    addons).  The probe is wrapped in a 2s timeout so the user
+    gets fast feedback on whether their install is usable.
+    """
+    import time
+    started = time.monotonic()
+    result = _run_cron_sh("validate")
+    elapsed = time.monotonic() - started
+    assert result.returncode == 0, result.stderr
+    assert elapsed < 5, f"validate took {elapsed:.1f}s — probe is not time-bounded"
+    # The validate output must include the install plan so the user
+    # can confirm where everything will land.
+    assert "install root" in result.stdout
+    assert "wrapper" in result.stdout
+    assert "ROOT_FOLDER" in result.stdout
+
+
+def test_validate_does_not_modify_crontab(crontab_sandbox):
+    """validate is read-only — must not touch the crontab or the wrapper."""
+    _run_cron_sh("validate")
+    assert _read_crontab().strip() == ""
+    # No wrapper should be created by validate.
+    assert not Path(_read_wrapper_path()).exists()
+
+
+def test_no_validate_skips_root_folder_probe(crontab_sandbox):
+    """--no-validate skips the slow --show-config probe entirely."""
+    import time
+    started = time.monotonic()
+    result = _run_cron_sh("validate", "--no-validate")
+    elapsed = time.monotonic() - started
+    assert result.returncode == 0
+    # The ROOT_FOLDER row is the one that requires the probe.  When
+    # --no-validate is set, the row is omitted from the output.
+    assert "ROOT_FOLDER" not in result.stdout
+    assert elapsed < 3, f"validate --no-validate took {elapsed:.1f}s"
