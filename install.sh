@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# py-stremio installer — sets up the app, venv, and entry points.
+# py-stremio installer — installs the source tree you already have on disk.
 #
 # Usage:
-#   ./install.sh                # full install into ~/.py-stremio with a venv
-#   ./install.sh --user         # install into the current user's home (default)
-#   ./install.sh --system       # install into /opt/py-stremio (requires sudo)
-#   ./install.sh --no-venv      # use the system Python (not recommended)
-#   ./install.sh --with-cloudflare
-#   ./install.sh --uninstall
+#   ./install.sh                     # install from the current dir (default)
+#   ./install.sh --user              # install into ~/.py-stremio (default)
+#   ./install.sh --system            # install into /opt/py-stremio (needs sudo)
+#   ./install.sh --no-venv           # use the system Python (not recommended)
+#   ./install.sh --with-cloudflare   # install tls_client + cloudscraper too
+#   ./install.sh --uninstall         # undo a previous install
 #
-# Re-running is safe — the script is idempotent.  An existing venv is reused
-# unless --recreate-venv is passed.
+# Bring the source to the target machine however you like (clone, scp,
+# USB stick, tarball, whatever) and then run this script from inside the
+# checkout.  The script does NOT pull code from anywhere — it installs
+# whatever is in the current directory.
+#
+# Re-running is safe — the script is idempotent.  An existing venv is
+# reused unless --recreate-venv is passed.
 set -euo pipefail
 
 # ── Defaults ──────────────────────────────────────────────────────────────
@@ -19,8 +24,7 @@ USE_VENV=1
 INSTALL_CLOUDFLARE=0
 ACTION="install"
 RECREATE_VENV=0
-BRANCH="${PY_STREMIO_BRANCH:-main}"
-REPO="${PY_STREMIO_REPO:-https://github.com/anomalyco/opencode.git}"
+SOURCE_DIR="$(pwd)"
 
 # ── Pretty output ────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -49,7 +53,7 @@ require_cmd() {
 }
 
 usage() {
-    sed -n '2,16p' "$0"
+    sed -n '2,17p' "$0"
     exit 0
 }
 
@@ -62,8 +66,6 @@ while [[ $# -gt 0 ]]; do
         --with-cloudflare) INSTALL_CLOUDFLARE=1; shift ;;
         --uninstall)       ACTION="uninstall"; shift ;;
         --recreate-venv)   RECREATE_VENV=1; shift ;;
-        --branch)          BRANCH="$2"; shift 2 ;;
-        --repo)            REPO="$2"; shift 2 ;;
         -h|--help)         usage ;;
         *) err "unknown argument: $1"; usage ;;
     esac
@@ -125,34 +127,14 @@ PKG_MGR="$(detect_pkg_manager)"
 
 suggest_install_python() {
     case "$PKG_MGR" in
-        apt)    warn "try:  ${SUDO} apt install -y python3 python3-venv python3-pip git" ;;
-        dnf|yum) warn "try:  ${SUDO} $PKG_MGR install -y python3 python3-venv python3-pip git" ;;
-        pacman) warn "try:  ${SUDO} pacman -S --needed python python-pip git" ;;
-        apk)    warn "try:  ${SUDO} apk add python3 py3-pip py3-venv git" ;;
-        brew)   warn "try:  brew install python git" ;;
-        *)      warn "install Python 3.10+ and git manually, then re-run" ;;
+        apt)    warn "try:  ${SUDO} apt install -y python3 python3-venv python3-pip" ;;
+        dnf|yum) warn "try:  ${SUDO} $PKG_MGR install -y python3 python3-venv python3-pip" ;;
+        pacman) warn "try:  ${SUDO} pacman -S --needed python python-pip" ;;
+        apk)    warn "try:  ${SUDO} apk add python3 py3-pip py3-venv" ;;
+        brew)   warn "try:  brew install python" ;;
+        *)      warn "install Python 3.10+ manually, then re-run" ;;
     esac
 }
-
-# ── Check prerequisites ──────────────────────────────────────────────────
-hr
-info "checking prerequisites"
-
-if ! command -v git >/dev/null 2>&1; then
-    err "git is required but not installed"
-    suggest_install_python
-    exit 1
-fi
-ok "git is available"
-
-if ! "$PYTHON_BIN" -c 'import venv' >/dev/null 2>&1; then
-    err "python venv module is missing"
-    err "on Debian/Ubuntu install it with:  ${SUDO} apt install -y python3-venv"
-    err "on Fedora/RHEL:                    ${SUDO} dnf install -y python3-virtualenv"
-    suggest_install_python
-    exit 1
-fi
-ok "python venv module is available"
 
 # ── Uninstall path ──────────────────────────────────────────────────────
 if [[ "$ACTION" == "uninstall" ]]; then
@@ -174,7 +156,22 @@ if [[ "$ACTION" == "uninstall" ]]; then
     exit 0
 fi
 
-# ── Install path ─────────────────────────────────────────────────────────
+# ── Verify the source on disk ───────────────────────────────────────────
+hr
+if [[ ! -f "$SOURCE_DIR/pyproject.toml" ]]; then
+    err "no pyproject.toml in $SOURCE_DIR"
+    err "run this script from inside the py-stremio checkout"
+    err "(cd /path/to/py-stremio && ./install.sh)"
+    exit 1
+fi
+if ! grep -q '^name = "py-stremio"' "$SOURCE_DIR/pyproject.toml" 2>/dev/null; then
+    err "pyproject.toml in $SOURCE_DIR does not name 'py-stremio'"
+    err "are you sure this is the right directory?"
+    exit 1
+fi
+ok "source: ${SOURCE_DIR}"
+
+# ── Install target summary ──────────────────────────────────────────────
 hr
 info "install target"
 printf '  %s%-12s%s %s\n' "$C_BOLD" "prefix"     "$C_RESET" "$INSTALL_ROOT"
@@ -184,21 +181,28 @@ printf '  %s%-12s%s %s\n' "$C_BOLD" "pkg manager" "$C_RESET" "$PKG_MGR"
 printf '  %s%-12s%s %s\n' "$C_BOLD" "venv"       "$C_RESET" "$([[ $USE_VENV -eq 1 ]] && echo yes || echo no)"
 printf '  %s%-12s%s %s\n' "$C_BOLD" "cloudflare" "$C_RESET" "$([[ $INSTALL_CLOUDFLARE -eq 1 ]] && echo yes || echo no)"
 
-# ── Acquire source ───────────────────────────────────────────────────────
+# ── Sync source into the install prefix ─────────────────────────────────
 hr
-if [[ ! -d "$INSTALL_ROOT/.git" ]]; then
-    info "cloning ${REPO} (branch: ${BRANCH}) → ${INSTALL_ROOT}"
-    $SUDO mkdir -p "$(dirname "$INSTALL_ROOT")"
-    $SUDO git clone --depth 1 --branch "$BRANCH" "$REPO" "$INSTALL_ROOT"
-    ok "cloned to ${INSTALL_ROOT}"
+info "syncing source ${SOURCE_DIR} → ${INSTALL_ROOT}"
+$SUDO mkdir -p "$INSTALL_ROOT"
+if command -v rsync >/dev/null 2>&1; then
+    $SUDO rsync -a --delete \
+        --exclude='.git/' --exclude='__pycache__/' --exclude='*.pyc' \
+        --exclude='venv/' --exclude='.env' --exclude='addons/addons.txt' \
+        --exclude='addons/experimental.txt' --exclude='downloads/' \
+        --exclude='*.part' --exclude='*.swp' --exclude='.pytest_cache/' \
+        "$SOURCE_DIR/" "$INSTALL_ROOT/"
 else
-    info "updating existing clone in ${INSTALL_ROOT}"
-    pushd "$INSTALL_ROOT" >/dev/null
-    $SUDO git fetch --depth 1 origin "$BRANCH"
-    $SUDO git reset --hard "origin/${BRANCH}"
-    popd >/dev/null
-    ok "updated to latest ${BRANCH}"
+    $SUDO rm -rf "$INSTALL_ROOT"
+    $SUDO mkdir -p "$INSTALL_ROOT"
+    $SUDO tar -C "$SOURCE_DIR" \
+        --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
+        --exclude='venv' --exclude='.env' --exclude='addons/addons.txt' \
+        --exclude='addons/experimental.txt' --exclude='downloads' \
+        --exclude='*.part' --exclude='*.swp' --exclude='.pytest_cache' \
+        -cf - . | $SUDO tar -C "$INSTALL_ROOT" -xf -
 fi
+ok "synced source into ${INSTALL_ROOT}"
 
 # ── Create / refresh venv ───────────────────────────────────────────────
 VENV_DIR="$INSTALL_ROOT/venv"
@@ -225,14 +229,27 @@ else
     warn "you may need to use 'pip install --user' or '${SUDO} pip install' below"
 fi
 
+# ── Check prerequisites ──────────────────────────────────────────────────
+hr
+info "checking prerequisites"
+
+if ! "$PYTHON" -c 'import venv' >/dev/null 2>&1; then
+    err "python venv module is missing"
+    err "on Debian/Ubuntu install it with:  ${SUDO} apt install -y python3-venv"
+    err "on Fedora/RHEL:                    ${SUDO} dnf install -y python3-virtualenv"
+    suggest_install_python
+    exit 1
+fi
+ok "python venv module is available"
+
 # ── Install the package + runtime deps ──────────────────────────────────
 hr
 info "installing py-stremio + runtime dependencies"
 $SUDO "$PIP" install --upgrade pip >/dev/null
 
-# Editable install so `git pull && restart` picks up code changes.
+# Editable install so re-syncing the source picks up code changes.
 $SUDO "$PIP" install -e "$INSTALL_ROOT"
-ok "installed py-stremio (editable)"
+ok "installed py-stremio (editable) from ${INSTALL_ROOT}"
 
 if [[ $INSTALL_CLOUDFLARE -eq 1 ]]; then
     info "installing optional Cloudflare bypass dependencies"
@@ -309,7 +326,8 @@ fi
 # ── Done ────────────────────────────────────────────────────────────────
 hr
 printf '%s%sInstallation complete!%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
-printf '  source:    %s\n' "$INSTALL_ROOT"
+printf '  source:    %s\n' "$SOURCE_DIR"
+printf '  installed: %s\n' "$INSTALL_ROOT"
 printf '  bin:       %s\n' "$BIN_DIR/py-stremio"
 printf '  cron bin:  %s\n' "$BIN_DIR/py-stremio-cron"
 printf '  config:    %s/.env   %s<- edit to add REAL_DEBRID_API_KEY%s\n' \
