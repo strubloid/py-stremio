@@ -136,15 +136,22 @@ declare -A JOBS=(
 # keeps the crontab lines short, readable, and easy to move: if the
 # user ever relocates the project, they only have to update one
 # wrapper path instead of every cron line.
+#
+# IMPORTANT: the marker comment is on its OWN line above the entry,
+# not embedded in the command.  A ``#`` in the middle of a cron
+# line is part of the command text, and ``sh -c`` treats everything
+# after ``#`` as a comment — which would silently make the wrapper
+# never run.  The standalone comment line keeps cron happy AND
+# makes uninstall / show work.
 build_cron_line() {
     local name="$1"
     local schedule="$2"
     local subcmd="$3"
     local log_file="$LOG_DIR/${name}.log"
     mkdir -p "$LOG_DIR"
-    printf '%s %s [%s] %s %s >> %s 2>&1\n' \
+    printf '%s [%s] %s\n' "$CRON_MARKER" "$name" "$subcmd"
+    printf '%s %s %s >> %s 2>&1\n' \
         "$schedule" \
-        "$CRON_MARKER" "$name" \
         "$WRAPPER_PATH" \
         "$name" \
         "$log_file"
