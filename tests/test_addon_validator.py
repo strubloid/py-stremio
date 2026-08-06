@@ -338,13 +338,13 @@ class TestUrlAddonRDInjection:
     """UrlAddon.get_url(api_key) injects RealDebrid key for known addons."""
 
     def test_intell_debridsearch_injection(self):
-        """intell-debridsearch URL gets /realdebrid=KEY/ appended via UrlAddon
-        injector (server-URL path)."""
+        """intell-debridsearch addon is DISABLED — URL stays as-is, no injection."""
         from py_stremio.components.addons.base import UrlAddon
 
         addon = UrlAddon("https://intell-debridsearch.nepiraw.com")
+        assert not addon.enabled
         result = addon.get_url("TESTKEY123")
-        assert result == "https://intell-debridsearch.nepiraw.com/realdebrid=TESTKEY123/"
+        assert result == "https://intell-debridsearch.nepiraw.com"
 
     def test_nyaa_scraper_injection(self):
         """nyaa-scraper URL gets source=nyaa&rd=KEY&v=1.9.1/ appended."""
@@ -521,10 +521,11 @@ class TestCreateAddonManager:
 
         # Torrentio sort=seeders and MediaFusion should be covered by built-ins
         # (their host matches a built-in addon)
-        # intell-debridsearch has no built-in, so it should be present
+        # intell-debridsearch has no built-in but its configurer is disabled
+        # so it's skipped by the UrlAddon.enabled check
         assert any("torrentio.strem.fun" in u for u in addon_urls)
         assert any("mediafusion.elfhosted.com" in u for u in addon_urls)
-        assert any("intell-debridsearch.nepiraw.com" in u for u in addon_urls)
+        assert not any("intell-debridsearch.nepiraw.com" in u for u in addon_urls)
 
     def test_addon_api_key_set_on_all_addons(self, monkeypatch):
         """Every addon gets the RD api_key assigned."""

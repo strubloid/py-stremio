@@ -37,7 +37,6 @@ class SootioAddonConfigurer(AddonUrlConfigurer):
                 "knaben",
                 "torrents-csv",
                 "rarbg",
-                "extto",
                 "limetorrents",
             ],
             "IndexerScrapers": ["stremthru"],

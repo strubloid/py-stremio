@@ -139,6 +139,7 @@ def _print_resolved_config() -> None:
     print(f"    MAX_DOWNLOAD_ATTEMPTS = {settings.MAX_DOWNLOAD_ATTEMPTS}")
     print(f"    MIN_COMPLETED_VIDEO_SIZE_MB = {settings.MIN_COMPLETED_VIDEO_SIZE_MB}")
     print(f"    DOWNLOAD_STALL_TIMEOUT = {settings.DOWNLOAD_STALL_TIMEOUT}")
+    print(f"    VALIDATE_DOWNLOAD_STRUCTURE = {settings.VALIDATE_DOWNLOAD_STRUCTURE}")
     print(f"    METADATA_CACHE_HOURS = {settings.METADATA_CACHE_HOURS}")
     print(f"    TORRENT_PROXY_URL    = {settings.TORRENT_PROXY_URL or '<unset>'}")
     print(f"    SMTP configured      = {settings.smtp_configured}")

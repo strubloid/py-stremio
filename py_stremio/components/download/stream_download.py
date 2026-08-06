@@ -1098,7 +1098,96 @@ def _validate_response_before_download(response, file_path, partial_path, total_
         )
 
 
-def _validate_completed_file(file_path, partial_path) -> None:
+def _validate_video_structure(file_path) -> bool:
+    """Check if the downloaded video file is structurally valid using ffprobe.
+
+    Reads only the file headers (not the full decoded content), so
+    validation is fast even for multi-GB files.  Returns ``True``
+    when the file opens cleanly in ffprobe with a positive duration.
+
+    When ffprobe is not available, falls back to basic container
+    header checking and logs a warning — files are accepted but the
+    user is advised to install ffmpeg for thorough validation.
+
+    Returns:
+        True if the file appears structurally sound, False if
+        truncated or corrupted.
+    """
+    import subprocess
+    import shutil
+
+    if not getattr(settings, "VALIDATE_DOWNLOAD_STRUCTURE", True):
+        return True
+
+    ffprobe_path = shutil.which("ffprobe")
+    if not ffprobe_path:
+        # ffprobe not available — log a single warning and pass
+        # through so the download is not blocked.
+        import warnings as _w
+
+        _w.warn(
+            "ffprobe not found on PATH; downloaded files will not be "
+            "validated for structural integrity. Install ffmpeg for "
+            "automatic download verification (apt install ffmpeg).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return True
+
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        # Large files on slow I/O — skip validation rather than fail
+        return True
+    except FileNotFoundError:
+        # ffprobe was deleted between the which() check and the run()
+        return True
+    except OSError:
+        # Permission error, filesystem issue, etc.
+        return True
+
+    if result.returncode != 0:
+        return False
+
+    stderr = result.stderr.strip()
+    if stderr:
+        return False
+
+    stdout = result.stdout.strip()
+    if not stdout:
+        return False
+
+    # Validate duration string is non-empty and non-zero
+    duration_str = stdout.strip()
+    if not duration_str or duration_str == "N/A":
+        return False
+
+    # Try to parse duration — if it's valid (> 0), the file is OK
+    try:
+        duration_s = float(duration_str)
+        if duration_s <= 0:
+            return False
+    except (ValueError, IndexError):
+        return False
+
+    return True
+
+
+def _validate_completed_file(file_path, partial_path, check_structure=False) -> None:
     actual_size = file_path.stat().st_size
     min_bytes = _minimum_completed_video_bytes()
     if min_bytes > 0 and actual_size < min_bytes:
@@ -1106,6 +1195,13 @@ def _validate_completed_file(file_path, partial_path) -> None:
         raise InvalidVideoDownloadError(
             f"Downloaded file is only {actual_size} bytes "
             f"(min {min_bytes} bytes for a complete video)"
+        )
+
+    if check_structure and not _validate_video_structure(file_path):
+        _delete_invalid_download(file_path, partial_path)
+        raise InvalidVideoDownloadError(
+            f"Downloaded file failed structural validation — "
+            f"likely truncated or corrupted"
         )
 
 
@@ -1147,6 +1243,15 @@ def download_stream_to_file(
     headers = {"Range": f"bytes={existing_size}-"} if existing_size else {}
     active_thread_id = thread_id if thread_id is not None else threading.get_ident()
     registered_here = False
+
+    # Track whether the HTTP response body completeness can be verified
+    # through protocol means (Content-Length/Range header or chunked
+    # encoding with the 0-length terminator). When neither is present,
+    # the response body is terminated by connection close, and we
+    # cannot tell if the server sent all the data or closed mid-stream.
+    # In that case structural validation via ffprobe is needed.
+    response_body_known_complete = False
+    transfer_encoding = ""
 
     if bandwidth_limiter and hasattr(bandwidth_limiter, "register_thread"):
         is_registered = False
@@ -1196,6 +1301,13 @@ def download_stream_to_file(
             mode = "ab" if resumed else "wb"
             downloaded = existing_size if resumed else 0
             total_size = _total_size_from_headers(response.headers, downloaded)
+
+            # Determine if the response body is reliably complete
+            transfer_encoding = response.headers.get("transfer-encoding", "").lower()
+            response_body_known_complete = (
+                total_size > 0 or "chunked" in transfer_encoding
+            )
+
             _validate_response_before_download(response, file_path, partial_path, total_size)
 
             if progress_callback:
@@ -1272,7 +1384,11 @@ def download_stream_to_file(
     # propagating, preventing it from surviving a retry failure.
     try:
         partial_path.replace(file_path)
-        _validate_completed_file(file_path, partial_path)
+        _validate_completed_file(
+            file_path,
+            partial_path,
+            check_structure=not response_body_known_complete,
+        )
     except InvalidVideoDownloadError:
         _delete_invalid_download(file_path, partial_path)
         raise

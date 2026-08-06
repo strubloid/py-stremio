@@ -291,6 +291,8 @@ ELSE
 | LIMIT_EPISODES | 0 | Max episodes per run (0=unlimited) |
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min size for valid completed file |
 | DOWNLOAD_THREADS | 2 | Parallel download workers |
+| DOWNLOAD_STALL_TIMEOUT | 60 | Per-chunk stall timeout (seconds) before aborting |
+| VALIDATE_DOWNLOAD_STRUCTURE | true | When true, run ffprobe structural validation after download |
 | PREFERRED_LANGUAGES | `english` | Default only for new series-season configs; movie metadata sets movie languages |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
 | INTERNET_MAX_SPEED_MBPS | auto-detected once; fallback 100 | Max Mbps for bandwidth calculation; if missing from env/.env, a short speed probe appends the measured value to .env |
