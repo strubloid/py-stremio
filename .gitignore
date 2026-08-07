@@ -223,3 +223,6 @@ __marimo__/
 
 # Runtime error log (auto-generated, always gitignored)
 errors.md
+
+## generated addon index file (auto-generated, always gitignored)
+.addon_index.json

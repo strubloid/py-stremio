@@ -1,4 +1,5 @@
 """MetadataService — enrich series folders with Cinemeta/IMDb metadata."""
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
@@ -16,6 +17,24 @@ from py_stremio.utils.cancellation import clear_shutdown, request_shutdown, shut
 
 def _c(text: str, color: str) -> str:
     return f"{color}{text}{RESET}"
+
+
+def _format_duration(seconds: float) -> str:
+    """Format a duration in seconds into a human-readable string.
+
+    Examples:
+        0.4    -> "0.4s"
+        3.2    -> "3.2s"
+        65     -> "1m 5s"
+        3725   -> "1h 2m 5s"
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h {mins}m {secs}s"
 
 
 _METADATA_WORKERS = 4
@@ -39,6 +58,7 @@ class MetadataService:
         movie_folders = [f for f in folders if f.folder_type == FolderType.MOVIES]
 
         # ── Series metadata ────────────────────────────────────────────────
+        series_start = time.monotonic()
         if len(series_folders) > 1:
             executor = ThreadPoolExecutor(max_workers=min(_METADATA_WORKERS, len(series_folders)))
             future_map = {}
@@ -81,8 +101,10 @@ class MetadataService:
                     from py_stremio.components.errors import report_error
 
                     report_error(context="metadata_update_series_seq", exception=e, url=str(folder.path / 'download-config.json'))
+        series_elapsed = time.monotonic() - series_start
 
         # ── Movie metadata ──────────────────────────────────────────────────
+        movie_start = time.monotonic()
         for folder in movie_folders:
             if shutdown_requested():
                 break
@@ -94,6 +116,7 @@ class MetadataService:
                 from py_stremio.components.errors import report_error
 
                 report_error(context="metadata_update_movie", exception=e, url=str(folder.path / 'download-config.json'))
+        movie_elapsed = time.monotonic() - movie_start
 
         if not quiet and rows:
             print()
@@ -104,7 +127,11 @@ class MetadataService:
             ))
 
         if not quiet:
-            print(_c(f"  ✓ Metadata refresh complete ({updated} updated)", GREEN))
+            # Show total elapsed time for the metadata refresh so the
+            # user can see how long the "Update library" step took.
+            total_elapsed = series_elapsed + movie_elapsed
+            duration = _format_duration(total_elapsed)
+            print(_c(f"  ✓ Metadata refresh complete ({updated} updated) in {duration}", GREEN))
         return updated
 
     def _update_folder_metadata(self, folder, quiet: bool, use_cache: bool = False) -> tuple[bool, list[str] | None]:

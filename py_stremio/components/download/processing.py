@@ -469,13 +469,15 @@ def _do_download_one_episode(
                 save_config(task.config_path, task.config)
     active_servers = [s for s in task.servers if s not in bad_servers]
 
-    # Preflight has already searched every configured addon for this exact
-    # show/season/episode. With no usable result, another full search for every
-    # missing episode only multiplies timeouts and rate-limit cooldowns —
-    # UNLESS the zero-result was due to rate-limit saturation, in which
-    # case a per-episode re-search is the only way to escape the bad
-    # state without waiting for the next process.
-    skip_full = task.no_working_addons and not task.preflight_indeterminate
+    # Preflight has searched the addon list for the first missing episode. If
+    # preflight returned zero working addons, we must NOT skip the per-episode
+    # full search — preflight is just a smoke test and the actual per-episode
+    # search uses the precise IMDb/season/episode context. Skipping here was
+    # the primary reason downloads failed when no addon survived the preflight.
+    # We only skip the redundant full search when preflight found actual
+    # working addons (then the per-folder cache is already populated and
+    # re-querying every addon is wasted work).
+    skip_full = task.no_working_addons is False and bool(active_servers)
 
     # Mark the episode as in-progress so an interrupted run (Ctrl+C,
     # crash, OOM) is resumed on the next start. Use the existing

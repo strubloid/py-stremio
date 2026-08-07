@@ -316,9 +316,15 @@ def test_season_folder_with_dead_preflight_does_skip_search(tmp_path, monkeypatc
     processing.process_season_folder(tmp_path, max_workers=1)
 
     assert skip_flags
-    assert all(flag is True for flag in skip_flags), (
-        "When the preflight finds only dead addons, skip_full_search must "
-        "stay True to avoid burning 30+ seconds per missing episode."
+    # When the preflight finds only dead addons, we still must run a full
+    # per-episode search (skip_full_search=False) — preflight is just a
+    # smoke test using a generic ID, and the actual per-episode search uses
+    # the exact IMDb/season/episode context. Skipping here was the root
+    # cause of "no streams found" when the per-folder cache was empty.
+    assert all(flag is False for flag in skip_flags), (
+        "When the preflight finds only dead addons, the per-episode full "
+        "search must still run (skip_full_search=False) so the actual "
+        "IMDb/season/episode context gets a chance to find streams."
     )
 
 

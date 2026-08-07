@@ -2,9 +2,10 @@
 from py_stremio.components import application
 
 
-def test_menu_choice_three_updates_library(monkeypatch, capsys):
+def test_menu_choice_two_updates_library(monkeypatch, capsys):
+    """Menu option 2 = Update library only (no downloads)."""
     calls = []
-    answers = iter(["3", "8"])
+    answers = iter(["2", "5"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -21,14 +22,15 @@ def test_menu_choice_three_updates_library(monkeypatch, capsys):
     assert calls == ["scan", "metadata"]
     output = capsys.readouterr().out
     assert "Py-Stremio" in output
-    assert "3" in output
+    assert "2" in output
     assert "Update library" in output
 
 
 def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch):
+    """Menu option 1 = Download (does scan + metadata + download)."""
     calls = []
     folders = [object()]
-    answers = iter(["1", "4", "55", "8"])
+    answers = iter(["1", "4", "55", "5"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -47,19 +49,16 @@ def test_menu_choice_one_uses_combined_library_sync_before_download(monkeypatch)
     assert calls[1] == ("download", folders, True, 4, 55)
 
 
-def test_menu_choice_two_updates_library_then_downloads(monkeypatch):
+def test_menu_choice_one_combined_download(monkeypatch):
+    """Menu option 1 = combined download (no separate update step needed)."""
     calls = []
     folders = [object()]
-    answers = iter(["2", "4", "60", "8"])
+    answers = iter(["1", "4", "60", "5"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
-        "py_stremio.services.scanner.ScanService.run",
-        lambda self: calls.append("scan") or folders,
-    )
-    monkeypatch.setattr(
-        "py_stremio.services.metadata.MetadataService.run",
-        lambda self, folders=None, quiet=False, **kwargs: calls.append(("metadata", folders)),
+        "py_stremio.services.scanner.ScanService.run_with_metadata",
+        lambda self, metadata, quiet=False: calls.append(("library-sync", metadata)) or folders,
     )
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
@@ -68,16 +67,20 @@ def test_menu_choice_two_updates_library_then_downloads(monkeypatch):
 
     application.run_menu()
 
-    assert calls[0] == "scan"
-    assert calls[1] == ("metadata", folders)
-    assert calls[2] == ("download", folders, True, 4, 60)
+    assert calls[0][0] == "library-sync"
+    assert calls[1] == ("download", folders, True, 4, 60)
 
 
-def test_menu_choice_four_asks_threads_and_speed_before_download(monkeypatch):
+def test_menu_choice_one_asks_threads_and_speed_before_download(monkeypatch):
+    """Menu option 1 should ask for threads and speed before downloading."""
     calls = []
-    answers = iter(["4", "4", "60", "8"])
+    answers = iter(["1", "4", "60", "5"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.run_with_metadata",
+        lambda self, metadata, quiet=False: [],
+    )
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
         lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
@@ -85,11 +88,12 @@ def test_menu_choice_four_asks_threads_and_speed_before_download(monkeypatch):
 
     application.run_menu()
 
-    assert calls == [(None, True, 4, 60)]
+    assert calls == [([], True, 4, 60)]
 
 
-def test_menu_choice_seven_generates_experimental_addons(monkeypatch, capsys):
-    answers = iter(["7", "8"])
+def test_menu_choice_three_addons_submenu_experimental(monkeypatch, capsys):
+    """Menu option 3 = Addons submenu, then 4 = Experimental addons."""
+    answers = iter(["3", "4", "5", "5"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
         "py_stremio.components.addons.experimental.generate_experimental_urls",
@@ -103,7 +107,7 @@ def test_menu_choice_seven_generates_experimental_addons(monkeypatch, capsys):
 
 
 def test_menu_choice_one_prints_library_sync_status_before_blocking_work(monkeypatch, capsys):
-    answers = iter(["1", "2", "100", "8"])
+    answers = iter(["1", "2", "100", "5"])
     folders = []
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -146,17 +150,19 @@ def test_run_pipeline_uses_combined_library_sync(monkeypatch, capsys):
 
 
 def test_cron_positional_run_all_and_speed_limit(monkeypatch):
+    """`py-stremio --run THREADS SPEED` runs the full pipeline with cron-friendly defaults."""
     calls = []
 
-    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio", "1", "50"]})())
-    monkeypatch.setattr(
-        "py_stremio.app.AppService.run_pipeline",
-        lambda self, download=True, quiet=True, max_workers=1, speed_percent=None: calls.append((download, quiet, max_workers, speed_percent)),
-    )
+    def fake_run_pipeline(self, download=True, quiet=True, max_workers=1, speed_percent=None):
+        calls.append((download, quiet, max_workers, speed_percent))
+        return None
+
+    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio", "--run", "5", "80"]})())
+    monkeypatch.setattr("py_stremio.app.AppService.run_pipeline", fake_run_pipeline)
 
     application.run(interactive=False)
 
-    assert calls == [(True, True, 2, 50)]
+    assert calls == [(True, True, 5, 80)]
 
 
 def test_cron_entrypoint_delegates_to_same_appservice_with_presets(monkeypatch):
@@ -187,7 +193,7 @@ def test_cron_entrypoint_download_uses_shared_parser_with_cron_presets(monkeypat
 
     calls = []
 
-    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "4"]})())
+    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "--download-only"]})())
     monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
         lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
@@ -204,7 +210,7 @@ def test_cron_entrypoint_update_and_download_uses_shared_parser(monkeypatch):
     calls = []
     folders = [object()]
 
-    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "2"]})())
+    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "--update-and-download"]})())
     monkeypatch.setattr(
         "py_stremio.services.scanner.ScanService.run",
         lambda self: calls.append("scan") or folders,

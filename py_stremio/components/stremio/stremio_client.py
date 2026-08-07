@@ -324,16 +324,16 @@ def _search_single_id(
 
     # No cached addons — search all
     if skip_full_search:
-        # Preflight already searched all addons and found nothing for this
-        # content.  Skip the full per-episode re-scan to avoid wasting
-        # 30+ seconds on every missing episode.
+        # Cached addons already searched and had no streams for this exact
+        # episode. The preflight result is a per-folder optimization only —
+        # we already tried the cached list. Don't waste another full scan.
         if stage_tracker:
             stage_tracker.set_servers(0)
             stage_tracker.server_done(0)
             stage_tracker.set_live(0)
             stage_tracker.live_resolved(0)
-        return {"success": False, "error": "Preflight found no working addons",
-                "working_urls": [], "permanent_failure": True}
+        return {"success": False, "error": "No streams found in cached addons",
+                "working_urls": [], "permanent_failure": False}
 
     def _on_full_progress(done: int, total: int) -> None:
         if stage_tracker is not None:

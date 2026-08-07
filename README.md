@@ -86,32 +86,30 @@ cp .env.example .env
 ## CLI Usage
 
 ```bash
-# Interactive menu
+# Interactive menu (4 main options)
 py-stremio
 
-# Individual pipeline steps
-py-stremio --scan        # or: py-stremio 3
-py-stremio --metadata    # or: py-stremio 3
-py-stremio --download    # or: py-stremio 4
-py-stremio --update-and-download  # or: py-stremio 2
+# Individual pipeline steps (matches the menu)
+py-stremio --library           # menu 2: scan folders + refresh metadata
+py-stremio --download         # menu 1: download missing episodes/movies
+py-stremio --download-all     # menu 1 + library refresh + validation
+py-stremio --run 7 100        # full pipeline, 7 threads, 100% speed
 
-# Full pipeline
-py-stremio --run         # or: py-stremio 1
-py-stremio --run 7 100   # 7 threads, 100% speed
-
-# Validate addon URLs
-py-stremio --validate    # or: py-stremio 6
-
-# Discover new addons
-py-stremio --discover    # or: py-stremio 5
+# Addon management (menu 3)
+py-stremio --validate-addons  # menu 3.1: validate every URL in addons.txt
+py-stremio --discover-addons  # menu 3.2: scrape sources + add new URLs
+py-stremio --ai-find-addons   # menu 3.3: AI predict + validate
 
 # Refresh stream-capable movie/series addons from Stremio's live official collection
 py-stremio --discover-official
 
 # Cron (preset 5 threads, 80% speed, no prompts)
-py-stremio-cron 2        # update metadata + download
-py-stremio-cron 3        # update metadata
-py-stremio-cron 4        # download missing
+py-stremio-cron --library
+py-stremio-cron --download
+py-stremio-cron --download-all
+py-stremio-cron --validate-addons
+py-stremio-cron --discover-addons
+```
 
 # Crontab example
 # PATH=/home/strubloid/apps/py-stremio/venv/bin:/usr/local/bin:/usr/bin:/bin

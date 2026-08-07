@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from py_stremio.utils.atomic_write import atomic_write_text
+from py_stremio.components.collect.addon_index import AddonIndex, get_addon_index
 
 SECTIONS = {
     "TORRENT / DEBRID": [],
@@ -254,4 +255,68 @@ def merge_new_addons(
         "total_dead": dead_count,
         "total_lines": len(new_lines),
         "skipped": skipped,
+    }
+
+
+def merge_with_index(
+    index: AddonIndex | None = None,
+    addon_txt_path: str | None = None,
+    working_urls: list[tuple[str, str | None]] | None = None,
+    dead_urls: list[str] | None = None,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """Merge URLs using AddonIndex for O(1) deduplication.
+
+    This is the fast version of merge_new_addons() that uses the index
+    instead of linear O(n) file scanning.
+
+    Args:
+        index: AddonIndex to use. If None, uses global singleton.
+        addon_txt_path: Path to addons.txt file.
+        working_urls: List of (url, name) tuples to add as working.
+        dead_urls: List of dead URLs to comment out.
+        verbose: Print progress info.
+
+    Returns:
+        Dict with counts: added, dead_added, skipped, total_in_index.
+    """
+    index = index or get_addon_index()
+
+    if working_urls is None:
+        working_urls = []
+    if dead_urls is None:
+        dead_urls = []
+
+    added_count = 0
+    for url, _ in working_urls:
+        if index.add(url, is_working=True):
+            added_count += 1
+
+    failed_count = 0
+    for url in dead_urls:
+        if index.add(url, is_working=False):
+            failed_count += 1
+
+    skipped_count = len(working_urls) + len(dead_urls) - added_count - failed_count
+
+    if verbose:
+        status = index.quick_status()
+        print(
+            f"  Index: {status['total']} total, "
+            f"{status['working']} working, "
+            f"{status['failed']} failed, "
+            f"{status['untested']} untested"
+        )
+        if added_count > 0:
+            print(f"  Added {added_count} new addons to index")
+        if failed_count > 0:
+            print(f"  Marked {failed_count} addons as failed")
+        if skipped_count > 0:
+            print(f"  Skipped {skipped_count} duplicates")
+
+    return {
+        "added": added_count,
+        "failed": failed_count,
+        "skipped": skipped_count,
+        "total_in_index": len(index),
     }

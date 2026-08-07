@@ -1,10 +1,29 @@
 """ScanService — folder scanning and auto-create missing seasons."""
+import time
 from datetime import datetime
 from typing import Any
 
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.library.library_scanner import Scanner, FolderType, ScannedFolder
 from py_stremio.utils.media import parse_season_from_folder
+
+
+def _format_duration(seconds: float) -> str:
+    """Format a duration in seconds into a human-readable string.
+
+    Examples:
+        0.4    -> "0.4s"
+        3.2    -> "3.2s"
+        65     -> "1m 5s"
+        3725   -> "1h 2m 5s"
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h {mins}m {secs}s"
 
 
 class ScanService:
@@ -15,9 +34,12 @@ class ScanService:
 
     def run(self) -> list[ScannedFolder]:
         """Run the full scan: ensure folders exist, auto-create seasons, scan."""
+        start = time.monotonic()
         self.scanner.ensure_folders()
         self._create_current_year_season_folders(self.scanner)
-        return self.scanner.scan()
+        folders = self.scanner.scan()
+        self._last_scan_elapsed = time.monotonic() - start
+        return folders
 
     def run_with_metadata(self, metadata: Any, quiet: bool = False) -> list[ScannedFolder]:
         """Run the combined library-sync path used by the full run.
@@ -36,6 +58,11 @@ class ScanService:
         """Just scan existing folders without auto-creating seasons."""
         self.scanner.ensure_folders()
         return self.scanner.scan()
+
+    @property
+    def last_scan_elapsed(self) -> float | None:
+        """Time the most recent ``run()`` took, in seconds. None until run() fires."""
+        return getattr(self, "_last_scan_elapsed", None)
 
     # ------------------------------------------------------------------
     # Internal helpers

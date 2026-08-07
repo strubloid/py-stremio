@@ -129,6 +129,8 @@ def _print_resolved_config() -> None:
     print(f"    SERIES_FOLDER        = {settings.SERIES_FOLDER}")
     print(f"    MOVIES_FOLDER        = {settings.MOVIES_FOLDER}")
     print(f"    REAL_DEBRID_API_KEY  = {'<set>' if settings.REAL_DEBRID_API_KEY else '<unset>'}")
+    print(f"    PREMIUMIZE_API_KEY   = {'<set>' if settings.PREMIUMIZE_API_KEY else '<unset>'}")
+    print(f"    ALLDEBRID_API_KEY  = {'<set>' if settings.ALLDEBRID_API_KEY else '<unset}'}")
     print(f"    STREMIO_ADDON_URL    = {settings.STREMIO_ADDON_URL or '<unset>'}")
     print(f"    STREMIO_ADDON_URL_BASE = {settings.STREMIO_ADDON_URL_BASE}")
     print(f"    DOWNLOAD_THREADS     = {settings.DOWNLOAD_THREADS}")

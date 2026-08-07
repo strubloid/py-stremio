@@ -75,6 +75,8 @@ class Settings:
     MOVIES_FOLDER: Path = field(init=False)
 
     REAL_DEBRID_API_KEY: str | None = field(default_factory=lambda: os.getenv("REAL_DEBRID_API_KEY", "").strip('"').strip("'"))
+    PREMIUMIZE_API_KEY: str | None = field(default_factory=lambda: os.getenv("PREMIUMIZE_API_KEY", "").strip('"').strip("'"))
+    ALLDEBRID_API_KEY: str | None = field(default_factory=lambda: os.getenv("ALLDEBRID_API_KEY", "").strip('"').strip("'"))
     MAX_DOWNLOAD_ATTEMPTS: int = field(default_factory=lambda: int(os.getenv("MAX_DOWNLOAD_ATTEMPTS", "5")))
     LIMIT_EPISODES: int = field(default_factory=lambda: int(os.getenv("LIMIT_EPISODES", "0")))
     MIN_COMPLETED_VIDEO_SIZE_MB: int = field(default_factory=lambda: int(os.getenv("MIN_COMPLETED_VIDEO_SIZE_MB", "100")))
