@@ -51,18 +51,43 @@ class BaseAddon(ABC):
                 seeders=_stream_seeders(stream),
                 imdb_id=_stream_imdb_id(stream),
                 subtitle_tracks=_parse_subtitle_tracks(stream),
+                is_hls=_is_hls_stream_url(stream.get("url")),
             )
             for stream in streams_data
             if _is_downloadable_stream_candidate(stream)
         ]
 
 
-def _is_downloadable_stream_candidate(stream: dict) -> bool:
+def _is_hls_stream_url(url) -> bool:
+    """Return True when *url* looks like an HLS ``.m3u8``/``.m3u`` playlist.
+
+    The path's terminal extension is the authoritative check — query
+    strings or fragments are ignored.  Empty/None URLs return False.
+    """
+    if not url:
+        return False
+    try:
+        parsed = urlparse(str(url))
+    except ValueError:
+        return False
+    path = (parsed.path or "").lower()
+    return path.endswith(".m3u8") or path.endswith(".m3u")
+
+
+def _is_downloadable_stream_candidate(stream: dict, *, allow_hls: bool = False) -> bool:
     """Return True only for streams the downloader can automate.
 
     Stremio addons sometimes return advisory rows as streams, e.g. a Reddit
     link explaining that non-debrid search is disabled. Those are useful in the
     Stremio UI but should not be treated as video downloads.
+
+    HLS ``.m3u8`` manifests are rejected by default because the manifest
+    body is only a few-hundred-byte playlist pointing at external CDN
+    segments — Stremio's player can resolve it on the fly, but the
+    downloader cannot save it as a single file.  Addons that opt into
+    HLS support (currently :class:`HDHubAddon`) can pass ``allow_hls=True``
+    to keep these streams; the downloader then resolves the playlist
+    into segments and concatenates them.
     """
     if not isinstance(stream, dict):
         return False
@@ -109,7 +134,10 @@ def _is_downloadable_stream_candidate(stream: dict) -> bool:
     # play inside Stremio's player but cannot be downloaded as a single
     # file. Filtering them out prevents ``download_stream_to_file`` from
     # wasting a pass on a 480-byte manifest that fails size validation.
-    if (stream.get("behaviorHints") or {}).get("notWebReady"):
+    # Addons that ship an HLS-aware downloader can opt in via
+    # ``allow_hls=True``; the downstream ``download_stream_to_file``
+    # will then route these through ``HlsDownloader``.
+    if not allow_hls and (stream.get("behaviorHints") or {}).get("notWebReady"):
         url_path = (parsed.path or "").lower()
         if url_path.endswith(".m3u8") or url_path.endswith(".m3u"):
             return False

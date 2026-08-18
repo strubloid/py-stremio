@@ -1214,6 +1214,7 @@ def download_stream_to_file(
     thread_id: int | None = None,
     stall_timeout: float = 60.0,
     preserve_partial_on_unsupported_range: bool = True,
+    stream: StreamInfo | None = None,
 ) -> None:
     """Download a direct stream URL to disk, resuming partial files when possible.
 
@@ -1233,9 +1234,38 @@ def download_stream_to_file(
     ``preserve_partial_on_unsupported_range=False`` to opt out of this
     safety and discard the partial anyway (legacy behaviour, useful
     only when the caller has no other streams to try).
+
+    When ``stream`` is provided with ``stream.is_hls=True`` and
+    ``download_url`` is an HLS ``.m3u8`` URL, the function delegates
+    to ``HlsDownloader``, which resolves the playlist and
+    concatenates segments into the output file.  Addons opt in by
+    setting ``HLS_CAPABLE = True`` on their class and tagging HLS
+    streams with ``is_hls=True`` during ``parse_streams`` (see
+    ``HDHubAddon`` for the reference implementation).
     """
     from pathlib import Path
     import threading
+
+    # HLS fast-path: route .m3u8 streams to the HlsDownloader before
+    # touching disk state.  HLS downloads always start from zero
+    # (CDN segments don't support Range), so the .part logic below is
+    # intentionally skipped.
+    if (
+        stream is not None
+        and getattr(stream, "is_hls", False)
+        and _is_hls_url(download_url)
+    ):
+        _download_hls_to_file(
+            url=download_url,
+            filename=filename,
+            bandwidth_limiter=bandwidth_limiter,
+            thread_id=thread_id,
+            progress_callback=progress_callback,
+            stall_timeout=stall_timeout,
+        )
+        if complete_message:
+            print(complete_message, flush=True)
+        return
 
     file_path = Path(filename)
     partial_path = file_path.with_name(f"{file_path.name}.part")
@@ -1404,3 +1434,62 @@ def can_retry_with_debrid(stream: StreamInfo, download_url: str) -> bool:
         and settings.REAL_DEBRID_API_KEY
         and not download_url.startswith("magnet:")
     )
+
+
+# ── HLS routing helpers ──────────────────────────────────────────────────
+#
+# The HLS path is opt-in per addon (see ``HDHubAddon.HLS_CAPABLE`` and
+# ``parse_streams``).  These helpers exist only to detect the
+# ``.m3u8``/``.m3u`` URL shape and dispatch to ``HlsDownloader``; they
+# are not aware of which addons opt in — that decision is made one
+# layer up by checking ``stream.is_hls``.
+
+def _is_hls_url(url) -> bool:
+    """Return True when *url* points at an HLS ``.m3u8``/``.m3u`` playlist."""
+    if not url:
+        return False
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(str(url))
+    except ValueError:
+        return False
+    path = (parsed.path or "").lower()
+    return path.endswith(".m3u8") or path.endswith(".m3u")
+
+
+def _download_hls_to_file(
+    *,
+    url: str,
+    filename: str,
+    bandwidth_limiter,
+    thread_id,
+    progress_callback,
+    stall_timeout: float,
+) -> None:
+    """Resolve and download an HLS playlist to *filename*.
+
+    HLS configuration (preferred quality order, output container, etc.)
+    lives on the addon class that opted into HLS via ``HLS_CAPABLE``.
+    The downloader falls back to the module-level
+    ``HLS_PREFERRED_QUALITY_ORDER`` (1080p → 720p → 480p → 2160p) when
+    no addon-specific preference is provided.
+    """
+    import threading
+
+    from py_stremio.components.download.hls_download import HlsDownloader
+
+    active_thread_id = (
+        thread_id if thread_id is not None else threading.get_ident()
+    )
+
+    downloader = HlsDownloader(
+        bandwidth_limiter=bandwidth_limiter,
+        thread_id=active_thread_id,
+        progress_callback=progress_callback,
+        stall_timeout=stall_timeout,
+    )
+    try:
+        downloader.download(url, filename)
+    finally:
+        downloader.close()

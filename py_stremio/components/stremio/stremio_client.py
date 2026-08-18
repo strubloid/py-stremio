@@ -467,6 +467,7 @@ def _try_download_streams(
                 # zero on the next attempt — see the resume bug in
                 # isues-with-downloading.md.
                 preserve_partial_on_unsupported_range=True,
+                stream=stream,
             )
             return _success_result(filename, stream, working_urls)
         except InvalidVideoDownloadError as e:
@@ -549,7 +550,14 @@ def _retry_with_real_debrid(stream: StreamInfo, filename: str, working_urls: lis
     thread_id = threading.get_ident()
 
     try:
-        download_stream_to_file(rd_url, filename, progress_callback=progress_callback, bandwidth_limiter=bandwidth_limiter, thread_id=thread_id)
+        download_stream_to_file(
+            rd_url,
+            filename,
+            progress_callback=progress_callback,
+            bandwidth_limiter=bandwidth_limiter,
+            thread_id=thread_id,
+            stream=stream,
+        )
         return _success_result(filename, stream, working_urls)
     except Exception as e:
         from py_stremio.components.errors.error_logger import log_error

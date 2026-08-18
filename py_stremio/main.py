@@ -80,6 +80,7 @@ def run() -> None:
     if "--show-config" in sys.argv:
         _print_resolved_config()
         return
+    _apply_retry_failed_flag()
     overrides = _apply_cli_env_overrides()
     AppService().run(cli_overrides=overrides)
 
@@ -89,6 +90,7 @@ def run_cron() -> None:
     if "--show-config" in sys.argv:
         _print_resolved_config()
         return
+    _apply_retry_failed_flag()
     overrides = _apply_cli_env_overrides()
     AppService().run(
         interactive=False,
@@ -96,6 +98,22 @@ def run_cron() -> None:
         default_speed_percent=CRON_SPEED_PERCENT,
         cli_overrides=overrides,
     )
+
+
+def _apply_retry_failed_flag() -> None:
+    """Translate ``--retry-failed`` into the ``PY_STREMIO_RETRY_FAILED``
+    env var so :func:`py_stremio.components.download.processing._retry_failed_episodes_requested`
+    can see it without the CLI surface leaking into the processing layer.
+
+    The flag re-attempts every episode that has previously exhausted its
+    retry budget — useful after a long outage, once a previously dead
+    addon has come back online, or after the user manually deleted a
+    failed ``.part`` file. The skip-notice message reflects that the
+    bypass is active so the behaviour is not surprising in the report.
+    """
+    if "--retry-failed" in sys.argv:
+        os.environ["PY_STREMIO_RETRY_FAILED"] = "true"
+        os.environ["PY_STREMIO_CLI_RETRY_FAILED"] = "true"
 
 
 def _print_resolved_config() -> None:

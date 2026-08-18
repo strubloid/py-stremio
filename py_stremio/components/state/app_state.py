@@ -90,20 +90,31 @@ class DownloadState:
     def _clear_failed_for_filename(self, filename: str) -> None:
         """Remove any ``failed_items`` entry that points to the same episode.
 
-        The state file uses two key shapes for an episode:
+        The state file uses three key shapes for an episode:
         - The final filename (with sanitised title, e.g.
           ``Rick and Morty_s09e10.mkv``)
         - The legacy ``episode_N.mkv`` key
+        - The modern processing ``episode_N`` key (no extension) that
+          :meth:`mark_failed` writes from the per-episode pipeline.
+          Clearing this shape lets a freshly-succeeded episode drop its
+          cross-run failure counter so it can re-enter the missing list
+          if the file is later deleted from disk.
 
         Either may show up in ``failed_items`` after a previous failed
-        attempt. When a successful download lands, both should be dropped
-        to avoid the misleading "state says failed but file is on disk"
-        pattern called out in the download-issues investigation.
+        attempt. When a successful download lands, all matching shapes
+        should be dropped to avoid the misleading "state says failed but
+        file is on disk" pattern called out in the download-issues
+        investigation.
         """
         stem = Path(filename).stem
         episode_number = _episode_number_from_stem(stem)
         for key in list(self.failed_items):
-            if key == filename or key == f"episode_{episode_number}.mkv":
+            if key == filename:
+                self.failed_items.pop(key, None)
+            elif episode_number and (
+                key == f"episode_{episode_number}"
+                or key == f"episode_{episode_number}.mkv"
+            ):
                 self.failed_items.pop(key, None)
             elif episode_number and key.startswith(f"episode_{episode_number}."):
                 # Legacy ``episode_N.mkv`` form, regardless of extension.
@@ -145,7 +156,31 @@ class DownloadState:
         record = self.items[filename]
         return record.server or record.addon_url
 
-    def mark_failed(self, item_key: str, error: str, attempt: int):
+    def mark_failed(self, item_key: str, error: str, attempt: int | None = None):
+        """Record a failed attempt for *item_key*.
+
+        When ``attempt`` is ``None`` (the default for new callers) the
+        existing attempt counter is incremented so that the field tracks
+        **consecutive failures across runs** — every run that fails the
+        same episode pushes the counter one higher. A successful
+        download clears the entry (see :meth:`add_download` →
+        :meth:`_clear_failed_for_filename`), so the counter restarts at
+        zero on the next failure.
+
+        The legacy ``attempt``-as-fixed-value form is preserved for
+        back-compat: callers that still pass an explicit integer (the
+        legacy ``downloader.py`` path and the ``max_attempts`` call on
+        exhaustion) record their value — but only if it is **greater
+        than** the existing counter. A smaller explicit value is
+        ignored so a one-off ``mark_failed(key, error, 1)`` from a
+        transient within-run retry cannot silently shrink the cross-run
+        budget the missing-list scan relies on.
+        """
+        existing = self.failed_items.get(item_key, {}).get("attempt", 0)
+        if attempt is None:
+            attempt = existing + 1
+        elif attempt < existing:
+            attempt = existing
         self.failed_items[item_key] = {
             "error": error,
             "attempt": attempt,

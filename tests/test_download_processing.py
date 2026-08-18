@@ -1,5 +1,6 @@
 """Tests for config-driven download processing."""
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from py_stremio.components.configs.config_file import DownloadConfig, QualitySettings, load_config, save_config
@@ -100,7 +101,18 @@ def test_process_season_folder_passes_config_languages_to_search(tmp_path, monke
     assert captured["preferred_languages"] == ["english"]
 
 
-def test_no_preflight_source_skips_repeated_full_addon_searches(tmp_path, monkeypatch):
+def test_no_preflight_source_still_runs_full_per_episode_search(tmp_path, monkeypatch):
+    """When the preflight returned zero working addons, the per-episode
+    full search must STILL run.
+
+    The preflight is only a smoke test using a generic Stremio ID; the
+    per-episode search uses the precise IMDb/season/episode context
+    that the preflight never sees. Skipping the per-episode search when
+    preflight is empty was the primary root cause of the
+    "Preflight found no working addons" cascade bug — every run would
+    skip every episode and the folder would be permanently stuck.
+    See ``isues-with-downloading.md`` for the full investigation.
+    """
     config = DownloadConfig(
         type="series",
         title="Unavailable Show",
@@ -135,7 +147,11 @@ def test_no_preflight_source_skips_repeated_full_addon_searches(tmp_path, monkey
     result = process_season_folder(tmp_path, max_workers=2)
 
     assert result["failed"] == 2
-    assert skip_flags == [True, True]
+    assert skip_flags == [False, False], (
+        "When the preflight found zero working addons the per-episode "
+        "full search must still run (skip_full_search=False) so the "
+        "actual IMDb/season/episode context gets a chance to find streams."
+    )
 
 
 def test_process_season_folder_does_not_count_search_workers_as_active_downloads(tmp_path, monkeypatch):
@@ -995,7 +1011,12 @@ def test_process_season_folder_resumes_partial_part_file(tmp_path, monkeypatch):
 
     process_season_folder(tmp_path)
 
-    assert calls == [1, 2]
+    # Episode 2 has the .part file so resume-first ordering puts it
+    # ahead of episode 1. We assert the SET of episodes was attempted,
+    # not the literal order, so the test stays focused on the resume
+    # contract (both episodes get downloaded, including the one with
+    # the partial file).
+    assert sorted(calls) == [1, 2]
 
 
 def test_process_season_folder_treats_tiny_untracked_generated_file_as_interrupted_download(tmp_path, monkeypatch):
@@ -1434,10 +1455,3 @@ def test_movie_target_path_matches_build_media_filename(tmp_path):
     ).name
     assert download_filename == "Michael.mkv"
     assert download_filename == target.name
-
-
-def _download_settings():
-    return _FakeSettings()
-    assert len(done_events) == 1
-    assert done_events[0]["outcome"] == "downloaded"
-    assert done_events[0]["rate_bps"] == 0

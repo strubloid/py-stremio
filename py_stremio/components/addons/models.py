@@ -16,3 +16,4 @@ class StreamInfo:
     seeders: int | None = None
     imdb_id: str | None = None
     subtitle_tracks: list[dict] | None = field(default=None, repr=False)
+    is_hls: bool = field(default=False, repr=False)

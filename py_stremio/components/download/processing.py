@@ -38,6 +38,20 @@ _experimental_announced: list[bool] = [False]
 # on a folder for this run.
 _PREFLIGHT_BACKOFF_SECONDS = 3.0
 
+# Failure reasons that should be treated as transient when the preflight
+# was rate-limit saturated (i.e. ``task.preflight_indeterminate`` is
+# True). Both messages are produced when the addon manager returns an
+# empty stream list — one because the preflight scan itself found
+# nothing, the other because the per-episode full search (using the
+# precise IMDb/season/episode context) found nothing. The two paths
+# share the same root cause (every addon's host hit the rate-limit cap)
+# so they must share the same TTL'd "indeterminate" marker instead of
+# being recorded as permanent failures.
+_TRANSIENT_NO_STREAMS_REASONS = (
+    "Preflight found no working addons",
+    "No streams found",
+)
+
 
 # ── Task descriptor for global thread pool scheduling ────────────────────
 
@@ -567,6 +581,54 @@ def _do_download_one_episode(
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
+def _retry_failed_episodes_requested() -> bool:
+    """Return True when the user explicitly asked for a full retry pass.
+
+    The escape hatch is exposed in two equivalent forms:
+
+    - ``PY_STREMIO_RETRY_FAILED=true`` env var (handy for cron users
+      who don't want to remember a new CLI flag)
+    - the ``--retry-failed`` CLI flag wired up in ``py_stremio/main.py``
+
+    When True, :func:`_missing_episodes` ignores the per-episode failure
+    budget and re-queues every episode that has a final file missing
+    from disk — useful after a long outage or once a previously dead
+    addon has come back online.
+    """
+    import os
+
+    if os.environ.get("PY_STREMIO_RETRY_FAILED", "").lower() in ("true", "1", "yes"):
+        return True
+    cli_flag = os.environ.get("PY_STREMIO_CLI_RETRY_FAILED", "").lower()
+    return cli_flag in ("true", "1", "yes")
+
+
+def _episode_is_exhausted(
+    episode: int,
+    state,
+    max_attempts: int,
+    retry_failed: bool,
+) -> bool:
+    """Return True when *episode* has already burned through its retry budget.
+
+    ``max_attempts <= 0`` disables the budget entirely — every episode
+    is treated as fresh. ``retry_failed`` (the escape hatch) does the
+    same. Otherwise an episode is "exhausted" once its consecutive
+    failure counter (``state.was_attempted``) reaches or exceeds the
+    budget.
+
+    The check is per-folder and uses the ``episode_<N>`` key shape that
+    :meth:`DownloadState.mark_failed` writes — the same key the
+    processing pipeline uses, so a successful download
+    (:meth:`DownloadState.add_download`) will clear the count and let
+    the episode re-enter the missing list on the next run.
+    """
+    if retry_failed or max_attempts <= 0:
+        return False
+    attempted = state.was_attempted(f"episode_{episode}")
+    return attempted >= max_attempts
+
+
 def _update_disabled_servers(
     state,
     config,
@@ -821,7 +883,15 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
     # the last successful run.
     if start_episode > final_episode:
         start_episode = 1
-    missing = []
+    # Honour the explicit "retry anyway" escape hatch — a user who set
+    # ``PY_STREMIO_RETRY_FAILED=true`` (or the equivalent ``--retry-failed``
+    # CLI flag) wants every failed episode re-attempted this run,
+    # regardless of how many times it has burned through the retry
+    # budget across previous runs.
+    retry_failed = _retry_failed_episodes_requested()
+    max_attempts = getattr(settings, "MAX_DOWNLOAD_ATTEMPTS", 5)
+    missing: list[int] = []
+    skipped_exhausted: list[int] = []
     # ── Stale-history scan ───────────────────────────────────────────────────
     # Episodes before the cursor are never re-examined, even when the file
     # was deleted after a successful download.  Scan them for mismatches:
@@ -838,6 +908,9 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
             continue  # on-disk file exists → skip
         # Not in state at all — check disk directly
         if episode in existing_episodes or _is_completed_generated_file(folder_path, config, season, episode):
+            continue
+        if _episode_is_exhausted(episode, state, max_attempts, retry_failed):
+            skipped_exhausted.append(episode)
             continue
         missing.append(episode)
     if config.available_episodes is not None:
@@ -869,7 +942,23 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
         if _is_resume_candidate(folder_path, config, season, episode, state):
             missing.append(episode)
             continue
+        if _episode_is_exhausted(episode, state, max_attempts, retry_failed):
+            skipped_exhausted.append(episode)
+            continue
         missing.append(episode)
+    if skipped_exhausted:
+        ep_list = ", ".join(f"S{season:02d}E{ep:02d}" for ep in skipped_exhausted)
+        suffix = " (PY_STREMIO_RETRY_FAILED bypass active)" if retry_failed and max_attempts > 0 else ""
+        if max_attempts <= 0:
+            reason = "MAX_DOWNLOAD_ATTEMPTS is 0 — retry budget disabled"
+        else:
+            reason = (
+                f"already failed >= MAX_DOWNLOAD_ATTEMPTS={max_attempts} across previous runs"
+            )
+        print(
+            f"    ⏭ Skipping {len(skipped_exhausted)} episode(s) "
+            f"({ep_list}) — {reason}{suffix}"
+        )
     if settings.LIMIT_EPISODES > 0:
         missing = missing[:settings.LIMIT_EPISODES]
     return missing
@@ -1013,15 +1102,23 @@ def process_season_folder(
                     disabled_set = set(new_disabled)
                     task.servers = [s for s in task.servers if s not in disabled_set]
             failure_reason = result.get("error", "failed")
-            if task.preflight_indeterminate and failure_reason == "Preflight found no working addons":
+            if (
+                task.preflight_indeterminate
+                and failure_reason in _TRANSIENT_NO_STREAMS_REASONS
+            ):
                 # Rate-limit cascade — record a transient preflight marker
                 # instead of a permanent failure so the next run is allowed
                 # to retry without first burning through MAX_DOWNLOAD_ATTEMPTS.
+                # Both "Preflight found no working addons" (the original
+                # message when the per-episode search is skipped entirely)
+                # and "No streams found" (the message the per-episode
+                # search returns when every addon's host is rate-limit
+                # saturated for this exact IMDb/season/episode) land here.
                 task.state.mark_preflight_indeterminate(
                     f"episode_{episode_num}", failure_reason
                 )
             else:
-                task.state.mark_failed(f"episode_{episode_num}", failure_reason, 1)
+                task.state.mark_failed(f"episode_{episode_num}", failure_reason)
             failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {failure_reason}")
             failed += 1
 
@@ -1132,13 +1229,22 @@ def process_season_folder(
             # batch).  Otherwise the original ``max_workers<=1`` /
             # single-episode path runs here from scratch.
             if shared_executor is not None:
-                # Parallel branch ran first; we are the drain.
-                for round_num in range(max_attempts):
-                    if shutdown_requested() or not queue:
-                        break
-                    round_items = list(queue)
-                    queue.clear()
-                    _run_single_worker_round()
+                # Parallel branch ran first. Only drain through the
+                # single-worker path when the live worker limit can be
+                # dialed down mid-run (``workers_ref`` was provided);
+                # without a mutable ref the parallel branch already
+                # honoured the full ``MAX_DOWNLOAD_ATTEMPTS`` budget
+                # and another ``max_attempts`` rounds here would double
+                # the attempt count for every retry, breaking the
+                # cross-run budget contract that ``_missing_episodes``
+                # and ``mark_failed`` rely on.
+                if workers_ref is not None:
+                    for round_num in range(max_attempts):
+                        if shutdown_requested() or not queue:
+                            break
+                        round_items = list(queue)
+                        queue.clear()
+                        _run_single_worker_round()
             else:
                 for round_num in range(max_attempts):
                     if shutdown_requested() or not queue:
@@ -1167,7 +1273,12 @@ def process_season_folder(
                     f"episode_{episode_num}", reason
                 )
             else:
-                task.state.mark_failed(f"episode_{episode_num}", reason, max_attempts)
+                # Increment the cross-run failure counter — using the
+                # new ``mark_failed(item_key, error)`` (no attempt arg)
+                # means the next run sees ``was_attempted == max_attempts``
+                # and the missing-list scan skips this episode instead
+                # of re-queueing it forever.
+                task.state.mark_failed(f"episode_{episode_num}", reason)
             failed_reasons.append(f"S{task.season:02d}E{episode_num:02d}: {reason}")
             failed += 1
 
