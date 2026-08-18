@@ -32,6 +32,9 @@ py-stremio-cron = "py_stremio.main:run_cron"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "network: live-network test that hits external addon hosts and CDN endpoints",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["py_stremio"]

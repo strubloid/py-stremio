@@ -157,7 +157,10 @@ def search_and_download(
         if effective_imdb:
             sid = build_stremio_id(effective_imdb, title, season, episode)
             strategies.append((sid, "series", f"series S{season}E{episode} (IMDB)"))
-        # Fallback: title-based ID (for addons that don't handle IMDB format)
+        # Always include title-based fallback: a wrong-ID config (e.g. parent
+        # show resolved instead of the spin-off) can still recover via the
+        # title slug, and any addons that index by Stremio slug will be hit.
+        # Only skipped when the IMDB strategy already produced the same slug.
         sid_fallback = build_stremio_id(None, title, season, episode)
         if not strategies or strategies[0][0] != sid_fallback:
             strategies.append((sid_fallback, "series", f"series S{season}E{episode} (title)"))

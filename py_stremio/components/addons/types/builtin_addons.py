@@ -41,6 +41,7 @@ from .aggregators import (
     DebridSearchAddon,
     EasyNewsPlusAddon,
     FlixStreamsAddon,
+    FrostStreamAddon,
     JackettioAddon,
     KnightCrawlerAddon,
     KodAddon,
@@ -82,6 +83,7 @@ from .iptv import (
     FreeMiumTVAddon,
     GreekTVAddon,
     SkyflixAddon,
+    TvVooAddon,
     WatchioAddon,
     XtreamProAddon,
 )
@@ -153,6 +155,7 @@ __all__ = [
     "DebridSearchAddon",
     "EasyNewsPlusAddon",
     "FlixStreamsAddon",
+    "FrostStreamAddon",
     "JackettioAddon",
     "KnightCrawlerAddon",
     "KodAddon",
@@ -188,6 +191,7 @@ __all__ = [
     "FreeMiumTVAddon",
     "GreekTVAddon",
     "SkyflixAddon",
+    "TvVooAddon",
     "WatchioAddon",
     "XtreamProAddon",
     # Regional

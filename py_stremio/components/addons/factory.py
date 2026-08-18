@@ -30,6 +30,7 @@ from .types.builtin_addons import (
     FenixFlixAddon,
     FigaroCorsoAddon,
     FlixStreamsAddon,
+    FrostStreamAddon,
     GreekTVAddon,
     GuindexAddon,
     HDHubAddon,
@@ -57,6 +58,7 @@ from .types.builtin_addons import (
     StreamViXAddon,
     ThePirateBayPlusAddon,
     TorrentioAddon,
+    TvVooAddon,
     TorrentioHindiAddon,
     TorrentioItalianAddon,
     TorrentioLiteAddon,
@@ -145,6 +147,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(ThePirateBayPlusAddon())
     manager.register(StreamViXAddon())
     manager.register(FlixStreamsAddon())
+    manager.register(FrostStreamAddon())
     manager.register(YtztvioAddon())
     manager.register(VidFastProAddon())
     manager.register(MyCineAddon())
@@ -178,6 +181,7 @@ def _register_builtin_addons(manager: AddonManager) -> None:
     manager.register(XtreamProAddon())
     manager.register(AIOStreamingAddon())
     manager.register(WatchioAddon())
+    manager.register(TvVooAddon())
 
     # ── Regional ──────────────────────────────────────────────────────────
     manager.register(LatinMoviesAddon())

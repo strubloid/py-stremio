@@ -492,9 +492,9 @@ class TestCreateAddonManager:
         from py_stremio.components.addons.factory import create_addon_manager
 
         manager = create_addon_manager()
-        # Expect ~50 built-in addons
+        # Expect ~50 built-in addons (TvVoo, FrostStream added 2 more recently)
         assert len(manager.addons) > 40
-        assert len(manager.addons) < 60
+        assert len(manager.addons) < 70
 
     def test_create_addon_manager_dedup_skips_builtin_hosts(self, monkeypatch, tmp_path):
         """File addons with the same host as a built-in are skipped (dedup)."""

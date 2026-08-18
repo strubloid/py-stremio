@@ -102,6 +102,17 @@ def _is_downloadable_stream_candidate(stream: dict) -> bool:
         return False
     if parsed.scheme not in {"http", "https"}:
         return False
+    # Reject HLS manifest placeholders that require a player to resolve.
+    # HDHub (and similar torrent+stream aggregators) return
+    # ``behaviorHints.notWebReady=true`` with an .m3u8 URL whose body is
+    # only a few-hundred-byte playlist pointing at an external CDN. These
+    # play inside Stremio's player but cannot be downloaded as a single
+    # file. Filtering them out prevents ``download_stream_to_file`` from
+    # wasting a pass on a 480-byte manifest that fails size validation.
+    if (stream.get("behaviorHints") or {}).get("notWebReady"):
+        url_path = (parsed.path or "").lower()
+        if url_path.endswith(".m3u8") or url_path.endswith(".m3u"):
+            return False
     return True
 
 
@@ -183,12 +194,26 @@ def _parse_subtitle_tracks(stream: dict) -> list[dict] | None:
 
 
 def _torrentio_resolve_parts(url: str | None) -> tuple[str | None, int | None]:
-    """Return (info_hash, file_idx) from Torrentio RD proxy resolve URLs."""
-    if not url or "/resolve/" not in url:
+    """Return (info_hash, file_idx) from Torrentio RD proxy resolve URLs.
+
+    Limited to the official Torrentio / TorrentsDB hostnames — any other
+    addon's ``/resolve/{a}/{b}/{c}/...`` path that happens to share this
+    shape (e.g. HDHub's ``/resolve/cj/tmdb/{tmdb_id}/{quality}.m3u8``)
+    must not be parsed into a phantom info hash.
+    """
+    if not url:
+        return None, None
+
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower()
+    if host not in {"torrentio.strem.fun", "torrentsdb.com"}:
+        return None, None
+
+    if "/resolve/" not in parsed.path:
         return None, None
 
     try:
-        parts = [part for part in urlparse(url).path.split("/") if part]
+        parts = [part for part in parsed.path.split("/") if part]
         resolve_index = parts.index("resolve")
     except (ValueError, TypeError):
         return None, None

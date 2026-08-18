@@ -114,6 +114,7 @@ https://iptv.arielinnovations.com/manifest.json
 https://nexotv.duckdns.org/manifest.json
 https://iptv.scary.network/manifest.json
 https://watchio-addon.pages.dev/manifest.json
+https://tvvoo.hayd.uk/cfg-it-uk-fr/manifest.json
 
 #   Specialized
 https://addon.bettermetadata.com/manifest.json
@@ -136,6 +137,7 @@ https://kangaroostreams.hayd.uk/manifest.json
 #   Torrent / Debrid
 https://fenixflix-ur9u.onrender.com/manifest.json
 https://indexabr.vercel.app/manifest.json
+https://froststream.cloutteam.com/manifest.json
 
 # ── 🇮🇳 INDIA ─────────────────────────────────────────────────
 #   Specialized

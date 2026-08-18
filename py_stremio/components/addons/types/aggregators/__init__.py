@@ -22,6 +22,7 @@ from .TorrinAddon import TorrinAddon
 from .AIOStreamsAddon import AIOStreamsAddon
 from .CineTorrentAddon import CineTorrentAddon
 from .FlixStreamsAddon import FlixStreamsAddon
+from .FrostStreamAddon import FrostStreamAddon
 from .VidFastProAddon import VidFastProAddon
 from .YtztvioAddon import YtztvioAddon
 
@@ -33,6 +34,7 @@ __all__ = [
     "DebridSearchAddon",
     "EasyNewsPlusAddon",
     "FlixStreamsAddon",
+    "FrostStreamAddon",
     "JackettioAddon",
     "KnightCrawlerAddon",
     "KodAddon",

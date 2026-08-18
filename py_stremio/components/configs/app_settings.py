@@ -77,6 +77,13 @@ class Settings:
     REAL_DEBRID_API_KEY: str | None = field(default_factory=lambda: os.getenv("REAL_DEBRID_API_KEY", "").strip('"').strip("'"))
     PREMIUMIZE_API_KEY: str | None = field(default_factory=lambda: os.getenv("PREMIUMIZE_API_KEY", "").strip('"').strip("'"))
     ALLDEBRID_API_KEY: str | None = field(default_factory=lambda: os.getenv("ALLDEBRID_API_KEY", "").strip('"').strip("'"))
+    # HDHub-specific debrid key. HDHub accepts a TorBox API key (UUID format)
+    # in its ``torbox`` config field. Without a key, HDHub falls back to HLS
+    # manifest placeholders that py-stremio cannot download — the HLS filter
+    # in addon base discards them. Set this to a TorBox key to receive
+    # direct video URLs from HDHub instead. RealDebrid is intentionally not
+    # routed here because HDHub does not accept it.
+    HDHUB_DEBRID_KEY: str | None = field(default_factory=lambda: os.getenv("HDHUB_DEBRID_KEY", "").strip('"').strip("'"))
     MAX_DOWNLOAD_ATTEMPTS: int = field(default_factory=lambda: int(os.getenv("MAX_DOWNLOAD_ATTEMPTS", "5")))
     LIMIT_EPISODES: int = field(default_factory=lambda: int(os.getenv("LIMIT_EPISODES", "0")))
     MIN_COMPLETED_VIDEO_SIZE_MB: int = field(default_factory=lambda: int(os.getenv("MIN_COMPLETED_VIDEO_SIZE_MB", "100")))

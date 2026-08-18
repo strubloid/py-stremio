@@ -548,6 +548,55 @@ def test_parse_streams_extracts_hash_and_file_idx_from_torrentio_rd_proxy_url():
     assert streams[0].file_idx == 7
 
 
+def test_parse_streams_drops_hls_manifest_with_notWebReady():
+    """HDHub and similar addons return notWebReady HLS playlists whose
+    body is a 480-byte #EXTM3U playlist — not a downloadable file. The
+    downloader must skip these so the retry queue does not waste a pass
+    on a manifest that fails size validation."""
+
+    addon = UrlAddon("https://hdhub.thevolecitor.qzz.io")
+
+    streams = addon.parse_streams([
+        {
+            "name": "Hdhub CJ 1080p",
+            "title": "90 Day Fiance S5E1 1080p",
+            "url": "http://hdhub.thevolecitor.qzz.io/resolve/cj/tmdb/90046/1080p.m3u8",
+            "behaviorHints": {"notWebReady": True, "bingeGroup": "cinejoy-90046"},
+        },
+        {
+            "name": "Hdhub CJ 720p",
+            "title": "90 Day Fiance S5E1 720p",
+            "url": "http://hdhub.thevolecitor.qzz.io/resolve/cj/tmdb/90046/720p.m3u8",
+            "behaviorHints": {"notWebReady": True, "bingeGroup": "cinejoy-90046"},
+        },
+        {
+            # Donation nag row — already filtered without URL.
+            "name": "Donation needed.",
+        },
+    ])
+
+    assert streams == [], "notWebReady HLS manifests must be filtered out"
+
+
+def test_parse_streams_keeps_mp4_even_when_notWebReady():
+    """A notWebReady MP4 (rare but possible — some addons tag debrid-only
+    direct files with this hint) must NOT be filtered, only HLS manifests."""
+
+    addon = UrlAddon("https://example.test")
+
+    streams = addon.parse_streams([
+        {
+            "name": "DebridOnly 1080p",
+            "title": "Show.S01E01.1080p.mkv",
+            "url": "https://example.test/video.mkv",
+            "behaviorHints": {"notWebReady": True},
+        },
+    ])
+
+    assert len(streams) == 1
+    assert streams[0].url == "https://example.test/video.mkv"
+
+
 def test_parse_streams_prefers_explicit_info_hash_and_file_idx():
     addon = UrlAddon("https://example.test")
     streams = addon.parse_streams([

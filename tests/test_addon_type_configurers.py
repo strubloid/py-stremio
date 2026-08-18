@@ -67,14 +67,32 @@ def test_comet_configurer_builds_encoded_realdebrid_config():
     assert config["enableTorrent"] is False
 
 
-def test_hdhub_configurer_builds_preference_config_without_key():
-    result = HDHubAddonConfigurer().configure("https://hdhub.thevolecitor.qzz.io", "KEY")
-    assert result.startswith("https://hdhub.thevolecitor.qzz.io/")
-    assert "KEY" not in result
+def test_hdhub_configurer_keeps_torbox_unset_when_no_key():
+    result = HDHubAddonConfigurer().configure("https://hdhub.thevolecitor.qzz.io", "")
     encoded = urlparse(result).path.strip("/").split("/")[0]
     config = _decode_urlsafe_json(encoded)
+    assert config["torbox"] == "unset"
     assert config["qualities"] == "2160p,1080p,720p"
     assert config["sort"] == "desc"
+
+
+def test_hdhub_configurer_injects_uuid_torbox_key():
+    """A UUID-shaped TorBox key must be embedded as the ``torbox`` field."""
+    key = "12345678-1234-1234-1234-123456789abc"
+    result = HDHubAddonConfigurer().configure("https://hdhub.thevolecitor.qzz.io", key)
+    encoded = urlparse(result).path.strip("/").split("/")[0]
+    config = _decode_urlsafe_json(encoded)
+    assert config["torbox"] == key
+
+
+def test_hdhub_configurer_ignores_non_uuid_keys():
+    """RealDebrid keys or any non-UUID key must NOT be routed into the
+    ``torbox`` field — HDHub does not accept them and would 5xx."""
+    rd_key = "REALDEBRIDXXXX12345"
+    result = HDHubAddonConfigurer().configure("https://hdhub.thevolecitor.qzz.io", rd_key)
+    encoded = urlparse(result).path.strip("/").split("/")[0]
+    config = _decode_urlsafe_json(encoded)
+    assert config["torbox"] == "unset"
 
 
 def test_brazuca_configurer_injects_realdebrid():

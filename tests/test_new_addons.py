@@ -6,7 +6,9 @@ from py_stremio.components.addons.types.builtin_addons import (
     CometAddon,
     CometNetAddon,
     EasyNewsPlusAddon,
+    FrostStreamAddon,
     HDHubAddon,
+    TvVooAddon,
     KnightCrawlerAddon,
 )
 
@@ -46,6 +48,45 @@ class TestManifestUrlQueryHandling:
 
         assert "/manifest.json/stream/" not in url
         assert url.endswith("/stream/movie/tt1375666.json")
+
+
+class TestHDHubAddonDebridKey:
+    """HDHubAddon reads the TorBox key from HDHUB_DEBRID_KEY in settings."""
+
+    def _hdhub_module(self):
+        import importlib
+        return importlib.import_module(
+            "py_stremio.components.addons.types.comet_family.HDHubAddon"
+        )
+
+    def test_get_url_without_hdhub_key_returns_unset_torbox(self, monkeypatch):
+        hdhub_mod = self._hdhub_module()
+        monkeypatch.setattr(hdhub_mod.settings, "HDHUB_DEBRID_KEY", None)
+
+        addon = HDHubAddon()
+        url = addon.get_url(api_key="REALSECRETRD")
+
+        assert url.startswith("https://hdhub.thevolecitor.qzz.io/")
+        assert "REALSECRETRD" not in url
+
+    def test_get_url_injects_torbox_key_from_settings(self, monkeypatch):
+        import base64
+        import json
+        from urllib.parse import urlparse
+
+        hdhub_mod = self._hdhub_module()
+
+        torbox_key = "12345678-1234-1234-1234-123456789abc"
+        monkeypatch.setattr(hdhub_mod.settings, "HDHUB_DEBRID_KEY", torbox_key)
+
+        addon = HDHubAddon()
+        url = addon.get_url(api_key="REALSECRETRD")
+
+        assert url.startswith("https://hdhub.thevolecitor.qzz.io/")
+        encoded = urlparse(url).path.strip("/").split("/")[0]
+        padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
+        config = json.loads(base64.urlsafe_b64decode(padded))
+        assert config["torbox"] == torbox_key
 
 
 class TestCometNetAddon:
@@ -191,6 +232,65 @@ class TestKnightCrawlerDeprecation:
         assert "EasyNews+" in names
 
 
+class TestTvVooAddon:
+    """TvVoo – Italian/UK/French IPTV channels via VAVOO HLS."""
+
+    def test_name(self):
+        addon = TvVooAddon()
+        assert addon.name == "TvVoo"
+
+    def test_base_url(self):
+        addon = TvVooAddon()
+        assert addon.base_url == "https://tvvoo.hayd.uk/cfg-it-uk-fr"
+
+    def test_get_url_without_api_key(self):
+        addon = TvVooAddon()
+        assert addon.get_url() == "https://tvvoo.hayd.uk/cfg-it-uk-fr"
+
+    def test_get_url_with_api_key_ignored(self):
+        """TvVoo is a free IPTV addon — it must not consume the
+        RealDebrid key.  The base URL is identical with or without one."""
+        addon = TvVooAddon()
+        assert addon.get_url("anykey") == "https://tvvoo.hayd.uk/cfg-it-uk-fr"
+
+    def test_query_stream_url_uses_base(self):
+        addon = TvVooAddon()
+        url = addon.query_stream_url("movie", "tt1375666")
+        assert url == "https://tvvoo.hayd.uk/cfg-it-uk-fr/stream/movie/tt1375666.json"
+
+
+class TestFrostStreamAddon:
+    """FrostStream – Brazilian stream aggregator for movies + series."""
+
+    def test_name(self):
+        addon = FrostStreamAddon()
+        assert addon.name == "FrostStream"
+
+    def test_base_url(self):
+        addon = FrostStreamAddon()
+        assert addon.base_url == "https://froststream.cloutteam.com"
+
+    def test_get_url_without_api_key(self):
+        addon = FrostStreamAddon()
+        assert addon.get_url() == "https://froststream.cloutteam.com"
+
+    def test_get_url_with_api_key_ignored(self):
+        addon = FrostStreamAddon()
+        assert addon.get_url("anykey") == "https://froststream.cloutteam.com"
+
+    def test_query_stream_url_movie(self):
+        addon = FrostStreamAddon()
+        url = addon.query_stream_url("movie", "tt0111161")
+        assert url == "https://froststream.cloutteam.com/stream/movie/tt0111161.json"
+
+    def test_query_stream_url_series_episode(self):
+        addon = FrostStreamAddon()
+        url = addon.query_stream_url("series", "tt9170070:5:1")
+        assert url == (
+            "https://froststream.cloutteam.com/stream/series/tt9170070:5:1.json"
+        )
+
+
 class TestFactoryRegistration:
     """New addons should be registered by the factory."""
 
@@ -213,6 +313,26 @@ class TestFactoryRegistration:
 
         names = [a.name for a in manager.addons]
         assert "EasyNews+" in names
+
+    def test_froststream_registered(self):
+        from py_stremio.components.addons.factory import _register_builtin_addons
+        from py_stremio.components.addons.manager import AddonManager
+
+        manager = AddonManager()
+        _register_builtin_addons(manager)
+
+        names = [a.name for a in manager.addons]
+        assert "FrostStream" in names
+
+    def test_tvvoo_registered(self):
+        from py_stremio.components.addons.factory import _register_builtin_addons
+        from py_stremio.components.addons.manager import AddonManager
+
+        manager = AddonManager()
+        _register_builtin_addons(manager)
+
+        names = [a.name for a in manager.addons]
+        assert "TvVoo" in names
 
     def test_total_addon_count_increased(self):
         """We should now have at least 2 more addons than before."""
