@@ -211,10 +211,15 @@ def update_addons_file(
     working: list[str] | None = None,
     failed: list[str] | None = None,
 ) -> int:
-    """Rewrite *filepath*, commenting out any URL in *failed*.
+    """Rewrite *filepath*, removing any URL in *failed*.
 
-    Preserves all existing comments, section headers, and blank lines.
-    URLs in *working* are left untouched.  Returns number of lines changed.
+    Failed URLs are deleted outright (not commented) so the file
+    stays clean — dead addons can always be rediscovered by a future
+    ``Find more addons`` run.
+
+    Preserves all existing comments, section headers, blank lines,
+    and previously-commented-out URLs.  URLs in *working* are left
+    untouched.  Returns number of lines removed.
     """
     if filepath is None:
         from .paths import custom_addons_path
@@ -237,7 +242,6 @@ def update_addons_file(
         ):
             url = unquote(stripped)
             if url in failed_set and url not in working_set:
-                new_lines.append(f"# {stripped}\n")
                 changes += 1
                 continue
             # Working URL — keep as-is
@@ -251,8 +255,6 @@ def update_addons_file(
         for line in new_lines
         if line.strip().startswith(("http://", "https://"))
     )
-    dead_count = sum(1 for line in new_lines if line.strip().startswith("# http"))
-    total_lines = len(new_lines)
     has_summary = any(
         line.strip().startswith((
             "# Active URLs:",
@@ -264,19 +266,26 @@ def update_addons_file(
         for line in new_lines
     )
     if changes or has_summary:
-        for index, line in enumerate(new_lines):
+        cleaned: list[str] = []
+        for line in new_lines:
+            stripped = line.strip()
+            if stripped.startswith("# Total commented (dead):"):
+                continue
+            if stripped.startswith("# Grand total lines:"):
+                continue
+            cleaned.append(line)
+        total_lines = len(cleaned)
+        for index, line in enumerate(cleaned):
             stripped = line.strip()
             if stripped.startswith("# Active URLs:"):
-                new_lines[index] = f"# Active URLs: {active_count} (last validated)\n"
+                cleaned[index] = f"# Active URLs: {active_count} (last validated)\n"
             elif stripped.startswith("# Total active:"):
-                new_lines[index] = f"# Total active: {active_count}\n"
-            elif stripped.startswith("# Total commented (dead):"):
-                new_lines[index] = f"# Total commented (dead): {dead_count}\n"
+                cleaned[index] = f"# Total active: {active_count}\n"
             elif stripped.startswith("# Total lines:"):
-                new_lines[index] = f"# Total lines: {total_lines}\n"
+                cleaned[index] = f"# Total lines: {total_lines}\n"
             elif stripped.startswith("# Grand total lines:"):
-                new_lines[index] = f"# Grand total lines: {total_lines}\n"
-        atomic_write_text(filepath, "".join(new_lines))
+                cleaned[index] = f"# Grand total lines: {total_lines}\n"
+        atomic_write_text(filepath, "".join(cleaned))
 
     return changes
 
@@ -286,9 +295,10 @@ def validate_and_update(
     *,
     quiet: bool = False,
 ) -> tuple[int, int]:
-    """Validate all addon URLs and auto-comment failing ones.
+    """Validate all addon URLs and remove failing ones from the file.
 
-    Returns ``(working_count, failed_count)``.
+    Failed URLs are deleted outright, not commented.  Returns
+    ``(working_count, failed_count)``.
     """
     if filepath is None:
         from .paths import custom_addons_path
@@ -302,15 +312,15 @@ def validate_and_update(
     changes = update_addons_file(filepath, working=working, failed=failed)
 
     if changes:
-        print(f"  Commented out {changes} non-working URL(s) in {filepath}")
+        print(f"  Removed {changes} non-working URL(s) from {filepath}")
 
     if not failed:
-        print(f"\n  \033[92m\u2713 All {len(working)} addon(s) working\033[0m")
+        print(f"\n  \033[92m✓ All {len(working)} addon(s) working\033[0m")
     else:
         print(
             f"\n  \033[93m{len(working)} working, "
             f"{len(failed)} failed "
-            f"({changes} commented out in {filepath})\033[0m"
+            f"({changes} removed from {filepath})\033[0m"
         )
 
     return len(working), len(failed)

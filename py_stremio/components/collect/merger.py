@@ -21,7 +21,6 @@ SECTIONS = {
     "MUSIC / RADIO / SPORTS": [],
     "UTILITY": [],
     "OTHER WORKING": [],
-    "OBSERVED ADDONS": [],
 }
 
 
@@ -94,39 +93,36 @@ def _classify_addon(url: str) -> str:
 def merge_new_addons(
     addon_txt_path: str,
     working_urls: list[tuple[str, str | None]],
-    dead_urls: list[str],
+    dead_urls: list[str] | None = None,
     verbose: bool = True,
 ) -> dict[str, int]:
     """Merge newly discovered URLs into addons/addons.txt.
 
     Reads the existing file, extracts existing URL bases for dedup,
-    then inserts new working URLs into the appropriate sections and
-    appends dead URLs as comments.
+    strips any previously-commented dead URLs, inserts new working
+    URLs into the appropriate sections, and writes the cleaned file.
 
-    Returns a dict with counts: added, dead_added, total_after.
+    The ``dead_urls`` argument is accepted for backward compatibility
+    but is ignored — dead URLs are dropped, not preserved as comments.
+    They can always be rediscovered and re-tested by a future
+    ``Find more addons`` run.
+
+    Returns a dict with counts: added, total_active, total_lines, skipped.
     """
     path = Path(addon_txt_path)
+    _ = dead_urls  # intentionally unused; dead URLs are not preserved
 
     # Read existing content + extract known URL bases
     existing_lines: list[str] = []
     known_bases: set[str] = set()
-    existing_observed: list[str] = []
     if path.exists():
         existing_lines = path.read_text().splitlines()
-        in_observed = False
         for line in existing_lines:
             stripped = line.strip()
-            if stripped.startswith("# ── OBSERVED ADDONS"):
-                in_observed = True
-                continue
-            if in_observed:
-                if stripped.startswith("# http"):
-                    observed_url = stripped.removeprefix("# ").split("  #", 1)[0].rstrip("/")
-                    existing_observed.append(observed_url)
-                    known_bases.add(observed_url)
-                continue
+            # Only active (uncommented) URLs count toward dedup.
+            # Commented-out lines (`# http...`) are by definition dead and
+            # will be stripped below; they must not block new discoveries.
             if stripped.startswith("http"):
-                # Normalise trailing slash for dedup
                 known_bases.add(stripped.rstrip("/"))
 
     # Also track Torrentio base patterns — if we already have
@@ -152,23 +148,10 @@ def merge_new_addons(
         new_working.append((url, name))
         known_bases.add(base)
 
-    # Filter dead — skip if already present (active or dead)
-    new_dead: list[str] = []
-    for url in dead_urls:
-        base = url.rstrip("/")
-        if base in known_bases:
-            continue
-        # Also check if it's already in dead section
-        dead_line = f"# {url.rstrip('/')}/"
-        if any(dead_line in l for l in existing_lines):
-            continue
-        new_dead.append(url)
-        known_bases.add(base)
-
-    if not new_working and not new_dead:
+    if not new_working:
         if verbose:
             print(f"  No new addons to add (all {skipped} already in file)")
-        return {"added": 0, "dead_added": 0, "total_after": len(known_bases), "skipped": skipped}
+        return {"added": 0, "total_active": len(known_bases), "total_lines": len(existing_lines), "skipped": skipped}
 
     # Build new sections from the working URLs
     sections: dict[str, list[tuple[str, str | None]]] = {}
@@ -183,19 +166,28 @@ def merge_new_addons(
     # Remove empty sections
     sections = {k: v for k, v in sections.items() if v}
 
-    # Build the output file
-    # Start with existing header and active lines up to the OBSERVED section
+    # Build the output file.
+    # Start from the existing file but strip:
+    #   - The legacy OBSERVED ADDONS section header, its dead URLs, and the
+    #     END OF ADDONS LIST marker (the section no longer exists).
+    #   - Any in-place commented URL lines (`# http...` / `# http...`).
+    #     These are by definition dead URLs and the user wants only valid
+    #     addons in the file.
     new_lines: list[str] = []
-
-    # Copy the existing header and all active sections
-    in_observed = False
+    in_legacy_trailer = False
     for line in existing_lines:
         stripped = line.strip()
         if stripped.startswith("# ── OBSERVED ADDONS"):
-            in_observed = True
+            in_legacy_trailer = True
             continue
-        if not in_observed:
-            new_lines.append(line)
+        if stripped.startswith("# ── END OF ADDONS LIST"):
+            in_legacy_trailer = True
+            continue
+        if in_legacy_trailer:
+            continue
+        if _is_commented_url(stripped):
+            continue
+        new_lines.append(line)
 
     if not new_lines:
         # Empty file or no existing — write the header
@@ -206,7 +198,7 @@ def merge_new_addons(
             "",
         ]
 
-    # Add the new sections right before the OBSERVED section
+    # Append the new working sections at the end of the active region
     for section_name, urls in sections.items():
         if not urls:
             continue
@@ -217,45 +209,62 @@ def merge_new_addons(
             label = f"  # {name}" if name and name != "http_200" else ""
             new_lines.append(f"{url}{label}")
 
-    # Count active so far
-    is_active = lambda l: l.strip().startswith("http") and not l.strip().startswith("#")
-    active_before_observed = sum(1 for l in new_lines if is_active(l))
+    # Count active URLs in the new file
+    active_count = sum(1 for l in new_lines if l.strip().startswith("http"))
 
-    # Append observed section with dead addons
-    new_lines.append("")
-    new_lines.append("# ── OBSERVED ADDONS (was down, may come back) ───────────────────")
-    for url in dict.fromkeys([*existing_observed, *new_dead]):
-        new_lines.append(f"# {url.rstrip('/')}/")
-
-    # Count dead
-    dead_count = sum(1 for l in new_lines if l.strip().startswith("# http"))
-
-    # Final footer
-    new_lines.append("")
-    new_lines.append("# ── END OF ADDONS LIST ───────────────────────────────────────────────")
-    new_lines.append(f"# Total active: {active_before_observed}")
-    new_lines.append(f"# Total commented (dead): {dead_count}")
-    new_lines.append(f"# Grand total lines: {len(new_lines)}")
+    # Refresh header summary lines so they reflect the cleaned state.
+    new_lines = _refresh_header_summary(new_lines, active_count)
 
     # Write atomically so addon discovery cannot leave the inventory truncated.
     atomic_write_text(path, "\n".join(new_lines) + "\n")
 
     if verbose:
         print(
-            f"  ✓ Added {len(new_working)} new working addons, "
-            f"{len(new_dead)} dead (commented). "
-            f"Now {active_before_observed} active + {dead_count} dead = {len(new_lines)} lines",
+            f"  ✓ Added {len(new_working)} new working addons. "
+            f"Now {active_count} active in {len(new_lines)} lines "
+            f"(dead URLs removed — re-run 'Find more addons' to rediscover)",
             flush=True,
         )
 
     return {
         "added": len(new_working),
-        "dead_added": len(new_dead),
-        "total_active": active_before_observed,
-        "total_dead": dead_count,
+        "total_active": active_count,
         "total_lines": len(new_lines),
         "skipped": skipped,
     }
+
+
+_COMMENTED_URL_RE = re.compile(r"^#\s*https?://")
+
+
+def _is_commented_url(stripped: str) -> bool:
+    """Return True if the line is a commented-out URL (i.e. dead)."""
+    return bool(_COMMENTED_URL_RE.match(stripped))
+
+
+def _refresh_header_summary(lines: list[str], active_count: int) -> list[str]:
+    """Update the top-of-file ``# Active URLs`` / ``# Total lines`` lines.
+
+    Removes obsolete ``# Total commented (dead)`` and ``# Grand total lines``
+    lines anywhere they appear.
+    """
+    refreshed: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# Total commented (dead):"):
+            continue
+        if stripped.startswith("# Grand total lines:"):
+            continue
+        refreshed.append(line)
+
+    for index, line in enumerate(refreshed):
+        stripped = line.strip()
+        if stripped.startswith("# Active URLs:"):
+            refreshed[index] = f"# Active URLs: {active_count} (last validated)"
+        elif stripped.startswith("# Total lines:"):
+            refreshed[index] = f"# Total lines: {len(refreshed)}"
+
+    return refreshed
 
 
 def merge_with_index(
@@ -274,11 +283,11 @@ def merge_with_index(
         index: AddonIndex to use. If None, uses global singleton.
         addon_txt_path: Path to addons.txt file.
         working_urls: List of (url, name) tuples to add as working.
-        dead_urls: List of dead URLs to comment out.
+        dead_urls: List of dead URLs to mark as failed in the index.
         verbose: Print progress info.
 
     Returns:
-        Dict with counts: added, dead_added, skipped, total_in_index.
+        Dict with counts: added, failed, skipped, total_in_index.
     """
     index = index or get_addon_index()
 

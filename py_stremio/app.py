@@ -311,7 +311,7 @@ class AppService:
         while True:
             print()
             print(_c("  Addons", ACCENT))
-            print("    1  🛠  Validate addons (test all URLs, comment dead ones)")
+            print("    1  🛠  Validate addons (test all URLs, remove dead ones)")
             print("    2  🔍  Find more addons (scrape + validate)")
             print("    3  🤖  AI find (predict + validate new addons)")
             print("    4  🧪  Experimental addons")

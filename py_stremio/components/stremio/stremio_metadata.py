@@ -6,6 +6,7 @@ import gzip
 import io
 import json
 import re
+import time
 import urllib.parse
 
 import httpx
@@ -13,11 +14,39 @@ import httpx
 
 IMDB_TITLE_EPISODE_DATASET_URL = "https://datasets.imdbws.com/title.episode.tsv.gz"
 
+# Per-request timeout for Cinemeta/IMDb metadata calls. The previous 15s budget
+# was too tight for slow paths (e.g. v3-cinemeta.strem.io CDN edges) and caused
+# spurious "Current-year season lookup error: The read operation timed out"
+# failures during library sync. 30s comfortably fits normal Cinemeta responses
+# while still bounding a single retry.
+DEFAULT_METADATA_TIMEOUT = 30.0
+
+
+def _get_with_retry(url: str, *, timeout: float = DEFAULT_METADATA_TIMEOUT, max_attempts: int = 2, **kwargs) -> httpx.Response:
+    """``httpx.get`` with one retry on transient network failures.
+
+    Retries once on ``httpx.TimeoutException`` (read/connect/pool) or
+    ``httpx.ConnectError`` so a single slow response doesn't fail the whole
+    season lookup. Other exceptions propagate immediately. Tests still
+    monkeypatch ``httpx.get`` directly; this wrapper keeps that contract
+    because it calls through to the module-level ``httpx.get``.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return httpx.get(url, timeout=timeout, **kwargs)
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_exc = exc
+            if attempt + 1 >= max_attempts:
+                raise
+            time.sleep(0.5)
+    raise last_exc  # pragma: no cover
+
 
 def _search_series(title: str) -> list[dict]:
     query = urllib.parse.quote(title.lower())
     search_url = f"https://v3-cinemeta.strem.io/catalog/series/top/search={query}.json"
-    response = httpx.get(search_url, timeout=15)
+    response = _get_with_retry(search_url)
     if response.status_code != 200:
         return []
     return response.json().get("metas", [])
@@ -34,7 +63,7 @@ def _best_series_match(title: str) -> dict | None:
 def _search_movies(title: str) -> list[dict]:
     query = urllib.parse.quote(title.lower())
     search_url = f"https://v3-cinemeta.strem.io/catalog/movie/top/search={query}.json"
-    response = httpx.get(search_url, timeout=15)
+    response = _get_with_retry(search_url)
     if response.status_code != 200:
         return []
     return response.json().get("metas", [])
@@ -64,9 +93,8 @@ def _normalize_language_values(value) -> list[str]:
 def get_imdb_movie_languages(imdb_id: str) -> list[str]:
     """Read a movie's language list from IMDb's public title markup."""
     try:
-        response = httpx.get(
+        response = _get_with_retry(
             f"https://www.imdb.com/title/{imdb_id}/",
-            timeout=15,
             headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.9"},
             follow_redirects=True,
         )
@@ -169,7 +197,7 @@ def _is_available_episode(video: dict) -> bool:
 def _load_imdb_max_seasons() -> dict[str, int] | None:
     """Load IMDb parent-series max seasons once for this process."""
     try:
-        response = httpx.get(IMDB_TITLE_EPISODE_DATASET_URL, timeout=60)
+        response = _get_with_retry(IMDB_TITLE_EPISODE_DATASET_URL, timeout=60)
         if response.status_code != 200:
             return None
         max_seasons: dict[str, int] = {}
@@ -211,7 +239,7 @@ def get_current_year_series_seasons(title: str, year: int) -> list[dict]:
             return []
 
         meta_url = f"https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
-        response = httpx.get(meta_url, timeout=15, follow_redirects=True)
+        response = _get_with_retry(meta_url, follow_redirects=True)
         if response.status_code != 200:
             return []
         meta = response.json().get("meta", {})
@@ -267,7 +295,7 @@ def _series_metadata_from_search_meta(search_meta: dict, title: str, season: int
         return None
 
     meta_url = f"https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
-    response = httpx.get(meta_url, timeout=15, follow_redirects=True)
+    response = _get_with_retry(meta_url, follow_redirects=True)
     if response.status_code != 200:
         return {
             "imdb_id": imdb_id,

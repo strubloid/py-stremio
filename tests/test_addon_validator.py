@@ -133,8 +133,8 @@ def test_addon_url_already_strips_manifest_json(monkeypatch):
 
 # ── update_addons_file ───────────────────────────────────────────────────
 
-def test_update_addons_file_comments_failed(tmp_path):
-    """Failing URLs get commented out, working ones stay."""
+def test_update_addons_file_removes_failed(tmp_path):
+    """Failing URLs are removed, working ones stay."""
     addons = tmp_path / "addons.txt"
     addons.write_text(
         "# ── Section header ──\n"
@@ -154,7 +154,7 @@ def test_update_addons_file_comments_failed(tmp_path):
     content = addons.read_text()
     assert "https://working.example/" in content
     assert "https://also-working.example/" in content
-    assert "# https://broken.example/" in content  # commented out
+    assert "broken.example" not in content  # deleted outright, not commented
     assert "# ── Section header ──" in content  # preserved
 
 
@@ -179,7 +179,7 @@ def test_update_addons_file_no_changes_if_all_working(tmp_path):
     )
 
 
-def test_update_addons_file_refreshes_active_and_dead_summary_counts(tmp_path):
+def test_update_addons_file_refreshes_active_summary_counts(tmp_path):
     addons = tmp_path / "addons.txt"
     addons.write_text(
         "# Active URLs: 99 (last validated)\n"
@@ -199,8 +199,8 @@ def test_update_addons_file_refreshes_active_and_dead_summary_counts(tmp_path):
     content = addons.read_text()
     assert "# Active URLs: 1 (last validated)" in content
     assert "# Total active: 1" in content
-    assert "# Total commented (dead): 1" in content
-    assert "# Total lines: 6" in content
+    assert "# Total commented (dead)" not in content
+    assert "# Total lines: 4" in content
 
 
 def test_update_addons_file_comment_already_comment_unchanged(tmp_path):
@@ -246,7 +246,7 @@ def test_update_addons_file_handles_blank_lines_and_section_headers(tmp_path):
     assert content.splitlines()[0] == ""
     assert "# ── TORRENTIO ──" in content
     assert "https://torrentio.example/" in content
-    assert "# https://anime.example/" in content
+    assert "anime.example" not in content  # removed, not commented
     assert "# ── ANIME ──" in content
 
 
@@ -283,7 +283,7 @@ def test_validate_all_addons(tmp_path, monkeypatch):
 
 
 def test_validate_and_update_rewrites_file(tmp_path, monkeypatch):
-    """Full pipeline: validates, comments dead URLs, leaves working alone."""
+    """Full pipeline: validates, removes dead URLs, leaves working alone."""
     addons = tmp_path / "addons.txt"
     addons.write_text(
         "https://good.example/\n"
@@ -304,7 +304,7 @@ def test_validate_and_update_rewrites_file(tmp_path, monkeypatch):
 
     content = addons.read_text()
     assert "https://good.example/" in content
-    assert "# https://bad.example/" in content
+    assert "bad.example" not in content  # removed, not commented
 
 
 def test_validate_all_addons_empty_file(tmp_path, monkeypatch):
