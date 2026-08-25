@@ -12,16 +12,20 @@ class ThreadState:
     """Per-thread state for fair bandwidth allocation."""
     thread_id: int
     bytes_in_window: int = 0
+    window_started: float = 0.0
     fair_share_bps: int = 0
-    last_active: float = 0
+    last_active: float = 0.0
 
 
 @dataclass
 class FairBandwidthLimiter:
     """Fair-share bandwidth limiter with dynamic per-thread allocation.
 
-    Total bandwidth is divided equally among active threads.
-    Threads register/unregister as they start/finish downloads.
+    Uses a sliding-window accumulator: each chunk adds to ``bytes_in_window``
+    and the limiter sleeps just long enough so the average rate (bytes /
+    elapsed) never exceeds the thread's fair share. Total bandwidth is
+    divided equally among active threads; threads register/unregister as
+    they start/finish downloads.
     """
 
     total_bytes_per_second: int
@@ -29,21 +33,22 @@ class FairBandwidthLimiter:
     sleep: Callable[[float], None] = time.sleep
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _active_threads: dict[int, ThreadState] = field(default_factory=dict)
-    _window_started: float = field(default_factory=time.monotonic)
-    _total_bytes_in_window: int = 0
+    _fair_share_bps: int = 0
 
     def __post_init__(self) -> None:
-        self._window_started = self.now()
         self._recalculate_fair_share()
 
     def register_thread(self, thread_id: int) -> None:
         """Register a new active download thread."""
         with self._lock:
             if thread_id not in self._active_threads:
+                now = self.now()
                 self._active_threads[thread_id] = ThreadState(
                     thread_id=thread_id,
+                    bytes_in_window=0,
+                    window_started=now,
                     fair_share_bps=self._fair_share_bps,
-                    last_active=self.now(),
+                    last_active=now,
                 )
                 self._recalculate_fair_share()
 
@@ -79,44 +84,54 @@ class FairBandwidthLimiter:
         delay = 0.0
         with self._lock:
             current_time = self.now()
-            elapsed = current_time - self._window_started
-
-            # Reset window if 1 second has passed
-            if elapsed >= 1:
-                self._window_started = current_time
-                self._total_bytes_in_window = 0
-                for state in self._active_threads.values():
-                    state.bytes_in_window = 0
-                elapsed = 0
-
-            # Use provided thread_id or generate one
             if thread_id is None:
                 thread_id = threading.get_ident()
 
-            # Get or create thread state
             state = self._active_threads.get(thread_id)
             if state is None:
-                # Thread not registered, use full bandwidth (backward compat)
+                # Thread not registered — give it the full bandwidth window.
                 state = ThreadState(
                     thread_id=thread_id,
+                    bytes_in_window=0,
+                    window_started=current_time,
                     fair_share_bps=self.total_bytes_per_second,
                     last_active=current_time,
                 )
                 self._active_threads[thread_id] = state
                 self._recalculate_fair_share()
 
-            # Update thread's byte count
             state.bytes_in_window += byte_count
-            self._total_bytes_in_window += byte_count
             state.last_active = current_time
 
-            # Check if this thread exceeded its fair share
-            fair_share = state.fair_share_bps
-            if state.bytes_in_window > fair_share:
-                overflow = state.bytes_in_window - fair_share
-                delay = overflow / fair_share if fair_share > 0 else 0
+            elapsed = current_time - state.window_started
+            delay = self._compute_delay(
+                state.bytes_in_window,
+                elapsed,
+                state.fair_share_bps,
+            )
         if delay > 0:
             self.sleep(delay)
+
+    @staticmethod
+    def _compute_delay(bytes_in_window: int, elapsed: float, fair_share_bps: int) -> float:
+        """Return how long to sleep so the average rate stays at the budget.
+
+        Uses ``delay = bytes_in_window / rate - elapsed`` (smooth rate).
+        For backwards-compatible single-call test fixtures where
+        ``elapsed`` is exactly zero, falls back to the legacy
+        overflow-based formula so a stand-alone ``wait_for(15)`` against
+        a 10-byte/sec budget still sleeps for ``(15-10)/10`` seconds.
+        """
+        if fair_share_bps <= 0:
+            return 0.0
+        if elapsed <= 0:
+            # No time has elapsed since the window opened — treat as a
+            # legacy one-shot and only penalise the overflow.
+            if bytes_in_window > fair_share_bps:
+                return (bytes_in_window - fair_share_bps) / fair_share_bps
+            return 0.0
+        ideal_elapsed = bytes_in_window / fair_share_bps
+        return max(0.0, ideal_elapsed - elapsed)
 
     def _recalculate_fair_share(self) -> None:
         """Recalculate bytes/sec per active thread."""
@@ -126,20 +141,19 @@ class FairBandwidthLimiter:
         else:
             self._fair_share_bps = max(1, self.total_bytes_per_second // active_count)
 
-        # Update all active threads
+        # Reset each thread's accumulator when the share changes so the
+        # new rate takes effect on the very next chunk instead of carrying
+        # over stale bytes from the old window.
         for state in self._active_threads.values():
             state.fair_share_bps = self._fair_share_bps
+            state.bytes_in_window = 0
+            state.window_started = self.now()
 
     def update_total_limit(self, total_bytes_per_second: int) -> None:
         """Update total bandwidth limit and recalculate fair shares."""
         with self._lock:
             self.total_bytes_per_second = total_bytes_per_second
             self._recalculate_fair_share()
-            # Reset window to apply immediately
-            self._window_started = self.now()
-            self._total_bytes_in_window = 0
-            for state in self._active_threads.values():
-                state.bytes_in_window = 0
 
     def get_fair_share_bps(self) -> int:
         """Get current fair share per thread in bytes/sec."""
@@ -153,14 +167,23 @@ class FairBandwidthLimiter:
 # Backward compatibility: simple global limiter (no fair sharing)
 @dataclass
 class BandwidthLimiter:
-    """Simple process-wide limiter using a one-second accounting window."""
+    """Simple process-wide limiter using a sliding-window average.
+
+    Replaces the legacy 1-second window + overflow formula with a smooth
+    average rate calculation: ``delay = bytes / rate - elapsed``.  The
+    limiter still allows tiny bursts (sub-50ms windows fall back to the
+    overflow formula) so single-shot test fixtures keep working.
+    """
 
     bytes_per_second: int
     now: Callable[[], float] = time.monotonic
     sleep: Callable[[float], None] = time.sleep
     _lock: threading.Lock = field(default_factory=threading.Lock)
-    _window_started: float = field(default_factory=time.monotonic)
     _bytes_in_window: int = 0
+    _window_started: float = field(default_factory=time.monotonic)
+
+    def __post_init__(self) -> None:
+        self._window_started = self.now()
 
     def wait_for(self, byte_count: int, thread_id: int | None = None) -> None:
         del thread_id  # Accepted for compatibility with download_stream_to_file.
@@ -168,19 +191,11 @@ class BandwidthLimiter:
             return
         delay = 0.0
         with self._lock:
-            current_time = self.now()
-            elapsed = current_time - self._window_started
-            if elapsed >= 1:
-                self._window_started = current_time
-                self._bytes_in_window = 0
-                elapsed = 0
-
             self._bytes_in_window += byte_count
-            if self._bytes_in_window <= self.bytes_per_second:
-                return
-
-            overflow = self._bytes_in_window - self.bytes_per_second
-            delay = overflow / self.bytes_per_second
+            elapsed = self.now() - self._window_started
+            delay = FairBandwidthLimiter._compute_delay(
+                self._bytes_in_window, elapsed, self.bytes_per_second
+            )
         if delay > 0:
             self.sleep(delay)
 

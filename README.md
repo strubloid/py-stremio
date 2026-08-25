@@ -164,9 +164,8 @@ The filter pipeline (`select_quality_streams`) is the gate before any download:
 ## Tests
 
 ```bash
-pytest tests/ -v                         # 451 tests (includes live network checks)
-pytest --ignore=tests/test_new_servers.py # 441 deterministic tests
-pytest tests/ --cov=py_stremio           # coverage
+pytest tests/ -v                         # 717 tests (includes live network checks)
+pytest --ignore=tests/test_new_servers.py # 712 deterministic tests
 ```
 
 ## See Also

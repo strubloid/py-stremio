@@ -60,7 +60,7 @@ py-stremio/
 │   │   ├── reports/                  # Terminal + email reports
 │   │   └── errors/                   # Error deduplication
 │   └── utils/                        # Shared utilities
-├── tests/                            # 451 tests, including live network checks
+├── tests/                            # 717 tests, including live network checks
 └── scripts/
     └── audit_addons.py
 ```
@@ -147,6 +147,39 @@ that do not support byte-range resume cannot complete it, but must not destroy
 it. This protection is intentionally confined to the movie path; existing
 series handling is unchanged.
 
+## HLS (`.m3u8`) Downloads
+
+Any download whose URL ends in `.m3u8` (or `.m3u`) is routed through the HLS
+pipeline regardless of which addon returned it — the dispatcher keys off URL
+shape alone, not `stream.is_hls`. This catches RealDebrid CDN URLs and other
+sources that return HLS manifests without per-addon opt-in.
+
+Two HLS downloaders are available, selected by the `HLS_DOWNLOAD_METHOD`
+environment variable (default `ffmpeg`):
+
+- **`ffmpeg`** — shells out to `ffmpeg -i <url> -c copy <out.mkv.part> -f
+  matroska`. Robust against every HLS variant the CDN can serve (encrypted
+  segments, byte-range / init segments, discontinuity, live edge). Requires
+  `ffmpeg` on `PATH` (apt install ffmpeg). When ffmpeg is missing OR ffmpeg
+  itself returns a non-zero exit code, the dispatcher falls back to the
+  segment-based downloader and emits a one-shot `RuntimeWarning`.
+- **`segment`** — pure-Python downloader in `hls_download.py` that fetches
+  the playlist, picks a variant, downloads each `.ts`/`.m4s` segment, and
+  concatenates them into the output file. No external dependency but limited
+  to unencrypted playlists.
+
+The ffmpeg downloader honours the user's `INTERNET_SPEED_LIMIT` by setting
+`-maxrate`/`-bufsize` from the fair-share bandwidth quota of the current
+download thread. The thread is *not* registered with the limiter — ffmpeg
+self-throttles, so registering would double-throttle. ffmpeg's output is
+parsed via the `-progress pipe:1` machine-readable protocol and forwarded to
+the same progress callback the rest of the downloader uses.
+
+The partial file is `<name>.mkv.part` (matroska muxer pinned via `-f`) and
+is renamed to the final `<name>.mkv` on a clean ffmpeg exit. A failed run
+leaves the partial on disk for inspection; the next attempt reuses the
+filename (any leftover partial is unlinked before ffmpeg writes).
+
 ## Addon System
 
 **Built-in addon classes** are organized across these categories:
@@ -192,12 +225,13 @@ skipped, not replaced.
 | PREFERRED_LANGUAGES | english | Default filter for new series-season configs; movie metadata determines movie languages |
 | TORRENT_PROXY_URL | None | Local proxy for info-hash streams |
 | STREMIO_ADDON_URL | None | Override addon base URL |
+| HLS_DOWNLOAD_METHOD | `ffmpeg` | How to download `.m3u8` streams: `ffmpeg` (shells out to ffmpeg, falls back to `segment` when ffmpeg is missing) or `segment` (pure-Python segment concatenator) |
 
 ## Testing
 
 ```bash
-pytest tests/ -v                        # 451 tests, including live endpoint checks
-pytest --ignore=tests/test_new_servers.py  # 441 deterministic tests
+pytest tests/ -v                        # 717 tests, including live endpoint checks
+pytest --ignore=tests/test_new_servers.py  # 712 deterministic tests
 pytest --cov=py_stremio --cov-report=term-missing  # coverage
 ```
 
@@ -220,7 +254,7 @@ URL redaction: `apikey`, `api_key`, `token`, `realdebrid`, `rd`, `key`, `passwor
 - Modern Stremio addon-based download path is primary
 - Built-in addons + unlimited URL-based addons
 - Movie metadata and download flow are separate from series seasons
-- 441 deterministic tests passing; live-network tests depend on third-party endpoint availability
+- 712 deterministic tests passing; live-network tests depend on third-party endpoint availability
 - Diacritics-insensitive title matching
 - Release-group-aware title signal detection
 - Finished-release marker heuristic

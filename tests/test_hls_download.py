@@ -392,42 +392,58 @@ def test_download_stream_to_file_dispatches_hls_to_hls_downloader(tmp_path):
     fake_downloader.close.assert_called_once()
 
 
-def test_download_stream_to_file_skips_hls_path_when_stream_not_marked(tmp_path):
-    """When stream.is_hls=False (default), HLS path is skipped even for .m3u8 URLs."""
+def test_download_stream_to_file_routes_m3u8_to_hls_path_even_when_stream_not_marked(tmp_path):
+    """``.m3u8`` URLs are routed to the HLS pipeline by URL shape
+    alone — ``stream.is_hls`` no longer gates the dispatcher.  This
+    is the change that makes RealDebrid-returned HLS manifests work
+    without per-addon opt-in.
+    """
+    from py_stremio.components.configs import app_settings
+
     target = tmp_path / "episode.mkv"
 
     stream = StreamInfo(
-        name="Hdhub 1080p",
-        url="http://hdhub.test/resolve/cj/tmdb/1/1080p.m3u8",
-        addon_name="HDHub",
+        name="RealDebrid 1080p",
+        url="http://cdn.real-debrid.test/dl/abc/playlist.m3u8",
+        addon_name="RealDebrid",
         is_hls=False,
     )
 
     fake_downloader = MagicMock()
+    fake_downloader.download = MagicMock(return_value=HlsDownloadStats())
     fake_class = MagicMock(return_value=fake_downloader)
 
-    # The HLS downloader must NOT be called when the stream is not flagged
-    # as HLS. The direct-download path will then fail because there's no
-    # real HTTP server here — we catch the expected exception to prove
-    # the HLS path was not entered.
-    with patch.object(hls_download, "HlsDownloader", fake_class):
-        with pytest.raises(Exception):
-            download_stream_to_file(stream.url, str(target), stream=stream)
+    # Force the segment-based downloader (bypass the ffmpeg path) so
+    # the test is independent of whether ffmpeg is on PATH in CI.
+    with patch.object(
+        app_settings.settings, "HLS_DOWNLOAD_METHOD", "segment", create=True
+    ), patch.object(hls_download, "HlsDownloader", fake_class):
+        download_stream_to_file(stream.url, str(target), stream=stream)
 
-    fake_class.assert_not_called()
+    fake_class.assert_called_once()
+    fake_downloader.download.assert_called_once_with(stream.url, str(target))
+    fake_downloader.close.assert_called_once()
 
 
-def test_download_stream_to_file_skips_hls_path_when_stream_missing(tmp_path):
-    """Backwards-compat: callers that pass no stream at all must not
-    trigger the HLS path (legacy direct downloads)."""
+def test_download_stream_to_file_routes_m3u8_to_hls_path_when_stream_missing(tmp_path):
+    """Backwards-compat: callers that pass no stream at all still
+    trigger the HLS path on a ``.m3u8`` URL because the dispatcher
+    now keys off URL shape, not ``stream.is_hls``."""
+    from py_stremio.components.configs import app_settings
+
     target = tmp_path / "episode.mkv"
 
-    fake_class = MagicMock()
-    with patch.object(hls_download, "HlsDownloader", fake_class):
-        with pytest.raises(Exception):
-            download_stream_to_file("http://hdhub.test/1080p.m3u8", str(target))
+    fake_downloader = MagicMock()
+    fake_downloader.download = MagicMock(return_value=HlsDownloadStats())
+    fake_class = MagicMock(return_value=fake_downloader)
 
-    fake_class.assert_not_called()
+    with patch.object(
+        app_settings.settings, "HLS_DOWNLOAD_METHOD", "segment", create=True
+    ), patch.object(hls_download, "HlsDownloader", fake_class):
+        download_stream_to_file("http://hdhub.test/1080p.m3u8", str(target))
+
+    fake_class.assert_called_once()
+    fake_downloader.download.assert_called_once()
 
 
 # ── End-to-end with mocked HTTP ────────────────────────────────────────

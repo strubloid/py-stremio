@@ -62,15 +62,17 @@ py-stremio/
 │       │   ├── stremio_metadata.py    # Cinemeta metadata + IMDb season dataset
 │       │   ├── stremio_ids.py         # Build Stremio identifiers from IMDB/title
 │       │   └── stremio_url.py         # Normalize / deduplicate manifest URLs
-│       ├── download/                  # Download execution
-│       │   ├── __init__.py
-│       │   ├── processing.py          # Core logic: process_season_folder / process_movie_folder
-│       │   ├── stream_download.py     # Stream URL resolution, HTTP download with resume
-│       │   ├── bandwidth_service.py   # BandwidthLimiter + FairBandwidthLimiter fair-share accounting
-│       │   ├── speed_probe.py         # Auto-detect/persist INTERNET_MAX_SPEED_MBPS when missing
-│       │   ├── discovery.py           # find_season_folders / find_movie_folders
-│       │   ├── downloader.py          # Legacy Downloader class with quality fallback
-│       │   └── provider.py            # BaseProvider, RealDebrid, Mock, Fallback providers
+│   ├── download/                  # Download execution
+│   │   ├── __init__.py
+│   │   ├── processing.py          # Core logic: process_season_folder / process_movie_folder
+│   │   ├── stream_download.py     # Stream URL resolution, HTTP download with resume
+│   │   ├── hls_download.py        # Pure-Python HLS downloader (segment-by-segment)
+│   │   ├── hls_ffmpeg_download.py # ffmpeg-backed HLS downloader (default, -c copy remux)
+│   │   ├── bandwidth_service.py   # BandwidthLimiter + FairBandwidthLimiter fair-share accounting
+│   │   ├── speed_probe.py         # Auto-detect/persist INTERNET_MAX_SPEED_MBPS when missing
+│   │   ├── discovery.py           # find_season_folders / find_movie_folders
+│   │   ├── downloader.py          # Legacy Downloader class with quality fallback
+│   │   └── provider.py            # BaseProvider, RealDebrid, Mock, Fallback providers
 │       ├── debrid/                    # Debrid service integration
 │       │   ├── __init__.py
 │       │   └── real_debrid_client.py  # RealDebrid API: magnet → torrent → direct URL
@@ -113,7 +115,7 @@ py-stremio/
 │           ├── error_summary.py       # ErrorSummary dataclass (aggregated output)
 │           ├── error_reporter.py      # ErrorReporter singleton + redact_url helpers
 │           └── error_logger.py        # Legacy error logger (backward compat)
-└── tests/                             # 32 test files, 451 tests (10 live-network checks)
+└── tests/                             # 39 test files, 717 tests (5 live-network checks)
     ├── test_addon_enabled.py
     ├── test_addon_type_configurers.py
     ├── test_addon_validator.py
@@ -190,6 +192,7 @@ AppService.run_pipeline()
 - Per-episode final-file existence guard: download workers skip instead of re-downloading if the expected output file already exists, even if a stale task listed it as missing
 - Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
 - Addon advisory/config/browser-only rows (for example Reddit notices, `configure this addon`, `externalUrl` only) are filtered before download attempts; if every returned stream is filtered out, the item reports `No downloadable streams found after filtering` and is not retried repeatedly in the same run
+- **HLS (`.m3u8`) downloads**: any URL ending in `.m3u8`/`.m3u` is routed to the HLS pipeline by URL shape alone (the dispatcher no longer keys off `stream.is_hls`). The `HLS_DOWNLOAD_METHOD` setting picks between the ffmpeg-backed `HlsFfmpegDownloader` (default — runs `ffmpeg -i <url> -c copy <out.mkv.part> -f matroska`) and the pure-Python `HlsDownloader` (segment concatenator). ffmpeg output is parsed via the `-progress pipe:1` protocol and forwarded to the shared progress callback; bandwidth limiting is honoured by setting `-maxrate`/`-bufsize` from the limiter's fair-share quota. When ffmpeg is missing OR fails, the dispatcher falls back to the segment-based downloader and emits a one-shot `RuntimeWarning`. ffmpeg must be on `PATH` for the default path (`apt install ffmpeg`); the `.part` filename requires the explicit `-f matroska` muxer because ffmpeg cannot infer the container from a `.part` extension.
 
 ### 2. Legacy Path (maintained)
 `download_manager.py` → `library/series.py` / `library/movies.py` → `download/provider.py`
@@ -296,6 +299,7 @@ ELSE
 | PREFERRED_LANGUAGES | `english` | Default only for new series-season configs; movie metadata sets movie languages |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
 | INTERNET_MAX_SPEED_MBPS | auto-detected once; fallback 100 | Max Mbps for bandwidth calculation; if missing from env/.env, a short speed probe appends the measured value to .env |
+| HLS_DOWNLOAD_METHOD | `ffmpeg` | HLS `.m3u8` downloader: `ffmpeg` (default, requires `apt install ffmpeg`, falls back to `segment` if missing) or `segment` (pure-Python, no external deps) |
 | DRY_RUN | false | Test mode — no actual downloads |
 | STREMIO_ADDON_URL | None | Override addon base URL |
 | STREMIO_ADDON_URL_BASE | `https://torrentio.strem.fun` | Addon base URL when no RD key |
@@ -404,6 +408,7 @@ When these non-stream addons are queried for `/stream/`, they either:
 | Add new addons | `types/<category>/<ClassName>.py` (class) + `types/addon_registry.py` (AddonDef) + `types/builtin_addons.py` (re-export) |
 | Modify addon search | `addons/addon_search_service.py`, `addons/manager.py` |
 | Change download logic | `download/processing.py`, `download/stream_download.py` |
+| Change HLS downloader (ffmpeg vs segment) | `download/hls_ffmpeg_download.py` (ffmpeg backend), `download/hls_download.py` (segment backend), `download/stream_download.py` (`_download_hls_to_file` dispatcher), `configs/app_settings.py` (`HLS_DOWNLOAD_METHOD`) |
 | Change metadata lookup | `stremio/stremio_metadata.py` |
 | Modify state format | `state/app_state.py` |
 | Modify config format | `configs/config_file.py` |
@@ -427,7 +432,7 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Config tests verify default creation and loading
 - Download processing tests mock the Stremio client
 - **Monkeypatch caveat**: `from X import Y` in service modules creates a permanent local binding. When tests monkeypatch `X.Y`, the local binding in the service module is unaffected if the service was already imported by a prior test. Always also monkeypatch the local binding (`py_stremio.services.<name>.<function>`) in tests that need to mock functions imported via `from ... import` in service modules.
-- **Test status**: 451 tests. `pytest --ignore=tests/test_new_servers.py -q` runs 441 deterministic tests; `tests/test_new_servers.py` is live-network coverage and can fail when third-party endpoints return 403/502.
+- **Test status**: 717 tests. `pytest --ignore=tests/test_new_servers.py -q` runs 712 deterministic tests; `tests/test_new_servers.py` is live-network coverage and can fail when third-party endpoints return 403/502.
 
 ## Current Status
 

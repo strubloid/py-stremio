@@ -1242,19 +1242,26 @@ def download_stream_to_file(
     setting ``HLS_CAPABLE = True`` on their class and tagging HLS
     streams with ``is_hls=True`` during ``parse_streams`` (see
     ``HDHubAddon`` for the reference implementation).
+
+    As of the ffmpeg-backed HLS path, the trigger for the HLS branch
+    is the URL shape alone: *any* download whose URL ends in
+    ``.m3u8`` (or ``.m3u``) is routed through the HLS pipeline
+    regardless of which addon returned it.  The ``HLS_DOWNLOAD_METHOD``
+    setting picks between the ffmpeg-based downloader
+    (``"ffmpeg"`` — the default) and the pure-Python segment-based
+    downloader (``"segment"``).
     """
     from pathlib import Path
     import threading
 
-    # HLS fast-path: route .m3u8 streams to the HlsDownloader before
-    # touching disk state.  HLS downloads always start from zero
+    # HLS fast-path: route .m3u8 streams to the HLS downloader before
+    # touching disk state.  Triggered by URL shape alone so that
+    # streams returned by sources other than HLS-opt-in addons
+    # (RealDebrid's CDN, generic Stremio addons, etc.) still get the
+    # playlist-aware treatment.  HLS downloads always start from zero
     # (CDN segments don't support Range), so the .part logic below is
     # intentionally skipped.
-    if (
-        stream is not None
-        and getattr(stream, "is_hls", False)
-        and _is_hls_url(download_url)
-    ):
+    if _is_hls_url(download_url):
         _download_hls_to_file(
             url=download_url,
             filename=filename,
@@ -1438,11 +1445,18 @@ def can_retry_with_debrid(stream: StreamInfo, download_url: str) -> bool:
 
 # ── HLS routing helpers ──────────────────────────────────────────────────
 #
-# The HLS path is opt-in per addon (see ``HDHubAddon.HLS_CAPABLE`` and
-# ``parse_streams``).  These helpers exist only to detect the
-# ``.m3u8``/``.m3u`` URL shape and dispatch to ``HlsDownloader``; they
-# are not aware of which addons opt in — that decision is made one
-# layer up by checking ``stream.is_hls``.
+# The HLS path is now triggered by URL shape alone: any download whose
+# URL ends in ``.m3u8`` (or ``.m3u``) is routed through the HLS
+# pipeline regardless of which addon produced the stream.  The
+# :func:`_download_hls_to_file` dispatcher picks between the
+# ffmpeg-based downloader (default) and the segment-based downloader
+# based on the ``HLS_DOWNLOAD_METHOD`` setting and on whether ffmpeg
+# is installed.  Addon classes that opt into HLS still set
+# ``HLS_CAPABLE = True`` and tag their streams with
+# ``StreamInfo.is_hls`` so addons which filter ``.m3u8`` URLs (the
+# default behaviour of :func:`_is_downloadable_stream_candidate`) let
+# them through, but the dispatcher in :func:`download_stream_to_file`
+# no longer keys off that flag.
 
 def _is_hls_url(url) -> bool:
     """Return True when *url* points at an HLS ``.m3u8``/``.m3u`` playlist."""
@@ -1469,19 +1483,67 @@ def _download_hls_to_file(
 ) -> None:
     """Resolve and download an HLS playlist to *filename*.
 
-    HLS configuration (preferred quality order, output container, etc.)
-    lives on the addon class that opted into HLS via ``HLS_CAPABLE``.
-    The downloader falls back to the module-level
-    ``HLS_PREFERRED_QUALITY_ORDER`` (1080p → 720p → 480p → 2160p) when
-    no addon-specific preference is provided.
+    Dispatch is driven by the ``HLS_DOWNLOAD_METHOD`` setting:
+
+    * ``"ffmpeg"`` (default) — shell out to ``ffmpeg -i <url> -c copy
+      <out>`` via :class:`HlsFfmpegDownloader`.  Robust against every
+      HLS variant the CDN can serve (encrypted segments, byte-range
+      / init segments, discontinuity, live edge, etc.).  Falls back
+      to the segment-based downloader if ffmpeg is not on ``PATH``
+      or if ffmpeg itself returns a non-zero exit code.
+    * ``"segment"`` — pure-Python :class:`HlsDownloader` that
+      fetches the playlist, picks a variant, downloads each
+      ``.ts``/``.m3u`` segment and concatenates them.  No external
+      dependency but limited to unencrypted playlists.
     """
     import threading
 
     from py_stremio.components.download.hls_download import HlsDownloader
+    from py_stremio.components.download.hls_ffmpeg_download import (
+        HlsFfmpegDownloader,
+        HlsFfmpegError,
+        find_ffmpeg,
+        warn_missing_ffmpeg,
+    )
 
     active_thread_id = (
         thread_id if thread_id is not None else threading.get_ident()
     )
+
+    method = (
+        getattr(settings, "HLS_DOWNLOAD_METHOD", "ffmpeg") or "ffmpeg"
+    ).lower()
+
+    if method == "ffmpeg":
+        ffmpeg_path = find_ffmpeg()
+        if ffmpeg_path:
+            ffmpeg_downloader = HlsFfmpegDownloader(
+                bandwidth_limiter=bandwidth_limiter,
+                thread_id=active_thread_id,
+                progress_callback=progress_callback,
+                stall_timeout=stall_timeout,
+            )
+            try:
+                ffmpeg_downloader.download(url, filename)
+                return
+            except HlsFfmpegError as exc:
+                # ffmpeg failed — fall through to the segment-based
+                # downloader so the user is not stuck on a single bad
+                # playlist.  Surface the cause in the error message so
+                # logs still make sense.
+                import warnings as _w
+
+                _w.warn(
+                    f"ffmpeg HLS download failed ({exc}); falling back "
+                    f"to segment-based downloader for {url}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+        # No ffmpeg on PATH (or ffmpeg failed and we're falling back).
+        # Warn once and use the segment-based downloader so the
+        # download still has a chance of succeeding.
+        warn_missing_ffmpeg()
 
     downloader = HlsDownloader(
         bandwidth_limiter=bandwidth_limiter,

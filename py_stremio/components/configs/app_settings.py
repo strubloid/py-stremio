@@ -95,6 +95,20 @@ class Settings:
     INTERNET_MAX_SPEED_MBPS: float = field(default_factory=lambda: float(os.getenv("INTERNET_MAX_SPEED_MBPS", "100")))
     DRY_RUN: bool = field(default_factory=lambda: os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes"))
 
+    # How to download HLS ``.m3u8`` streams once one is found:
+    #   ``"ffmpeg"``   — shell out to ``ffmpeg -i <url> -c copy <out>``.
+    #                    Handles every HLS variant (encrypted segments,
+    #                    discontinuity tags, byte-range / init segments,
+    #                    live edge, etc.) and is the recommended option.
+    #                    Falls back to ``"segment"`` if ffmpeg is not
+    #                    installed and a warning is emitted.
+    #   ``"segment"``  — pure-Python downloader that fetches the
+    #                    playlist, picks a variant, downloads each
+    #                    ``.ts``/``.m4s`` segment and concatenates
+    #                    them.  No external dependency but limited to
+    #                    unencrypted playlists.
+    HLS_DOWNLOAD_METHOD: str = field(default_factory=lambda: os.getenv("HLS_DOWNLOAD_METHOD", "ffmpeg").lower().strip())
+
     PREFERRED_LANGUAGES: list[str] = field(default_factory=lambda: [
         lang.strip() for lang in os.getenv("PREFERRED_LANGUAGES", "english").split(",") if lang.strip()
     ])
