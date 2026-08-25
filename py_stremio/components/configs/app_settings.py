@@ -85,6 +85,14 @@ class Settings:
     # routed here because HDHub does not accept it.
     HDHUB_DEBRID_KEY: str | None = field(default_factory=lambda: os.getenv("HDHUB_DEBRID_KEY", "").strip('"').strip("'"))
     MAX_DOWNLOAD_ATTEMPTS: int = field(default_factory=lambda: int(os.getenv("MAX_DOWNLOAD_ATTEMPTS", "5")))
+    # Self-heal for stuck retry budgets. A ``failed_items`` entry that
+    # is older than this many days (and whose episode is still missing
+    # from disk) is silently cleared before the missing-list scan so a
+    # brand-new episode in the same season does not get permanently
+    # blocked by stale failures from a long-dead source. Set to ``0``
+    # to disable the auto-reset and keep the old "once burned, always
+    # skipped" behaviour.
+    FAILED_ITEM_AUTO_RESET_DAYS: int = field(default_factory=lambda: int(os.getenv("FAILED_ITEM_AUTO_RESET_DAYS", "7")))
     LIMIT_EPISODES: int = field(default_factory=lambda: int(os.getenv("LIMIT_EPISODES", "0")))
     MIN_COMPLETED_VIDEO_SIZE_MB: int = field(default_factory=lambda: int(os.getenv("MIN_COMPLETED_VIDEO_SIZE_MB", "100")))
     DOWNLOAD_THREADS: int = field(default_factory=lambda: int(os.getenv("DOWNLOAD_THREADS", "2")))

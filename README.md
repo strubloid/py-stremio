@@ -70,6 +70,7 @@ cp .env.example .env
 | `ROOT_FOLDER` | `~/stremio-downloads` | Base download folder |
 | `REAL_DEBRID_API_KEY` | — | Debrid service API key |
 | `MAX_DOWNLOAD_ATTEMPTS` | `5` | Retry rounds per episode |
+| `FAILED_ITEM_AUTO_RESET_DAYS` | `7` | Days before a stuck `failed_items` entry is silently cleared (also reset on metadata refresh). Set to `0` to disable. |
 | `DOWNLOAD_THREADS` | `2` | Parallel download workers |
 | `DOWNLOAD_STALL_TIMEOUT` | `60` | Seconds without bytes before aborting a stalled download |
 | `INTERNET_SPEED_LIMIT` | `100` | Bandwidth cap (%) |

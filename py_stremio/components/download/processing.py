@@ -2,6 +2,7 @@
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import threading
 import time
@@ -629,6 +630,101 @@ def _episode_is_exhausted(
     return attempted >= max_attempts
 
 
+def _auto_reset_stale_failed_items(
+    state,
+    config,
+    reset_days: int,
+) -> list[int]:
+    """Drop ``failed_items`` entries that are too old to still be useful.
+
+    The retry budget exists to stop the pipeline from re-queueing a
+    permanently-broken episode on every run. The flip side is that a
+    single stuck counter can keep a *new* episode — added to the same
+    season weeks later — from being downloaded at all, because the
+    pre-existing exhausted entry is still on disk and the user is
+    expected to either ``PY_STREMIO_RETRY_FAILED=true`` or hand-edit
+    ``.download-state.json`` to clear it.
+
+    This helper walks ``state.failed_items`` once and removes any
+    ``episode_N`` entry that satisfies BOTH:
+
+    * the entry's ``timestamp`` is older than ``reset_days`` (the user
+      has not seen a real attempt in a long time — either the source
+      ecosystem rotated or the file genuinely became available later);
+      a ``metadata_last_checked`` newer than the failure timestamp is
+      treated as an immediate reset signal (the metadata service has
+      already re-validated the season and implicitly vouched for it);
+    * the episode is still missing from disk AND is still part of the
+      season's known ``available_episodes`` — we never resurrect an
+      episode that has been removed from the season metadata.
+
+    Returns the list of episode numbers that were cleared, in season
+    order, so the caller can log a one-line notice per folder.
+    """
+    if reset_days <= 0:
+        return []
+
+    metadata_refresh: datetime | None = None
+    raw = getattr(config, "metadata_last_checked", None)
+    if raw:
+        try:
+            metadata_refresh = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            metadata_refresh = None
+        if metadata_refresh is not None and metadata_refresh.tzinfo is None:
+            metadata_refresh = metadata_refresh.replace(tzinfo=timezone.utc)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=reset_days)
+
+    known_episodes: set[int] | None = None
+    if config.available_episodes is not None:
+        try:
+            known_episodes = {int(ep) for ep in config.available_episodes}
+        except (TypeError, ValueError):
+            known_episodes = None
+
+    cleared: list[int] = []
+    for key in list(state.failed_items):
+        if not key.startswith("episode_"):
+            continue
+        suffix = key[len("episode_"):]
+        if not suffix.isdigit():
+            continue
+        episode_num = int(suffix)
+
+        if known_episodes is not None and episode_num not in known_episodes:
+            # The episode is no longer in this season (e.g. the metadata
+            # service trimmed it). Leave the failure record alone so we
+            # do not silently re-admit an episode that should stay gone.
+            continue
+
+        entry = state.failed_items[key]
+        stamp_raw = entry.get("timestamp") if isinstance(entry, dict) else None
+        stamp: datetime | None = None
+        if stamp_raw:
+            try:
+                stamp = datetime.fromisoformat(str(stamp_raw))
+            except (TypeError, ValueError):
+                stamp = None
+        if stamp is not None and stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+
+        stale_by_age = stamp is not None and stamp < cutoff
+        stale_by_metadata = (
+            metadata_refresh is not None
+            and stamp is not None
+            and metadata_refresh > stamp
+        )
+        if not (stale_by_age or stale_by_metadata):
+            continue
+
+        state.failed_items.pop(key, None)
+        cleared.append(episode_num)
+
+    cleared.sort()
+    return cleared
+
+
 def _update_disabled_servers(
     state,
     config,
@@ -890,6 +986,25 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
     # budget across previous runs.
     retry_failed = _retry_failed_episodes_requested()
     max_attempts = getattr(settings, "MAX_DOWNLOAD_ATTEMPTS", 5)
+    # ── Auto-reset stale retry budgets ─────────────────────────────────────
+    # Drop any ``failed_items`` entry that is too old to be useful (or
+    # that was registered before the season's last metadata refresh).
+    # Without this, a brand-new episode added to a season with a stuck
+    # counter would be permanently skipped until the user hand-edits
+    # ``.download-state.json``.  The reset only runs when the episode
+    # is still part of ``available_episodes`` and the file is still
+    # missing, so a genuine permanent failure (file gone, episode
+    # removed from metadata) is left alone.
+    reset_days = getattr(settings, "FAILED_ITEM_AUTO_RESET_DAYS", 7)
+    if reset_days > 0 and not retry_failed:
+        cleared_episodes = _auto_reset_stale_failed_items(
+            state, config, reset_days
+        )
+        for ep in cleared_episodes:
+            print(
+                f"    ↻ Auto-reset S{season:02d}E{ep:02d} failure counter "
+                f"(stale: {reset_days}-day window elapsed or metadata refreshed)"
+            )
     missing: list[int] = []
     skipped_exhausted: list[int] = []
     # ── Stale-history scan ───────────────────────────────────────────────────

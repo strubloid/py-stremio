@@ -291,6 +291,7 @@ ELSE
 | MOVIES_FOLDER | `{ROOT}/movies` | Movies root |
 | REAL_DEBRID_API_KEY | None | Debrid service key |
 | MAX_DOWNLOAD_ATTEMPTS | 5 | Retry limit per quality |
+| FAILED_ITEM_AUTO_RESET_DAYS | 7 | Days before a stuck `failed_items` entry is silently cleared (also reset on metadata refresh). Set to `0` to disable the self-heal. |
 | LIMIT_EPISODES | 0 | Max episodes per run (0=unlimited) |
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min size for valid completed file |
 | DOWNLOAD_THREADS | 2 | Parallel download workers |

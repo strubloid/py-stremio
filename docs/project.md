@@ -214,6 +214,7 @@ skipped, not replaced.
 | ROOT_FOLDER | `~/stremio-downloads` | Base folder |
 | REAL_DEBRID_API_KEY | None | Debrid service key |
 | MAX_DOWNLOAD_ATTEMPTS | 5 | Retry rounds per episode |
+| FAILED_ITEM_AUTO_RESET_DAYS | 7 | Days before a stuck `failed_items` entry is silently cleared (also reset on metadata refresh). Set to `0` to disable. |
 | LIMIT_EPISODES | 0 | Max per run (0=unlimited) |
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min valid file size |
 | DOWNLOAD_THREADS | 2 | Parallel workers |

@@ -30,6 +30,7 @@ The two new behaviours covered here:
 from types import SimpleNamespace
 
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from py_stremio.components.configs.config_file import (
     DownloadConfig,
@@ -38,6 +39,7 @@ from py_stremio.components.configs.config_file import (
 )
 from py_stremio.components.download import processing
 from py_stremio.components.download.processing import (
+    _auto_reset_stale_failed_items,
     _missing_episodes,
     _TRANSIENT_NO_STREAMS_REASONS,
     process_season_folder,
@@ -48,11 +50,12 @@ from py_stremio.components.state.app_state import DownloadState, load_state
 # ── Settings + helpers ──────────────────────────────────────────────
 
 
-def _settings(max_attempts: int = 5) -> SimpleNamespace:
+def _settings(max_attempts: int = 5, *, reset_days: int = 0) -> SimpleNamespace:
     return SimpleNamespace(
         LIMIT_EPISODES=0,
         MIN_COMPLETED_VIDEO_SIZE_MB=100,
         MAX_DOWNLOAD_ATTEMPTS=max_attempts,
+        FAILED_ITEM_AUTO_RESET_DAYS=reset_days,
         DOWNLOAD_STALL_TIMEOUT=60.0,
         PREFERRED_LANGUAGES=["english"],
         DRY_RUN=False,
@@ -354,4 +357,160 @@ class TestPreflightIndeterminateReasons:
             "When the preflight was NOT indeterminate the episode must be "
             "recorded as a normal failure so the cross-run budget "
             "increments and the episode is eventually skipped."
+        )
+
+
+# ── Auto-reset stale retry budgets ────────────────────────────────
+
+
+class TestAutoResetStaleFailedItems:
+    """Stuck retry budgets must self-heal after enough time has passed
+    (or after a metadata refresh), otherwise a brand-new episode in the
+    same season would be permanently blocked by a counter left over
+    from a long-dead source."""
+
+    def _now(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+    def test_helper_clears_entry_older_than_reset_window(self, tmp_path):
+        config = _season_config(tmp_path, episode_count=6)
+        state = DownloadState(folder_path=tmp_path)
+        old = self._now() - timedelta(days=10)
+        state.failed_items["episode_4"] = {
+            "error": "No streams found",
+            "attempt": 5,
+            "timestamp": old.isoformat(),
+        }
+        cleared = _auto_reset_stale_failed_items(state, config, reset_days=7)
+        assert cleared == [4]
+        assert "episode_4" not in state.failed_items, (
+            "An entry older than the reset window must be cleared so the "
+            "episode can re-enter the missing list on the next run."
+        )
+
+    def test_helper_keeps_recent_entry(self, tmp_path):
+        config = _season_config(tmp_path, episode_count=6)
+        state = DownloadState(folder_path=tmp_path)
+        recent = self._now() - timedelta(hours=2)
+        state.failed_items["episode_4"] = {
+            "error": "No streams found",
+            "attempt": 5,
+            "timestamp": recent.isoformat(),
+        }
+        cleared = _auto_reset_stale_failed_items(state, config, reset_days=7)
+        assert cleared == []
+        assert state.was_attempted("episode_4") == 5, (
+            "A recent failure must NOT be auto-reset — the budget still "
+            "exists to avoid burning runs on a known-broken source."
+        )
+
+    def test_helper_respects_reset_days_zero(self, tmp_path):
+        config = _season_config(tmp_path, episode_count=6)
+        state = DownloadState(folder_path=tmp_path)
+        ancient = self._now() - timedelta(days=365)
+        state.failed_items["episode_4"] = {
+            "error": "No streams found",
+            "attempt": 5,
+            "timestamp": ancient.isoformat(),
+        }
+        cleared = _auto_reset_stale_failed_items(state, config, reset_days=0)
+        assert cleared == []
+        assert state.was_attempted("episode_4") == 5, (
+            "FAILED_ITEM_AUTO_RESET_DAYS=0 must disable the self-heal so "
+            "users who want strict 'once burned, always skipped' can opt in."
+        )
+
+    def test_helper_resets_on_metadata_refresh(self, tmp_path):
+        """A metadata refresh is a stronger signal than a fixed timer:
+        the metadata service has just re-validated the season, so any
+        failure recorded before that refresh is automatically stale."""
+        config = _season_config(tmp_path, episode_count=6)
+        config.metadata_last_checked = (
+            self._now() - timedelta(hours=1)
+        ).isoformat()
+        state = DownloadState(folder_path=tmp_path)
+        # Failure was recorded 2 hours ago — within the 7-day window.
+        state.failed_items["episode_4"] = {
+            "error": "No streams found",
+            "attempt": 5,
+            "timestamp": (self._now() - timedelta(hours=2)).isoformat(),
+        }
+        cleared = _auto_reset_stale_failed_items(state, config, reset_days=7)
+        assert cleared == [4]
+        assert "episode_4" not in state.failed_items
+
+    def test_helper_skips_episodes_no_longer_in_available_list(self, tmp_path):
+        """If the metadata service dropped an episode from
+        ``available_episodes`` the failure record must be left alone —
+        silently resurrecting an episode the metadata has removed would
+        surprise the user."""
+        config = _season_config(tmp_path, episode_count=6)
+        config.available_episodes = [1, 2, 3, 5, 6]  # 4 removed
+        state = DownloadState(folder_path=tmp_path)
+        ancient = self._now() - timedelta(days=30)
+        state.failed_items["episode_4"] = {
+            "error": "No streams found",
+            "attempt": 5,
+            "timestamp": ancient.isoformat(),
+        }
+        cleared = _auto_reset_stale_failed_items(state, config, reset_days=7)
+        assert cleared == []
+        assert state.was_attempted("episode_4") == 5
+
+    def test_missing_episodes_admits_auto_reset_episode(self, tmp_path, monkeypatch, capsys):
+        """End-to-end: a stuck episode older than the reset window must
+        re-enter the missing list so the downloader actually tries it,
+        and a one-line notice is printed so the user can see why."""
+        # Other tests in this file mutate ``os.environ["PY_STREMIO_RETRY_FAILED"]``
+        # via the CLI-flag helper without a monkeypatch.setenv, so make
+        # sure it is NOT set here — otherwise the existing
+        # ``PY_STREMIO_RETRY_FAILED`` bypass would mask the auto-reset
+        # behaviour we want to assert.
+        monkeypatch.delenv("PY_STREMIO_RETRY_FAILED", raising=False)
+        monkeypatch.delenv("PY_STREMIO_CLI_RETRY_FAILED", raising=False)
+        monkeypatch.setattr(processing, "settings", _settings(max_attempts=5, reset_days=7))
+        config = _season_config(tmp_path, episode_count=6)
+        state = DownloadState(folder_path=tmp_path)
+        ancient = self._now() - timedelta(days=14)
+        state.failed_items["episode_4"] = {
+            "error": "No streams found",
+            "attempt": 5,
+            "timestamp": ancient.isoformat(),
+        }
+        missing = _missing_episodes(tmp_path, config, state, season=2, existing_episodes=set())
+        assert 4 in missing, (
+            "An exhausted failure record older than the reset window must "
+            "be auto-cleared so the episode re-enters the missing list. "
+            "Otherwise a new episode in the same season can stay stuck "
+            "forever (or until the user hand-edits .download-state.json)."
+        )
+        captured = capsys.readouterr().out
+        assert "Auto-reset S02E04" in captured, (
+            "The auto-reset must be announced so the user can see why a "
+            "previously-skipped episode is being retried."
+        )
+
+    def test_missing_episodes_keeps_fresh_exhausted_episode(self, tmp_path, monkeypatch):
+        """A failure record that is still inside the reset window must
+        continue to be skipped — the self-heal must not undo the
+        cross-run budget the moment the threshold is met."""
+        # See note in ``test_missing_episodes_admits_auto_reset_episode``
+        # — the leak from the CLI-flag test would otherwise bypass the
+        # budget entirely via ``PY_STREMIO_RETRY_FAILED``.
+        monkeypatch.delenv("PY_STREMIO_RETRY_FAILED", raising=False)
+        monkeypatch.delenv("PY_STREMIO_CLI_RETRY_FAILED", raising=False)
+        monkeypatch.setattr(processing, "settings", _settings(max_attempts=5, reset_days=7))
+        config = _season_config(tmp_path, episode_count=6)
+        state = DownloadState(folder_path=tmp_path)
+        recent = self._now() - timedelta(hours=6)
+        state.failed_items["episode_4"] = {
+            "error": "No streams found",
+            "attempt": 5,
+            "timestamp": recent.isoformat(),
+        }
+        missing = _missing_episodes(tmp_path, config, state, season=2, existing_episodes=set())
+        assert 4 not in missing, (
+            "A fresh exhausted episode must stay skipped — the reset "
+            "window exists to prevent the system from being stuck, not "
+            "to bypass the budget the moment a failure happens."
         )
