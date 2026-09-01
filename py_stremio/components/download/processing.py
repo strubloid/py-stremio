@@ -76,6 +76,7 @@ class SeasonFolderTask:
     servers_lock: threading.Lock = field(default_factory=threading.Lock)
     config_lock: threading.Lock = field(default_factory=threading.Lock)
     progress_lock: threading.Lock = field(default_factory=threading.Lock)
+    state_lock: threading.Lock = field(default_factory=threading.Lock)
     worker_semaphore: threading.Semaphore | None = None
     quiet_output: bool = False
     # Accumulated results (mutated in place as episodes complete)
@@ -99,6 +100,12 @@ class SeasonFolderTask:
     # path to know it should mark ``state.in_progress`` before opening
     # the network stream.
     in_progress_episodes: list[int] = field(default_factory=list)
+    # Episodes that previously produced real bytes from the network
+    # stream (see ``docs/download-priority.md``). Hoisted above the
+    # fresh bucket but below resume candidates. Tracked on the task
+    # for diagnostics — the actual reordering happens in
+    # ``setup_season_folder``.
+    priority_episodes: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -226,6 +233,44 @@ def setup_season_folder(
         )
         missing = [*resume_first, *fresh]
 
+    # ── Priority-list ordering ──────────────────────────────────────────
+    # After resume-first, hoist episodes that have a live ``started``
+    # marker but no ``.part`` on disk. These are the items that
+    # recently produced real bytes from the network — the seeds are
+    # still the most likely source today. Pruning (TTL, episode
+    # removal, on-disk completion) happens inside
+    # ``prune_stale_started`` so a one-line ``prune`` call keeps the
+    # state file in sync without scattering TTL logic across the
+    # pipeline.
+    priority_episodes: list[int] = []
+    pruned_started = state.prune_stale_started(
+        folder_path=folder_path, config=config
+    )
+    if pruned_started and not quiet_output:
+        print(
+            f"      ↻ Pruned {len(pruned_started)} stale 'started' marker(s) "
+            f"(TTL elapsed, on-disk, or metadata-removed)"
+        )
+    if missing:
+        priority_episodes = _priority_episodes_from_state(
+            state, config.episode_count or 0, config=config
+        )
+        if priority_episodes:
+            priority_first, fresh = _partition_missing_by_priority(
+                missing, priority_episodes, resume_episodes=in_progress_episodes
+            )
+            if priority_first:
+                missing = [*priority_first, *fresh]
+                if not quiet_output:
+                    p_list = ", ".join(
+                        f"S{season:02d}E{ep:02d}" for ep in priority_first
+                    )
+                    print(
+                        f"      ⤴ {len(priority_first)} previously-started episode(s) "
+                        f"({p_list}) — queued before fresh searches "
+                        f"(seeds were alive recently)"
+                    )
+
     if missing:
         _set_current_episode(config, config_path, missing[0])
     elif start_episode <= (config.episode_count or 1) and config.available_episodes is None:
@@ -326,6 +371,7 @@ def setup_season_folder(
         no_working_addons=no_working_addons,
         preflight_indeterminate=preflight_indeterminate,
         in_progress_episodes=list(in_progress_episodes),
+        priority_episodes=list(priority_episodes),
     )
 
 
@@ -438,6 +484,33 @@ def _do_download_one_episode(
 
     stage_tracker.on_update(_emit_with_stage)
 
+    # ── Priority-list hook ────────────────────────────────────────────────
+    # The "started" marker is set the first time the network stream
+    # actually produces bytes. ``mark_started`` is idempotent and
+    # anchored to the FIRST real byte arrival, so repeated ``on_bytes``
+    # callbacks (one per chunk, plus resume cases) only refresh the
+    # server hint and never move the TTL window.
+    started_marked = task.state.is_started(f"episode_{episode_num}")
+
+    def _record_started_first_byte(byte_count: int) -> None:
+        """Persist the "started" marker once real bytes have arrived."""
+        nonlocal started_marked
+        if started_marked:
+            return
+        server_hint = (
+            task.servers[0]
+            if task.servers and task.servers[0]
+            else None
+        )
+        with task.state_lock:
+            task.state.mark_started(
+                f"episode_{episode_num}",
+                server=server_hint,
+                bytes_at_first_arrival=byte_count,
+            )
+            save_state(task.folder_path, task.state)
+        started_marked = True
+
     def on_bytes(downloaded_bytes: int, total_bytes: int) -> None:
         nonlocal last_downloaded_bytes, last_total_bytes, last_rate_bps, last_progress_bytes, last_progress_at, last_bytes_event
         now = time.monotonic()
@@ -453,6 +526,15 @@ def _do_download_one_episode(
             last_progress_at = now
         last_downloaded_bytes = downloaded_bytes
         last_total_bytes = total_bytes
+        # First real byte arrival — flip the priority-list flag.
+        # ``downloaded_bytes`` already accounts for the resume offset, so
+        # a pure resume case also crosses the threshold on the very first
+        # callback, which is correct: a resumed download had live seeds
+        # too. ``on_bytes`` may also be invoked with byte counts from the
+        # HLS dispatchers (segment counts), so the guard uses ``> 0``
+        # rather than ``> existing_size`` to keep both paths uniform.
+        if downloaded_bytes > 0:
+            _record_started_first_byte(downloaded_bytes)
         last_bytes_event = {
             "type": "bytes",
             "title": task.title,
@@ -968,6 +1050,62 @@ def _partition_missing_by_in_progress(
     resume_first = [ep for ep in missing if ep in in_progress_set]
     fresh = [ep for ep in missing if ep not in in_progress_set]
     return resume_first, fresh
+
+
+def _partition_missing_by_priority(
+    missing: list[int],
+    priority_episodes: list[int],
+    resume_episodes: list[int] | None = None,
+) -> tuple[list[int], list[int]]:
+    """Split *missing* into (priority_first, fresh) buckets.
+
+    Used by :func:`setup_season_folder` to apply the second tier of the
+    three-tier queue ordering described in ``docs/download-priority.md``:
+
+    * Tier 1 — resume candidates (have a live ``.part`` file).
+    * Tier 2 — priority candidates (previously started downloading,
+      the ``.part`` is gone but the seeds were alive recently).
+    * Tier 3 — fresh (never attempted this run).
+
+    ``priority_episodes`` are episodes whose ``state.started`` marker
+    is still within the TTL window. ``resume_episodes`` is an optional
+    set to exclude — a resume candidate is already handled by the
+    first tier and should not appear here again.
+
+    The caller should concatenate the buckets in this order:
+
+        [resume_first] + [priority_first] + [fresh]
+    """
+    resume_set = set(resume_episodes or [])
+    priority_set = {ep for ep in priority_episodes if ep not in resume_set}
+    priority_first = [ep for ep in missing if ep in priority_set]
+    fresh = [ep for ep in missing if ep not in priority_set]
+    return priority_first, fresh
+
+
+def _priority_episodes_from_state(
+    state: DownloadState,
+    episode_count: int,
+    config=None,
+) -> list[int]:
+    """Return the list of episode numbers with live ``started`` markers.
+
+    Episodes are filtered against three rules:
+
+    * The episode number must be within ``[1, episode_count]`` —
+      ``available_episodes`` is consulted separately inside
+      :meth:`DownloadState.prune_stale_started`, which is called by
+      :func:`setup_season_folder` with the ``config`` argument.
+    * The marker must still be within the TTL window
+      (see :data:`STARTED_MAX_AGE_SECONDS`).
+    * Stale markers are dropped as a side effect (the helper
+      ``is_started`` lazily expires entries).
+    """
+    priority: list[int] = []
+    for ep in range(1, max(1, episode_count) + 1):
+        if state.is_started(f"episode_{ep}"):
+            priority.append(ep)
+    return priority
 
 
 def _missing_episodes(folder_path: Path, config, state, season: int, existing_episodes: set[int]) -> list[int]:
@@ -1490,6 +1628,30 @@ def process_movie_folder(
                 f"({human} already on disk) — search will reuse the bytes via HTTP Range"
             )
 
+    # ── Priority-list detection ────────────────────────────────────────
+    # When the movie was previously started (real bytes once flowed but
+    # the file never finished — e.g. the user interrupted or the .part
+    # was deleted by validation), the seeds that served us yesterday are
+    # still the most likely source today. ``prune_stale_started`` drops
+    # markers past their TTL, with a matching on-disk ``.mkv``, or for
+    # any other reason listed in its docstring.
+    movie_partial_name = partial_path.name
+    state.prune_stale_started(
+        keep_keys={movie_partial_name},
+        folder_path=folder_path,
+        config=config,
+    )
+    if not partial_path.exists() and state.is_started(movie_partial_name):
+        prior = state.started.get(movie_partial_name) or {}
+        prior_server = prior.get("server") or ""
+        suffix = (
+            f" (previously served by {prior_server})" if prior_server else ""
+        )
+        print(
+            f"  ⤴ Movie previously started downloading{suffix} — "
+            f"seeds likely still alive, querying addons now"
+        )
+
     title = config.search_group or config.title or folder_path.name
     servers = unique_manifest_urls(config.servers)
     disabled = set(unique_manifest_urls(config.disabled_servers))
@@ -1537,6 +1699,26 @@ def process_movie_folder(
     # Emit initial state so T/L/E bars appear from the start
     _movie_emit_stage()
 
+    # ── Priority-list hook (movies) ─────────────────────────────────────
+    # Mirror of the per-episode ``_record_started_first_byte``. The
+    # marker is set once per item, anchored to the FIRST real byte
+    # arrival. ``mark_started`` is itself idempotent, so the guard
+    # below is a cheap no-op fast path.
+    movie_started_marked = state.is_started(movie_partial_name)
+
+    def _record_movie_started_first_byte(byte_count: int) -> None:
+        nonlocal movie_started_marked
+        if movie_started_marked:
+            return
+        server_hint = servers[0] if servers else None
+        state.mark_started(
+            movie_partial_name,
+            server=server_hint,
+            bytes_at_first_arrival=byte_count,
+        )
+        save_state(folder_path, state)
+        movie_started_marked = True
+
     def on_movie_bytes(downloaded_bytes: int, total_bytes: int) -> None:
         nonlocal movie_last_bytes, movie_last_downloaded, movie_last_total
         nonlocal movie_last_progress_bytes, movie_last_progress_at, movie_rate_bps
@@ -1551,6 +1733,12 @@ def process_movie_folder(
         movie_last_progress_at = now
         movie_last_downloaded = downloaded_bytes
         movie_last_total = total_bytes
+        # First real byte arrival — flip the priority-list flag for
+        # the next run. ``downloaded_bytes`` is the cumulative count
+        # (post-resume-offset), so the very first callback after the
+        # download genuinely starts streaming crosses this threshold.
+        if downloaded_bytes > 0:
+            _record_movie_started_first_byte(downloaded_bytes)
         movie_last_bytes = {
             "type": "bytes",
             "title": title,
