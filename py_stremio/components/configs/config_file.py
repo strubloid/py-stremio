@@ -136,10 +136,25 @@ def load_config(folder_path: Path) -> tuple[DownloadConfig, Path]:
 
 
 def save_config(config_path: Path, config: DownloadConfig) -> None:
-    """Save config to file."""
+    """Save config to file.
+
+    Mirrors :func:`py_stremio.components.state.app_state.save_state`:
+    I/O errors are reported through the error reporter but never raised,
+    so a flaky / full filesystem cannot abort a download run. The
+    existing on-disk config is preserved by :func:`atomic_write_json`.
+    """
     data = asdict(config)
     if data.get("quality") and isinstance(data["quality"], dict):
         data["quality"] = data["quality"]
     else:
         data["quality"] = asdict(data["quality"]) if data.get("quality") else None
-    atomic_write_json(config_path, data, indent=2)
+    try:
+        atomic_write_json(config_path, data, indent=2)
+    except OSError as exc:
+        from py_stremio.components.errors import report_error
+
+        report_error(
+            context=f"save_config({config_path.parent.name})",
+            exception=exc,
+            url=str(config_path),
+        )

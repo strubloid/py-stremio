@@ -566,7 +566,16 @@ def load_state(folder_path: Path) -> DownloadState:
 
 
 def save_state(folder_path: Path, state: DownloadState) -> None:
-    """Save state to file."""
+    """Save state to file.
+
+    I/O errors (disk full, ``OSError`` from a flaky network mount, …) are
+    reported through :func:`py_stremio.components.errors.report_error` but
+    NOT re-raised. The download progress is the source of truth (the
+    on-disk ``.part`` files), so a state-file failure must never abort
+    the pipeline — the next run can rebuild the state from disk. Only
+    programmer-level bugs (e.g. non-serializable data → ``TypeError``)
+    still propagate.
+    """
     state_path = folder_path / ".download-state.json"
     data = {
         "items": {k: asdict(v) for k, v in state.items.items()},
@@ -577,4 +586,13 @@ def save_state(folder_path: Path, state: DownloadState) -> None:
         "in_progress": state.in_progress,
         "started": state.started,
     }
-    atomic_write_json(state_path, data, indent=2)
+    try:
+        atomic_write_json(state_path, data, indent=2)
+    except OSError as exc:
+        from py_stremio.components.errors import report_error
+
+        report_error(
+            context=f"save_state({folder_path.name})",
+            exception=exc,
+            url=str(state_path),
+        )
