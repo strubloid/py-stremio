@@ -46,8 +46,20 @@ class MetadataService:
     def __init__(self):
         self.scanner = Scanner()
 
-    def run(self, folders: list | None = None, quiet: bool = False, use_cache: bool = False) -> int:
-        """Update metadata for all series and movie folders. Returns number of configs updated."""
+    def run(
+        self,
+        folders: list | None = None,
+        quiet: bool = False,
+        use_cache: bool = False,
+        cache_hours: float | None = None,
+    ) -> int:
+        """Update metadata for all series and movie folders. Returns number of configs updated.
+
+        ``cache_hours`` overrides the freshness window used when
+        ``use_cache`` is True.  When None, the full-run window
+        (``METADATA_CACHE_HOURS``) is used; the cron ``configs`` and
+        ``download`` jobs pass ``CONFIGS_CACHE_HOURS`` instead.
+        """
         clear_shutdown()
         if folders is None:
             folders = self.scanner.scan()
@@ -64,7 +76,13 @@ class MetadataService:
             future_map = {}
             try:
                 future_map = {
-                    executor.submit(self._update_folder_metadata, folder, quiet, use_cache=use_cache): folder
+                    executor.submit(
+                        self._update_folder_metadata,
+                        folder,
+                        quiet,
+                        use_cache=use_cache,
+                        cache_hours=cache_hours,
+                    ): folder
                     for folder in series_folders
                 }
                 for future in as_completed(future_map):
@@ -92,7 +110,7 @@ class MetadataService:
                 if shutdown_requested():
                     break
                 try:
-                    changed, status = self._update_folder_metadata(folder, quiet, use_cache=use_cache)
+                    changed, status = self._update_folder_metadata(folder, quiet, use_cache=use_cache, cache_hours=cache_hours)
                     if changed:
                         updated += 1
                         if status:
@@ -109,7 +127,7 @@ class MetadataService:
             if shutdown_requested():
                 break
             try:
-                changed = self._update_movie_metadata(folder, use_cache=use_cache)
+                changed = self._update_movie_metadata(folder, use_cache=use_cache, cache_hours=cache_hours)
                 if changed:
                     updated += 1
             except Exception as e:
@@ -134,7 +152,17 @@ class MetadataService:
             print(_c(f"  ✓ Metadata refresh complete ({updated} updated) in {duration}", GREEN))
         return updated
 
-    def _update_folder_metadata(self, folder, quiet: bool, use_cache: bool = False) -> tuple[bool, list[str] | None]:
+    def _resolve_cache_hours(self, cache_hours: float | None) -> float:
+        """Resolve the freshness window in hours.
+
+        ``cache_hours`` (explicit) wins; otherwise fall back to the
+        full-run ``METADATA_CACHE_HOURS`` setting.
+        """
+        if cache_hours is not None:
+            return max(0.0, float(cache_hours))
+        return max(0.0, float(getattr(settings, "METADATA_CACHE_HOURS", 24)))
+
+    def _update_folder_metadata(self, folder, quiet: bool, use_cache: bool = False, cache_hours: float | None = None) -> tuple[bool, list[str] | None]:
         """Update a single folder's download-config.json. Returns (changed, status_row)."""
         config_model, config_path = load_config(folder.path)
         config = {
@@ -197,7 +225,7 @@ class MetadataService:
         canonical_title = config.get("title") or folder_title
         season_label = f"S{season:02d}"
 
-        if use_cache and self._metadata_cache_fresh(config):
+        if use_cache and self._metadata_cache_fresh(config, cache_hours=cache_hours):
             if changed:
                 atomic_write_json(config_path, config, indent=2)
             ep_display = str(config.get("episode_count") or "?")
@@ -289,7 +317,7 @@ class MetadataService:
 
         return changed, status_row
 
-    def _update_movie_metadata(self, folder, use_cache: bool = False) -> bool:
+    def _update_movie_metadata(self, folder, use_cache: bool = False, cache_hours: float | None = None) -> bool:
         """Update a single movie folder's download-config.json with IMDb ID and title.
 
         Returns True if the config was changed.
@@ -338,8 +366,7 @@ class MetadataService:
                 checked_at = datetime.fromisoformat(str(checked_text).replace("Z", "+00:00"))
                 if checked_at.tzinfo is None:
                     checked_at = checked_at.replace(tzinfo=timezone.utc)
-                cache_hours = max(0, int(getattr(settings, "METADATA_CACHE_HOURS", 24)))
-                use_cached = datetime.now(timezone.utc) - checked_at < timedelta(hours=cache_hours)
+                use_cached = datetime.now(timezone.utc) - checked_at < timedelta(hours=self._resolve_cache_hours(cache_hours))
             except ValueError:
                 pass
 
@@ -387,7 +414,7 @@ class MetadataService:
 
         return changed
 
-    def _metadata_cache_fresh(self, config: dict) -> bool:
+    def _metadata_cache_fresh(self, config: dict, cache_hours: float | None = None) -> bool:
         """Return True when cached metadata is complete and recent enough for full runs."""
         if not config.get("title") or not config.get("imdb_id") or config.get("season") is None:
             return False
@@ -402,5 +429,4 @@ class MetadataService:
             return False
         if checked_at.tzinfo is None:
             checked_at = checked_at.replace(tzinfo=timezone.utc)
-        cache_hours = max(0, int(getattr(settings, "METADATA_CACHE_HOURS", 24)))
-        return datetime.now(timezone.utc) - checked_at < timedelta(hours=cache_hours)
+        return datetime.now(timezone.utc) - checked_at < timedelta(hours=self._resolve_cache_hours(cache_hours))

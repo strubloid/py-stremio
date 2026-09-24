@@ -712,3 +712,21 @@ def test_download_folders_ctrl_c_cancels_pending_workers_without_waiting(tmp_pat
 
     assert shutdown_calls == [(False, True)]
     assert sorted(cancelled) == ["s01", "s02"]
+
+
+def test_cron_speed_percent_honors_wrapper_env(monkeypatch):
+    """The cron wrapper's INTERNET_SPEED_LIMIT (--speed on install) must
+    win over the hardcoded CRON_SPEED_PERCENT=80 preset, otherwise the
+    50% cap would be silently ignored."""
+    from py_stremio import main
+
+    monkeypatch.setenv("INTERNET_SPEED_LIMIT", "50")
+    assert main._cron_speed_percent() == 50
+
+
+def test_cron_speed_percent_falls_back_to_preset(monkeypatch):
+    """Without a wrapper-set env var, the cron 80% preset applies."""
+    from py_stremio import main
+
+    monkeypatch.delenv("INTERNET_SPEED_LIMIT", raising=False)
+    assert main._cron_speed_percent() == main.CRON_SPEED_PERCENT

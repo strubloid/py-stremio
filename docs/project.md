@@ -219,7 +219,8 @@ skipped, not replaced.
 | MIN_COMPLETED_VIDEO_SIZE_MB | 100 | Min valid file size |
 | DOWNLOAD_THREADS | 2 | Parallel workers |
 | DOWNLOAD_STALL_TIMEOUT | 60 | Seconds without bytes → abort |
-| METADATA_CACHE_HOURS | 24 | Skip refresh for recently checked |
+| METADATA_CACHE_HOURS | 24 | Skip refresh for recently checked (full runs) |
+| CONFIGS_CACHE_HOURS | 1 | Freshness window (hours, float) for the `--configs` / `ensure_fresh` cron gate |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % |
 | INTERNET_MAX_SPEED_MBPS | auto-probed | Line speed |
 | DRY_RUN | false | No actual downloads |

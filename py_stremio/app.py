@@ -101,6 +101,25 @@ class AppService:
         else:
             speed_percent = int(positional[1]) if len(positional) > 1 and positional[1].isdigit() else speed_percent
 
+        # ── Job history (cron job_runs stopgap) ──
+        # ``py-stremio status --jobs`` or ``py-stremio --jobs`` prints the
+        # JSONL job_runs log written by the cron wrapper and job_run().
+        if "--jobs" in args:
+            self._print_jobs()
+            return
+
+        # ── Incremental configs refresh (menu option 2, cheap variant) ──
+        # The cron ``configs`` job calls this every 30 min: same scan as
+        # ``--library`` but the metadata refresh uses the short
+        # CONFIGS_CACHE_HOURS window so recently-checked folders are
+        # skipped instead of re-hitting Cinemeta.
+        if "--configs" in args:
+            self._banner()
+            print(_c("\n🔄 Refresh configs", ACCENT))
+            self.ensure_fresh(quiet=False)
+            print_error_summary()
+            return
+
         # ── Library refresh (menu option 2) ──
         # New name: --library. Legacy names (--scan, --metadata, --config)
         # still work for backward compat.
@@ -121,23 +140,42 @@ class AppService:
             return
 
         # ── Full pipeline (menu option 1 = download + everything) ──
-        # `--run`/`--all` and the new `--download-all` both run the
-        # full pipeline: library refresh + addon validation + download.
-        if "--run" in args or "--all" in args or "--download-all" in args:
+        # `--run`/`--all` run the full pipeline: library sync + addon
+        # validation + download. ``--download-all`` used to be grouped
+        # here too, but is now a backward-compat alias for
+        # ``--download`` (see its own branch below).
+        if "--run" in args or "--all" in args:
             self._banner()
             self.run_pipeline(download=True, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
             return
 
-        # ── Download only (menu option 0, without library refresh) ──
-        # ``--download`` is accepted as an alias for ``--download-only``
-        # so the cron wrapper's ``py-stremio-cron --download`` call
-        # does what its docstring (``cron.sh:136``) already claims:
-        # download missing items without refreshing the library. The
-        # legacy ``action == "1"`` shorthand is preserved so
-        # ``py-stremio 1`` (CLI positional) keeps its current
-        # download-only behavior; the interactive menu's option 1
-        # (full pipeline) is dispatched in ``_run_menu`` instead.
-        if "--download-only" in args or "--download" in args or action == "1":
+        # ── Download with freshness gate (cron ``download`` job) ──
+        # ``--download-all`` kept as a backward-compatible alias so old
+        # crontabs / scripts keep working: its "refresh then download"
+        # is now simply the download job's own behaviour.  Noisy only
+        # once so a cron log is not spammed.
+        if "--download-all" in args:
+            self._banner()
+            print(_c("  note: --download-all is now an alias for --download (ensure-fresh + download). Use --run for the full pipeline.", YELLOW))
+            folders = self.ensure_fresh(quiet=True)
+            self.downloader.run(folders=folders, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+            print_error_summary()
+            return
+
+        # ── Download only ──
+        # ``--download`` (used by the cron wrapper) refreshes configs
+        # first via ensure_fresh so a run never starts on stale data,
+        # then downloads.  ``--download-only`` and the legacy
+        # ``action == "1"`` positional skip the refresh — pure
+        # download-only behaviour preserved for backwards compat.
+        if "--download" in args:
+            self._banner()
+            folders = self.ensure_fresh(quiet=True)
+            self.downloader.run(folders=folders, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+            print_error_summary()
+            return
+
+        if "--download-only" in args or action == "1":
             self._banner()
             self.downloader.run(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
             print_error_summary()
@@ -250,6 +288,70 @@ class AppService:
             self.downloader.run(folders, quiet=quiet, max_workers=max_workers, speed_percent=speed_percent)
 
         print_error_summary()
+
+    # ------------------------------------------------------------------
+    # Freshness gate — scan + incremental configs refresh
+    # ------------------------------------------------------------------
+
+    def ensure_fresh(self, quiet: bool = True) -> list:
+        """Scan folders and refresh configs/metadata, then return the folder list.
+
+        The transitional freshness gate for the cron ``configs`` /
+        ``download`` jobs (the SQLite catalog in ``plan.md`` replaces
+        this with a stored per-folder freshness budget).  Uses the
+        short ``CONFIGS_CACHE_HOURS`` window so a download run never
+        starts on stale episode lists, without re-hitting Cinemeta for
+        every folder on each run.
+        """
+        if not quiet:
+            self._phase("\n🔄 Ensure fresh", "scanning folders and refreshing configs...")
+        start = time.monotonic()
+        folders = self.scanner.run()
+        self.metadata.run(
+            folders=folders,
+            quiet=quiet,
+            use_cache=True,
+            cache_hours=settings.CONFIGS_CACHE_HOURS,
+        )
+        if not quiet:
+            elapsed = time.monotonic() - start
+            print(_c(
+                f"  ⏱  Freshness check finished in {self._format_duration(elapsed)} ({len(folders)} folder(s))",
+                DIM,
+            ))
+        return folders
+
+    def _print_jobs(self) -> None:
+        """Print the cron job_runs log entries recorded by job_run()."""
+        from py_stremio.services.job_log import job_runs_path, read_job_runs
+
+        records = read_job_runs(limit=50)
+        self._banner()
+        print(_c("\n🕘 Job runs", ACCENT))
+        print(f"  log: {job_runs_path()}")
+        if not records:
+            print("  no job runs recorded yet")
+            return
+        print()
+        for rec in records:
+            # Keep the full ISO timestamp including the zone offset:
+            # Python records UTC (+00:00) while the wrapper's date -Is
+            # records local time, so truncating the offset would make
+            # the ordering look wrong.
+            started = rec.get("started_at", "?")
+            job = rec.get("job", "?")
+            status = rec.get("status", "?")
+            extra = rec.get("error") or rec.get("skipped_reason") or ""
+            if status == "ok":
+                color = GREEN
+            elif status in ("skipped", "interrupted"):
+                color = YELLOW
+            else:
+                color = RED
+            line = f"  {started}  {job:<16} {status}"
+            if extra:
+                line += f"  ({extra})"
+            print(_c(line, color))
 
     # ------------------------------------------------------------------
     # Interactive menu

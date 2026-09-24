@@ -17,13 +17,12 @@
 #   --speed PERCENT   bandwidth cap per job (default: 50)
 #   --no-validate     skip the ROOT_FOLDER probe (faster startup)
 #
-# Default schedule (6 jobs):
-#   library-light     every 3h  — menu 2 (scan folders only)
-#   library-full      every 6h  — menu 2 (scan + metadata)
-#   download          every 2h  — menu 1 (download missing)
-#   download-all      every 12h — menu 1 + menu 2 (full pipeline)
-#   validate-addons   every 8h  — menu 3.1 (test addon URLs)
-#   discover-addons   every 12h — menu 3.2 (find new addon URLs)
+# Default schedule (4 jobs):
+#   configs           every 30m — incremental configs/metadata refresh (ensure-fresh)
+#   download          every 2h  — ensure-fresh + download missing, 50% speed
+#   validate-addons   every 8h  — test addon URLs
+#   discover-addons   every 12h — find new addon URLs
+# See cron-fix.md for the redesign rationale.
 #
 # Re-running ``install`` is idempotent: existing py-stremio entries
 # are replaced in place, the rest of the user's crontab is preserved.
@@ -131,13 +130,13 @@ ROOT_OVERRIDE=""
 #   3. Addons (validate, find more) — submenu with validate/discover/AI
 #   4. Settings
 #
-# The cron jobs map to the menu actions via clear flag names:
-#   --library         = menu 2: scan + refresh metadata
-#   --download        = menu 1: just download (no library refresh)
-#   --download-all    = menu 1 + menu 2: library refresh THEN download
-#   --validate-addons = menu 3.1: validate all URLs in addons.txt
-#   --discover-addons = menu 3.2: scrape sources + add to addons.txt
-#   --find-addons     = menu 3.3: AI predict + validate (slow, run rarely)
+# The cron jobs map to CLI flags:
+#   --configs         = incremental configs/metadata refresh (ensure-fresh)
+#   --download        = ensure-fresh + download missing items
+#   --validate-addons = validate all URLs in addons.txt
+#   --discover-addons = scrape sources + add to addons.txt
+#   --find-addons     = AI predict + validate (slow, run rarely)
+# See cron-fix.md for the full schedule design.
 #
 # Format per job:  "NAME|SCHEDULE|SUBCOMMAND"
 # The pipe separator avoids the ambiguity of splitting the schedule
@@ -145,12 +144,10 @@ ROOT_OVERRIDE=""
 CRON_MARKER="# py-stremio-managed:"
 
 declare -A JOBS=(
-    [library-light]='0 */3 * * *|--library'
-    [library-full]='0 */6 * * *|--library --metadata'
-    [download]='30 */2 * * *|--download'
-    [download-all]='0 0,12 * * *|--download-all'
-    [validate-addons]='0 */8 * * *|--validate-addons'
-    [discover-addons]='30 */12 * * *|--discover-addons'
+    [configs]='0,30 * * * *|--configs'
+    [download]='10 */2 * * *|--download'
+    [validate-addons]='20 */8 * * *|--validate-addons'
+    [discover-addons]='40 */12 * * *|--discover-addons'
 )
 
 # Wrapper location is derived from the install root and is referenced
@@ -187,7 +184,7 @@ build_cron_line() {
 }
 
 emit_crontab() {
-    for name in library-light library-full download download-all validate-addons discover-addons; do
+    for name in configs download validate-addons discover-addons; do
         local entry="${JOBS[$name]}"
         local schedule="${entry%%|*}"
         local subcmd="${entry#*|}"
@@ -213,27 +210,53 @@ write_wrapper() {
 # install to refresh).  Owns all the per-job environment so the
 # crontab stays free of long binary paths and per-invocation flags.
 #
-# Job name → action mapping matches the interactive menu:
-#   library-light, library-full  → menu 2 (Update library)
-#   download                     → menu 1 (Download only)
-#   download-all                 → menu 1 + menu 2 (full pipeline)
-#   validate-addons              → menu 3.1 (Validate addons)
-#   discover-addons              → menu 3.2 (Find more addons)
+# Job name → action mapping (see cron-fix.md):
+#   configs           → incremental configs/metadata refresh (ensure-fresh)
+#   download          → ensure-fresh then download missing items
+#   validate-addons   → validate addon URLs
+#   discover-addons   → find new addon URLs
 set -euo pipefail
+
+# Serialize concurrent py-stremio-cron runs. The minute-0 and minute-10
+# slots still make multiple jobs fire together (configs + validate-addons
+# at :00, download + discover-addons at 40), and an overdue run can
+# pile up behind the next. Concurrent runs race on .part files, clobber
+# each other's download-config.json / .download-state.json writes
+# (atomic_write.py's lock is process-local only), and each instance has
+# its own 50% bandwidth cap — so two instances can saturate 100% of
+# INTERNET_MAX_SPEED_MBPS.
+#
+# flock -n is non-blocking: if another job already holds the lock we
+# exit immediately instead of waiting, so an overdue cron run never
+# stacks up behind a slow one.  The lock is released automatically
+# when the process exits (including crash / kill -9) because the
+# kernel closes the file descriptor — no stale-lock cleanup needed.
+LOCKFILE="/tmp/py-stremio-cron.lock"
+exec 9>"\$LOCKFILE"
+if ! flock -n 9; then
+    # Record the skip in the job-runs log so ``py-stremio status --jobs``
+    # can show why this scheduled run produced no work.  The path
+    # mirrors ``py_stremio/services/job_log.py``.
+    JOB_RUNS="\${XDG_DATA_HOME:-\$HOME/.local/share}/py-stremio/job-runs.jsonl"
+    mkdir -p "\$(dirname "\$JOB_RUNS")"
+    TS="\$(date -Is)"
+    printf '{"job":"%s","started_at":"%s","ended_at":"%s","status":"skipped","skipped_reason":"another py-stremio job holds the lock"}\n' "\${1:-unknown}" "\$TS" "\$TS" >> "\$JOB_RUNS"
+    printf '[%s] another py-stremio job is already running; skipping %s\n'"\$TS" "\${1:-unknown}" >&2
+    exit 0
+fi
+
 export PATH="$VENV_BIN:\$PATH"
 export PY_STREMIO_ROOT="${INSTALL_ROOT:-\$HOME/.py-stremio}"
 export INTERNET_SPEED_LIMIT="$SPEED_PERCENT"
 
 case "\${1:-}" in
-    library-light)    exec py-stremio-cron --library ;;
-    library-full)     exec py-stremio-cron --library --metadata ;;
+    configs)          exec py-stremio-cron --configs ;;
     download)         exec py-stremio-cron --download ;;
-    download-all)     exec py-stremio-cron --download-all ;;
     validate-addons)  exec py-stremio-cron --validate-addons ;;
     discover-addons)  exec py-stremio-cron --discover-addons ;;
     *)
         echo "cron-run.sh: unknown job '\$1'" >&2
-        echo "available jobs: library-light, library-full, download, download-all, validate-addons, discover-addons" >&2
+        echo "available jobs: configs, download, validate-addons, discover-addons" >&2
         exit 1
         ;;
 esac
@@ -450,9 +473,11 @@ do_run_now() {
         "$WRAPPER_PATH" "$name"
     else
         # Fallback for first-time testing before ``install`` has been
-        # run — invoke the binary directly with the right flags.
+        # run — invoke the binary directly with the right flags.  The
+        # JOBS spec is ``schedule|subcommand``, so strip up to the
+        # pipe (a space would leave ``* * * *|--configs`` behind).
         local spec="${JOBS[$name]}"
-        local subcmd="${spec#* }"
+        local subcmd="${spec#*|}"
         "$PY_STREMIO_BIN" --key INTERNET_SPEED_LIMIT="$SPEED_PERCENT" $subcmd
     fi
 }

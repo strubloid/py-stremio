@@ -35,6 +35,7 @@ py-stremio/
 │   │   ├── metadata.py                # MetadataService — Cinemeta/IMDb enrichment
 │   │   ├── download.py                # DownloadService — download orchestration + reporting
 │   │   └── progress.py                # ProgressRenderer — progress bars, colors, terminal
+│   │   └── job_log.py                 # JSONL job_runs stopgap: job_run() context, status --jobs data
 │   ├── utils/                         # Shared utilities
 │   │   ├── __init__.py
 │   │   ├── media.py                   # sanitize_filename, parse_episode_number, parse_season_from_folder
@@ -185,9 +186,9 @@ AppService.run_pipeline()
 - Append-only progress bars emit only the changed episode line in non-TTY output (stable numbering/no repeated full blocks) with per-episode rate limiting (~1 line/sec/episode); non-download/search stages render `waiting for download`, and tiny invalid/error responses under 1 MB render `sizing` instead of fake byte percentages
 - Multi-threaded download support (DOWNLOAD_THREADS, default: 2) with FairBandwidthLimiter per-active-download bandwidth sharing and dynamic redistribution when actual stream downloads start/finish; search/probe workers are not counted against the bandwidth share
 - **Interactive bottom controls bar** (rich TUI only, no-op on pipes/cron) — single-key controls rendered below the existing footer: `[B]` toggles 4K filter (session-only, propagates to all live folder configs in memory), `[+]`/`[-]` adjusts the worker count (1..16, clamped), `[[]`/`]]` adjusts the speed percent in 5-point steps (1..100, clamped), `[Q]` requests cooperative shutdown. The keyboard reader is implemented in `services/controls.py` (cross-platform: `termios.tty.setcbreak` on Unix, `msvcrt.kbhit`/`getwch` on Windows) and is automatically suppressed when stdin/stdout is not a tty. Toggling 4K does NOT persist to `download-config.json` — the on-disk config is read once at startup and never written by the toggle. The worker count and speed percent also live in `RichDownloadUI.workers_ref` / `RichDownloadUI.speed_ref`; `process_season_folder` re-reads `workers_ref[0]` before every retry round so the `[+/-]` dial takes effect on the next round, and the parallel branch breaks out to the single-worker loop when the user dials down to 1. In-flight downloads finish naturally — a running thread is never aborted by a worker-count change.
-- **`py-stremio-cron` console entry point** — uses the same `AppService` path as `py-stremio` with cron preset defaults: 5 threads + 80% speed
-- **Interactive prompt split** — normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses preset defaults (5 threads, 80% speed) without prompts
-- **Cron installer (`cron.sh`)** — `./cron.sh install` writes six crontab entries that wrap `py-stremio-cron`: `library-light` (scan every 3h), `library-full` (scan + metadata every 6h), `download` (every 2h), `download-all` (full pipeline every 12h), `validate-addons` (every 8h), `discover-addons` (every 12h). All capped at `INTERNET_SPEED_LIMIT=50` (configurable via `--speed`). `./cron.sh uninstall` removes only the py-stremio lines, leaving the rest of the user's crontab intact. The script auto-detects the venv binary, respects `PY_STREMIO_ROOT` / `PY_STREMIO_CRON_SPEED` env vars, and only mutates lines matching the `# py-stremio-managed:` marker. Job names map directly to interactive menu actions: `library-*` = menu 2, `download*` = menu 1, `*-addons` = menu 3.1/3.2.
+- **`py-stremio-cron` console entry point** — uses the same `AppService` path as `py-stremio` with cron preset defaults: 5 threads; speed cap = the wrapper's `INTERNET_SPEED_LIMIT` (`./cron.sh install --speed`, default 50%) or 80% when run standalone
+- **Interactive prompt split** — normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses preset defaults (5 threads) without prompts; speed comes from the wrapper env cap (50% by default)
+- **Cron installer (`cron.sh`)** — `./cron.sh install` writes four crontab entries that wrap `py-stremio-cron`: `configs` (incremental configs/metadata refresh every 30 min), `download` (ensure-fresh + download every 2 h at 50% speed), `validate-addons` (every 8 h), `discover-addons` (every 12 h). All capped at `INTERNET_SPEED_LIMIT=50` (configurable via `--speed`). `./cron.sh uninstall` removes only the py-stremio lines, leaving the rest of the user's crontab intact. The script auto-detects the venv binary, respects `PY_STREMIO_ROOT` / `PY_STREMIO_CRON_SPEED` env vars, and only mutates lines matching the `# py-stremio-managed:` marker. The `download` job runs the freshness gate (`ensure_fresh()` — scan + cached metadata refresh with `CONFIGS_CACHE_HOURS`) before downloading so it never starts on stale episode lists. Every scheduled invocation is recorded in a JSONL `job-runs` log (`services/job_log.py`, `py-stremio status --jobs`): the wrapper writes lock-dropped `skipped` records, and `main.py` wraps `--configs`/`--download`/`--validate-addons`/`--discover-addons` runs as `ok`/`failed`/`interrupted`. `--download-all` is a backward-compat alias for `--download`. See `cron-fix.md` for the design.
 - Movie partial-download safety: when a movie source ignores its Range request, preserve the existing `.part` unchanged and try another source rather than silently restarting from zero. The same policy now applies to series as well: every failure path in `download_stream_to_file` (httpx.ReadTimeout, invalid content-type, content-length mismatch, too-small response, post-rename size check) leaves the existing `.part` on disk so the next attempt can resume from where the user left off. `_delete_invalid_download` now only removes the final file. Callers that want a clean restart from zero must unlink the `.part` explicitly.
 - Per-episode final-file existence guard: download workers skip instead of re-downloading if the expected output file already exists, even if a stale task listed it as missing
 - Verified addon URL tracking in config (servers list): only addons whose stream actually completed a download are persisted
@@ -297,6 +298,8 @@ ELSE
 | DOWNLOAD_THREADS | 2 | Parallel download workers |
 | DOWNLOAD_STALL_TIMEOUT | 60 | Per-chunk stall timeout (seconds) before aborting |
 | VALIDATE_DOWNLOAD_STRUCTURE | true | When true, run ffprobe structural validation after download |
+| METADATA_CACHE_HOURS | 24 | Full-run metadata cache freshness window (hours) |
+| CONFIGS_CACHE_HOURS | 1 | Freshness window for the `--configs` / `ensure_fresh` cron gate (hours, float) |
 | PREFERRED_LANGUAGES | `english` | Default only for new series-season configs; movie metadata sets movie languages |
 | INTERNET_SPEED_LIMIT | 100 | Bandwidth % (100 = no limit) |
 | INTERNET_MAX_SPEED_MBPS | auto-detected once; fallback 100 | Max Mbps for bandwidth calculation; if missing from env/.env, a short speed probe appends the measured value to .env |
@@ -329,20 +332,16 @@ py-stremio 4
 # Individual steps
 py-stremio --scan        # or: py-stremio 1
 py-stremio --metadata    # or: py-stremio 2
-py-stremio --download    # or: py-stremio 3
+py-stremio --configs     # incremental configs refresh (cron "configs" job)
 
 # With thread count and speed limit
 py-stremio --run 4 50   # 4 threads, 50% speed
 
-# Cron console entry point (same AppService path; preset 5 threads, 80% speed, no interactive prompts)
-py-stremio-cron 3       # update metadata (for crontab)
-py-stremio-cron 4       # download missing (for crontab)
-py-stremio-cron 2       # update metadata + download (combined)
-
-# Cron setup (crontab -e)
-# PATH=/home/strubloid/apps/py-stremio/venv/bin:/usr/local/bin:/usr/bin:/bin
-# 0 */3 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 3
-# 0 */2 * * * cd /home/strubloid/apps/py-stremio && py-stremio-cron 4
+# Cron console entry point (same AppService path; preset 5 threads, no interactive prompts)
+# Speed cap: the cron.sh wrapper's --speed (default 50%), else 80% standalone.
+py-stremio-cron --configs       # configs/metadata refresh (for crontab, every 30 min)
+py-stremio-cron --download     # freshness gate + download missing (for crontab)
+py-stremio status --jobs       # recent scheduled run records (ok / failed / skipped)
 
 # Legacy paths (superseded by `py-stremio`, kept for reference)
 
@@ -451,8 +450,8 @@ When these non-stream addons are queried for `/stream/`, they either:
 - Movie folders resolve their own canonical IMDb ID and IMDb-derived language metadata; they remain separate one-request movie workflows, never series seasons.
 - Auto-creation of new season folders for current year
 - **Preflight optimization**: when preflight scan finds zero working addons, subsequent episodes skip the full addon re-scan (saves ~30s/episode)
-- **`py-stremio-cron`** console entry point: same `AppService` path as `py-stremio`, with cron preset defaults (5 threads and 80% speed limit)
-- **Interactive prompt split**: normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses 5 threads and 80% speed without prompts
+- **`py-stremio-cron`** console entry point: same `AppService` path as `py-stremio`, with cron preset defaults (5 threads; speed = wrapper `--speed` cap, default 50%, else 80% standalone)
+- **Interactive prompt split**: normal `py-stremio` menu actions that download ask for thread count and speed; `py-stremio-cron` uses 5 threads without prompts
 - **Live bottom-bar controls** (TUI only): the controls bar described above lets the user adjust workers, speed, and 4K filter on the fly — these are session-only, not persisted to disk
 - Legacy abstract provider path maintained but secondary
 - Email reports via SMTP (optional)

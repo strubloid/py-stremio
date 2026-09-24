@@ -78,7 +78,8 @@ cp .env.example .env
 | `PREFERRED_LANGUAGES` | `english` | Default language filter for new series-season configs; movie metadata supplies movie languages |
 | `DRY_RUN` | `false` | Test mode — no actual downloads |
 | `TORRENT_PROXY_URL` | — | Local torrent proxy (e.g. `http://127.0.0.1:11470`) |
-| `METADATA_CACHE_HOURS` | `24` | Skip Cinemeta refresh for recently-checked folders |
+| `METADATA_CACHE_HOURS` | `24` | Skip Cinemeta refresh for recently-checked folders (full runs) |
+| `CONFIGS_CACHE_HOURS` | `1` | Freshness window (hours, float) for the `--configs` / `ensure_fresh` cron gate |
 | `STREMIO_ADDON_URL` | — | Override addon base URL |
 | `LIMIT_EPISODES` | `0` | Max episodes per run (0=unlimited) |
 | `MIN_COMPLETED_VIDEO_SIZE_MB` | `100` | Min file size for a valid completed download |
@@ -91,9 +92,11 @@ cp .env.example .env
 py-stremio
 
 # Individual pipeline steps (matches the menu)
-py-stremio --library           # menu 2: scan folders + refresh metadata
-py-stremio --download         # menu 1: download missing episodes/movies
-py-stremio --download-all     # menu 1 + library refresh + validation
+py-stremio --library           # scan folders + refresh metadata
+py-stremio --configs           # incremental configs refresh (cron "configs" job)
+py-stremio --download         # freshness gate + download missing episodes/movies
+py-stremio --download-only    # download only, skip the library refresh
+py-stremio --download-all     # alias for --download (kept for backwards compat)
 py-stremio --run 7 100        # full pipeline, 7 threads, 100% speed
 
 # Addon management (menu 3)
@@ -104,12 +107,12 @@ py-stremio --ai-find-addons   # menu 3.3: AI predict + validate
 # Refresh stream-capable movie/series addons from Stremio's live official collection
 py-stremio --discover-official
 
-# Cron (preset 5 threads, 80% speed, no prompts)
-py-stremio-cron --library
-py-stremio-cron --download
-py-stremio-cron --download-all
+# Cron wrapper (preset 5 threads; speed cap 50% from ./cron.sh install, 80% standalone)
+py-stremio-cron --configs       # configs/metadata refresh every 30 min
+py-stremio-cron --download     # freshness gate + download missing
 py-stremio-cron --validate-addons
 py-stremio-cron --discover-addons
+py-stremio status --jobs       # recent cron job_runs (ok / failed / skipped)
 ```
 
 # Crontab example

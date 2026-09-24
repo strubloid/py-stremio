@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+from contextlib import nullcontext
 
 from .app import AppService
 
@@ -76,13 +77,65 @@ def _apply_cli_env_overrides() -> dict[str, str]:
     return overrides
 
 
+def _job_name_from_argv() -> str | None:
+    """Map CLI flags to the cron job name used for job_runs logging.
+
+    The cron wrapper calls py-stremio-cron with these flags, so a
+    manual ``py-stremio --download`` run is recorded the same way as a
+    scheduled one.  Flags without a matching job (e.g. ``--run``,
+    ``--library``, the interactive menu) are not job-wrapped.
+    """
+    flag_map = {
+        "--configs": "configs",
+        "--download": "download",
+        "--download-all": "download",
+        "--validate-addons": "validate-addons",
+        "--validate": "validate-addons",
+        "--discover-addons": "discover-addons",
+        "--discover": "discover-addons",
+    }
+    for arg in sys.argv[1:]:
+        if arg in flag_map:
+            return flag_map[arg]
+    return None
+
+
+def _job_log_context():
+    """Return a job_run() context when argv names a scheduled job, else a no-op."""
+    job = _job_name_from_argv()
+    if not job:
+        return nullcontext()
+    from py_stremio.services.job_log import job_run
+
+    return job_run(job)
+
+
 def run() -> None:
     if "--show-config" in sys.argv:
         _print_resolved_config()
         return
     _apply_retry_failed_flag()
     overrides = _apply_cli_env_overrides()
-    AppService().run(cli_overrides=overrides)
+    with _job_log_context():
+        AppService().run(cli_overrides=overrides)
+
+
+def _cron_speed_percent() -> int:
+    """Resolve the cron download speed cap.
+
+    The cron wrapper exports ``INTERNET_SPEED_LIMIT`` (= ``--speed`` on
+    ``./cron.sh install``, default 50) so that cap must win here —
+    otherwise ``CRON_SPEED_PERCENT`` (80) would silently override it and
+    ``--speed`` would have no effect.  Without a wrapper-set env var,
+    fall back to the 80% cron preset.
+    """
+    raw = os.environ.get("INTERNET_SPEED_LIMIT")
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return CRON_SPEED_PERCENT
 
 
 def run_cron() -> None:
@@ -92,12 +145,13 @@ def run_cron() -> None:
         return
     _apply_retry_failed_flag()
     overrides = _apply_cli_env_overrides()
-    AppService().run(
-        interactive=False,
-        default_max_workers=CRON_DOWNLOAD_THREADS,
-        default_speed_percent=CRON_SPEED_PERCENT,
-        cli_overrides=overrides,
-    )
+    with _job_log_context():
+        AppService().run(
+            interactive=False,
+            default_max_workers=CRON_DOWNLOAD_THREADS,
+            default_speed_percent=_cron_speed_percent(),
+            cli_overrides=overrides,
+        )
 
 
 def _apply_retry_failed_flag() -> None:
@@ -161,6 +215,7 @@ def _print_resolved_config() -> None:
     print(f"    DOWNLOAD_STALL_TIMEOUT = {settings.DOWNLOAD_STALL_TIMEOUT}")
     print(f"    VALIDATE_DOWNLOAD_STRUCTURE = {settings.VALIDATE_DOWNLOAD_STRUCTURE}")
     print(f"    METADATA_CACHE_HOURS = {settings.METADATA_CACHE_HOURS}")
+    print(f"    CONFIGS_CACHE_HOURS = {settings.CONFIGS_CACHE_HOURS}")
     print(f"    TORRENT_PROXY_URL    = {settings.TORRENT_PROXY_URL or '<unset>'}")
     print(f"    SMTP configured      = {settings.smtp_configured}")
 

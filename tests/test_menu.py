@@ -236,29 +236,47 @@ def test_cron_entrypoint_download_uses_shared_parser_with_cron_presets(monkeypat
     assert calls == [(None, True, 5, 80)]
 
 
-def test_cron_entrypoint_bare_download_skips_library_refresh(monkeypatch):
-    """The cron wrapper passes ``--download`` (no -only suffix) and
-    the dispatcher must treat it as download-only — otherwise the
-    cron ``download`` job silently runs the full pipeline, redundant
-    with the dedicated ``library-light`` / ``library-full`` jobs."""
+def test_cron_entrypoint_download_refreshes_then_downloads(monkeypatch):
+    """The cron ``download`` job passes ``--download``; the dispatcher
+    runs the freshness gate (``ensure_fresh``: scan + cached metadata
+    refresh with the short CONFIGS_CACHE_HOURS window) before starting
+    the downloader, so a download never starts on stale episode lists.
+    It must NOT run the full pipeline (``run_with_metadata`` / addon
+    validation), which is what the dedicated ``--configs`` job and
+    ``--run`` do."""
     from py_stremio.app import AppService
+    from py_stremio.components.configs.app_settings import settings
 
     calls = []
-    library_sync_calls = []
+    folders = [object()]
+    metadata_calls = []
 
     monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "--download"]})())
+    library_sync_calls = []
     monkeypatch.setattr(
         "py_stremio.services.scanner.ScanService.run_with_metadata",
         lambda *a, **kw: library_sync_calls.append((a, kw)) or [],
     )
     monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.run",
+        lambda self: folders,
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.metadata.MetadataService.run",
+        lambda self, folders=None, quiet=True, use_cache=False, cache_hours=None: metadata_calls.append(cache_hours),
+    )
+    monkeypatch.setattr(
         "py_stremio.services.download.DownloadService.run",
-        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append(folders),
     )
 
     AppService().run(interactive=False, default_max_workers=5, default_speed_percent=80)
 
-    assert calls == [(None, True, 5, 80)]
+    # The downloader receives the ensure-fresh folder list (no internal rescan).
+    assert calls == [folders]
+    # The freshness gate asked for the short CONFIGS_CACHE_HOURS window.
+    assert metadata_calls == [settings.CONFIGS_CACHE_HOURS]
+    # The full-pipeline sync was NOT triggered.
     assert library_sync_calls == []
 
 

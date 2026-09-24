@@ -109,6 +109,12 @@ class Settings:
         default_factory=lambda: os.getenv("DOWNLOAD_MISSING_SUBTITUTES", "true").lower() in ("true", "1", "yes")
     )
     METADATA_CACHE_HOURS: int = field(default_factory=lambda: int(os.getenv("METADATA_CACHE_HOURS", "24")))
+    # Freshness window for the incremental configs/metadata refresh
+    # (``--configs`` / ``ensure_fresh``) that gates the cron download
+    # job.  Much shorter than METADATA_CACHE_HOURS (the full-run
+    # window) so new episodes are noticed within one cron cycle
+    # without re-hitting Cinemeta on every download run.
+    CONFIGS_CACHE_HOURS: float = field(default_factory=lambda: float(os.getenv("CONFIGS_CACHE_HOURS", "1")))
     INTERNET_SPEED_LIMIT: int = field(default_factory=lambda: int(os.getenv("INTERNET_SPEED_LIMIT", "100")))
     INTERNET_MAX_SPEED_MBPS: float = field(default_factory=lambda: float(os.getenv("INTERNET_MAX_SPEED_MBPS", "100")))
     DRY_RUN: bool = field(default_factory=lambda: os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes"))

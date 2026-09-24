@@ -88,7 +88,7 @@ def test_dry_run_does_not_touch_crontab(crontab_sandbox):
     """dry-run must NOT modify the host crontab."""
     result = _run_cron_sh("dry-run")
     assert result.returncode == 0, result.stderr
-    assert "0 */3 * * *" in result.stdout
+    assert "0,30 * * * *" in result.stdout
     assert "py-stremio-managed" in result.stdout
     # The real crontab is untouched — see the fixture.
     assert _read_crontab().strip() == ""
@@ -100,13 +100,11 @@ def test_install_uninstall_round_trip(crontab_sandbox):
     assert install.returncode == 0, install.stderr
     installed = _read_crontab()
     assert "py-stremio-managed" in installed
-    # All six jobs are present (library-light, library-full, download,
-    # download-all, validate-addons, discover-addons).
+    # All four jobs are present (configs, download, validate-addons,
+    # discover-addons).
     for name in (
-        "library-light",
-        "library-full",
+        "configs",
         "download",
-        "download-all",
         "validate-addons",
         "discover-addons",
     ):
@@ -154,7 +152,7 @@ def test_show_lists_existing_entries(crontab_sandbox):
     _run_cron_sh("install")
     show = _run_cron_sh("show")
     assert show.returncode == 0
-    for name in ("library-light", "library-full", "download", "download-all", "validate-addons", "discover-addons"):
+    for name in ("configs", "download", "validate-addons", "discover-addons"):
         assert f"[{name}]" in show.stdout
 
 
@@ -297,7 +295,7 @@ def test_cron_lines_invoke_correct_subcommand():
     crontab = _read_crontab()
     wrapper = _read_wrapper()
 
-    for name in ("library-light", "library-full", "download", "download-all", "validate-addons", "discover-addons"):
+    for name in ("configs", "download", "validate-addons", "discover-addons"):
         # The crontab passes the job name to the wrapper.
         assert f"cron-run.sh {name}" in crontab, f"job {name} not in crontab"
         # The wrapper dispatches the right py-stremio-cron subcommand.
@@ -479,11 +477,11 @@ def test_each_job_writes_to_its_own_log(crontab_sandbox):
     _run_cron_sh("install")
     crontab = _read_crontab()
     # Map job name → expected log basename.
-    for name in ("library-light", "library-full", "download", "download-all", "validate-addons", "discover-addons"):
+    for name in ("configs", "download", "validate-addons", "discover-addons"):
         # Find the cron entry line for this job (the one that calls
         # the wrapper with the job name, not the marker line above it).
-        # Use word-boundary matching so "download" doesn't match
-        # "download-all" (the longer name) and vice versa.
+        # Use word-boundary matching so "download" doesn't match a
+        # longer hypothetical name and vice versa.
         pattern = re.compile(rf"cron-run\.sh {re.escape(name)}(?:\s|$)")
         found_line = None
         for line in crontab.splitlines():
