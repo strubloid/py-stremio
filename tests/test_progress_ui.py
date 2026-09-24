@@ -5,7 +5,11 @@ import re
 from types import SimpleNamespace
 
 from py_stremio.components.application import _make_progress_printer, _progress_line, render_progress_bar
-from py_stremio.services.terminal_ui import PlainDownloadUI
+from py_stremio.services.terminal_ui import (
+    PlainDownloadUI,
+    get_last_aggregate_throughput_str,
+    update_aggregate_throughput,
+)
 
 
 def strip_ansi(text: str) -> str:
@@ -352,3 +356,29 @@ def test_threaded_progress_printer_is_safe_for_parallel_callbacks():
     assert "House of the Dragon" in plain
     assert "S01E01" in plain
     assert "S01E02" in plain
+
+
+def test_get_last_aggregate_throughput_str_returns_none_when_zero():
+    update_aggregate_throughput(0.0)
+    assert get_last_aggregate_throughput_str() is None
+
+
+def test_get_last_aggregate_throughput_str_formats_bytes_per_second():
+    update_aggregate_throughput(13_000_000)  # ~12.4 MB/s
+    formatted = get_last_aggregate_throughput_str()
+    assert formatted is not None
+    assert formatted.endswith("/s")
+    assert "MB" in formatted
+
+
+def test_new_ui_resets_aggregate_throughput_tracker():
+    update_aggregate_throughput(50_000_000)  # seed a non-zero value
+    assert get_last_aggregate_throughput_str() is not None
+    PlainDownloadUI(
+        io.StringIO(),
+        limiter=SimpleNamespace(),
+        max_workers=1,
+        speed_percent=100,
+        max_speed_mbps=100,
+    )
+    assert get_last_aggregate_throughput_str() is None

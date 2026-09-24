@@ -22,6 +22,16 @@ from py_stremio.utils.cancellation import (
     shutdown_requested,
 )
 from py_stremio.components.download.stream_download import build_media_filename, _minimum_completed_video_bytes
+
+
+# Exponential moving average smoothing factor for the per-callback
+# ``rate_bps`` reported in progress events. Without this the rate is
+# computed as ``delta_bytes / elapsed_seconds`` over a single 8 KiB chunk,
+# which makes torrent peer bursts (5 ms) look like 40x spikes next to
+# their idle gaps (200 ms). EMA at α=0.4 keeps each new sample at 40%
+# weight while the historical average supplies the remaining 60%, so
+# single-chunk spikes can no longer dominate the displayed value.
+RATE_EMA_ALPHA = 0.4
 from py_stremio.components.stremio.stremio_url import normalize_manifest_url, unique_manifest_urls
 from py_stremio.components.addons.addon_search_service import (
     PreflightResult,
@@ -521,7 +531,18 @@ def _do_download_one_episode(
         else:
             elapsed = max(0.001, now - (last_progress_at or now))
             delta = downloaded_bytes - last_progress_bytes
-            last_rate_bps = delta / elapsed if delta else 0.0
+            instant = delta / elapsed if delta else 0.0
+            # EMA so single-chunk bursts from torrent peers do not
+            # produce 40x rate spikes. Reset the smoothed value when
+            # instantaneous throughput collapses (idle gap or stalled
+            # peer) so the EMA does not take minutes to catch up.
+            if instant <= 0.0:
+                last_rate_bps = 0.0
+            else:
+                last_rate_bps = (
+                    RATE_EMA_ALPHA * instant
+                    + (1.0 - RATE_EMA_ALPHA) * last_rate_bps
+                )
             last_progress_bytes = downloaded_bytes
             last_progress_at = now
         last_downloaded_bytes = downloaded_bytes
@@ -625,6 +646,15 @@ def _do_download_one_episode(
                 task.config.quality.allow_lower if task.config.quality else True
             ),
         )
+        # Post-download subtitle fallback. If the torrent did not embed
+        # the language requested in download-config.json (e.g. a
+        # raw-Japanese release where the only audio is Japanese and
+        # there is no English track), query an OpenSubtitles-style
+        # addon and save a sidecar ``.srt`` next to the video. Gated by
+        # ``DOWNLOAD_MISSING_SUBTITUTES`` (global) and ``subtitles``
+        # (per-folder) so users can opt out.
+        if result.get("success"):
+            _maybe_fetch_missing_subtitle(task, episode_num, result)
     except BaseException as exc:
         error = exc
         raise
@@ -866,6 +896,45 @@ def _preferred_languages(config) -> list[str] | None:
     if config.language and config.language.lower() != "any":
         return [config.language]
     return None
+
+
+def _maybe_fetch_missing_subtitle(task, episode_num: int, result: dict[str, Any]) -> None:
+    """Best-effort post-download subtitle fetch.
+
+    Calls into ``subtitle_service.ensure_subtitle_for_downloaded_file``
+    so that an episode whose torrent only carries a non-English
+    track (or no embedded subtitles at all) still ends up with an
+    English ``.srt`` next to the video when one is available from a
+    Stremio subtitle addon.
+
+    Failures are reported through ``report_error`` but never re-raised
+    so a flaky subtitle addon cannot undo a successful download.
+    """
+    from py_stremio.components.download.subtitle_service import (
+        ensure_subtitle_for_downloaded_file,
+    )
+
+    filename = result.get("filename")
+    if not filename:
+        return
+    file_path = task.folder_path / filename
+    requested_language = getattr(task.config, "subtitles", None) or "english"
+    try:
+        saved = ensure_subtitle_for_downloaded_file(
+            file_path,
+            imdb_id=task.config.imdb_id,
+            title=task.title,
+            season=task.season,
+            episode=episode_num,
+            requested_language=requested_language,
+        )
+    except Exception as exc:
+        from py_stremio.components.errors import report_error
+
+        report_error(context="ensure_subtitle(episode)", exception=exc)
+        return
+    if saved:
+        print(f"    📝 Saved subtitle: {saved.name}")
 
 
 def _set_current_episode(config, config_path: Path, episode: int) -> None:
@@ -1728,7 +1797,18 @@ def process_movie_folder(
         else:
             elapsed = max(0.001, now - (movie_last_progress_at or now))
             delta = downloaded_bytes - movie_last_progress_bytes
-            movie_rate_bps = delta / elapsed if delta else 0.0
+            instant = delta / elapsed if delta else 0.0
+            # EMA so single-chunk bursts from torrent peers do not
+            # produce 40x rate spikes. Reset the smoothed value when
+            # instantaneous throughput collapses (idle gap or stalled
+            # peer) so the EMA does not take minutes to catch up.
+            if instant <= 0.0:
+                movie_rate_bps = 0.0
+            else:
+                movie_rate_bps = (
+                    RATE_EMA_ALPHA * instant
+                    + (1.0 - RATE_EMA_ALPHA) * movie_rate_bps
+                )
         movie_last_progress_bytes = downloaded_bytes
         movie_last_progress_at = now
         movie_last_downloaded = downloaded_bytes
@@ -1814,6 +1894,30 @@ def process_movie_folder(
         server = result.get("successful_url") or ""
         state.add_download(filename, result.get("quality", quality), "stremio", server=server)
         save_state(folder_path, state)
+        # Post-download subtitle fallback (movies). See
+        # ``_maybe_fetch_missing_subtitle`` for the rationale and the
+        # global / per-folder opt-out knobs.
+        movie_file_path = folder_path / filename
+        try:
+            from py_stremio.components.download.subtitle_service import (
+                ensure_subtitle_for_downloaded_file,
+            )
+
+            saved = ensure_subtitle_for_downloaded_file(
+                movie_file_path,
+                imdb_id=config.imdb_id,
+                title=title,
+                season=None,
+                episode=None,
+                requested_language=getattr(config, "subtitles", None) or "english",
+            )
+        except Exception as exc:
+            from py_stremio.components.errors import report_error
+
+            report_error(context="ensure_subtitle(movie)", exception=exc)
+            saved = None
+        if saved:
+            print(f"    📝 Saved subtitle: {saved.name}")
         return {"downloaded": 1, "skipped": 0}
 
     print(f"    No working streams found for movie: {title}")

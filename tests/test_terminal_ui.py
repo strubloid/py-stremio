@@ -120,7 +120,10 @@ def test_throughput_uses_shared_byte_deltas_and_expires():
     ui.progress(_event("bytes", downloaded=1500, bytes_total=2000))
 
     assert ui._throughput() == 1000
-    clock[0] = 4.0
+    # The aggregate window is THROUGHPUT_WINDOW_SECONDS (5s); step past
+    # the window so the older sample expires and the throughput drops
+    # back to zero (the 500-byte sample is also expired by then).
+    clock[0] = 6.5
     assert ui._throughput() == 0
 
 
@@ -457,6 +460,89 @@ class TestControlsBar:
         for _ in range(50):
             ui.controls.dispatch("]")
         assert ui.speed_ref[0] == RichDownloadUI.MAX_SPEED  # 100
+
+    def test_bump_speed_propagates_to_fair_share_limiter(self):
+        """``[``/``]`` must update the actual throttle, not just the display.
+
+        Regression for the case where ``_bump_speed`` only mutated
+        ``speed_ref`` and never called ``limiter.update_total_limit``,
+        leaving the live dial disconnected from the bandwidth budget.
+        """
+        received: list[int] = []
+
+        class _FairLimiter:
+            def update_total_limit(self, total_bps: int) -> None:
+                received.append(total_bps)
+
+            def get_active_thread_count(self):
+                return 0
+
+        output = _TtyBuffer()
+        console = Console(file=output, force_terminal=True, width=80, color_system=None)
+        ui = RichDownloadUI(
+            output,
+            console=console,
+            limiter=_FairLimiter(),
+            max_workers=2,
+            speed_percent=50,
+            max_speed_mbps=200,
+        )
+
+        # 200 Mbps × 50% = 100 Mbps = 12_500_000 B/s (un-clamped at startup
+        # because the limiter is not pushed by __init__ — only by the
+        # control handlers).
+        ui.controls.dispatch("]")
+        assert ui.speed_ref[0] == 55
+        # 200 Mbps × 55% = 110 Mbps = 13_750_000 B/s.
+        assert received == [13_750_000]
+
+        ui.controls.dispatch("[")
+        ui.controls.dispatch("[")
+        # 200 Mbps × 45% = 90 Mbps = 11_250_000 B/s.
+        assert received[-1] == 11_250_000
+
+    def test_bump_speed_clears_limiter_at_one_hundred_percent(self):
+        """At 100% the limiter must be told the budget is zero (unlimited)."""
+        received: list[int] = []
+
+        class _FairLimiter:
+            def update_total_limit(self, total_bps: int) -> None:
+                received.append(total_bps)
+
+            def get_active_thread_count(self):
+                return 0
+
+        output = _TtyBuffer()
+        console = Console(file=output, force_terminal=True, width=80, color_system=None)
+        ui = RichDownloadUI(
+            output,
+            console=console,
+            limiter=_FairLimiter(),
+            max_workers=2,
+            speed_percent=95,
+            max_speed_mbps=200,
+        )
+        for _ in range(2):
+            ui.controls.dispatch("]")
+        assert ui.speed_ref[0] == 100
+        # Unlimited ⇒ total_bps = 0, never a positive int.
+        assert received[-1] == 0
+
+    def test_bump_speed_tolerates_limiter_without_update_methods(self):
+        """Limiter doubles (e.g. ``_NoLimiter``) without update methods
+        must not crash the bump handler — only the throttle is skipped."""
+        output = _TtyBuffer()
+        console = Console(file=output, force_terminal=True, width=80, color_system=None)
+        ui = RichDownloadUI(
+            output,
+            console=console,
+            limiter=_NoLimiter(),
+            max_workers=2,
+            speed_percent=50,
+            max_speed_mbps=100,
+        )
+        ui.controls.dispatch("]")
+        assert ui.speed_ref[0] == 55
 
     def test_q_key_requests_shutdown(self):
         from py_stremio.utils.cancellation import (

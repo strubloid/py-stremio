@@ -71,6 +71,38 @@ def test_menu_choice_one_combined_download(monkeypatch):
     assert calls[1] == ("download", folders, True, 4, 60)
 
 
+def test_menu_choice_zero_skips_library_refresh(monkeypatch):
+    """Menu option 0 = download only, no metadata refresh."""
+    calls = []
+    answers = iter(["0", "3", "70", "5"])
+
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    library_sync_calls = []
+    monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.run_with_metadata",
+        lambda *a, **kw: library_sync_calls.append((a, kw)) or [],
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
+    )
+
+    application.run_menu()
+
+    assert calls == [(None, True, 3, 70)]
+    assert library_sync_calls == []
+
+
+def test_menu_choice_zero_text_in_menu(monkeypatch, capsys):
+    """Menu banner should advertise the new option 0."""
+    answers = iter(["5"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    application.run_menu()
+    output = capsys.readouterr().out
+    assert "0" in output
+    assert "Download only" in output
+
+
 def test_menu_choice_one_asks_threads_and_speed_before_download(monkeypatch):
     """Menu option 1 should ask for threads and speed before downloading."""
     calls = []
@@ -202,6 +234,57 @@ def test_cron_entrypoint_download_uses_shared_parser_with_cron_presets(monkeypat
     AppService().run(interactive=False, default_max_workers=5, default_speed_percent=80)
 
     assert calls == [(None, True, 5, 80)]
+
+
+def test_cron_entrypoint_bare_download_skips_library_refresh(monkeypatch):
+    """The cron wrapper passes ``--download`` (no -only suffix) and
+    the dispatcher must treat it as download-only — otherwise the
+    cron ``download`` job silently runs the full pipeline, redundant
+    with the dedicated ``library-light`` / ``library-full`` jobs."""
+    from py_stremio.app import AppService
+
+    calls = []
+    library_sync_calls = []
+
+    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio-cron", "--download"]})())
+    monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.run_with_metadata",
+        lambda *a, **kw: library_sync_calls.append((a, kw)) or [],
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
+    )
+
+    AppService().run(interactive=False, default_max_workers=5, default_speed_percent=80)
+
+    assert calls == [(None, True, 5, 80)]
+    assert library_sync_calls == []
+
+
+def test_cron_entrypoint_download_still_respects_legacy_positional(monkeypatch):
+    """``py-stremio 1`` (legacy positional CLI shorthand) keeps its
+    pre-existing download-only behavior — adding the ``--download``
+    alias must not regress this older entrypoint."""
+    from py_stremio.app import AppService
+
+    calls = []
+    library_sync_calls = []
+
+    monkeypatch.setattr("py_stremio.app.sys", type("sys", (), {"argv": ["py-stremio", "1"]})())
+    monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.run_with_metadata",
+        lambda *a, **kw: library_sync_calls.append((a, kw)) or [],
+    )
+    monkeypatch.setattr(
+        "py_stremio.services.download.DownloadService.run",
+        lambda self, folders=None, quiet=True, max_workers=1, speed_percent=None: calls.append((folders, quiet, max_workers, speed_percent)),
+    )
+
+    AppService().run(interactive=False, default_max_workers=5, default_speed_percent=80)
+
+    assert calls == [(None, True, 5, 80)]
+    assert library_sync_calls == []
 
 
 def test_cron_entrypoint_update_and_download_uses_shared_parser(monkeypatch):

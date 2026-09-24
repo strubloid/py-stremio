@@ -30,6 +30,29 @@ def _format_bytes(value: int | float) -> str:
     return "0 B"
 
 
+# Module-level snapshot of the most recent aggregate throughput reading.
+# Written by ``DownloadUI.progress`` on every byte event and read by
+# ``AppService._interrupted`` so the "Interrupted — shutting down
+# workers and exiting." line can include a final aggregate across all
+# active streams (e.g. "Last aggregate: 12.4 MB/s"). Reset whenever a
+# fresh ``DownloadUI`` is constructed so back-to-back runs do not
+# inherit the previous run's value.
+_last_aggregate_throughput_bps: float = 0.0
+
+
+def update_aggregate_throughput(bps: float) -> None:
+    global _last_aggregate_throughput_bps
+    _last_aggregate_throughput_bps = max(0.0, float(bps))
+
+
+def get_last_aggregate_throughput_str() -> str | None:
+    """Return the last aggregate throughput as ``"12.4 MB/s"``, or
+    ``None`` if no bytes have flowed yet in the current run."""
+    if _last_aggregate_throughput_bps <= 0:
+        return None
+    return f"{_format_bytes(_last_aggregate_throughput_bps)}/s"
+
+
 def _format_eta(seconds: float) -> str:
     """Return a compact ETA string for the table's ``Left`` column.
 
@@ -72,6 +95,14 @@ class DownloadUI:
 
     interactive = False
 
+    # Aggregate throughput is averaged over this sliding window before
+    # being frozen for display. A 5-second window absorbs the natural
+    # burst/idle cycles of torrent peers (peers send a piece, then wait
+    # for the next Request) so the displayed MB/s stops bouncing 40x
+    # between adjacent samples. The per-episode rate in
+    # ``processing.on_bytes`` is smoothed separately with an EMA.
+    THROUGHPUT_WINDOW_SECONDS = 5.0
+
     def __init__(
         self,
         stream: TextIO,
@@ -102,6 +133,9 @@ class DownloadUI:
         self._planned_totals: dict[tuple[Any, Any, Any], int] = {}
         self._last_bytes: dict[tuple[Any, ...], int] = {}
         self._samples: deque[tuple[float, int]] = deque()
+        # Reset the module-level aggregate tracker so a fresh run
+        # never reports the previous run's final throughput.
+        update_aggregate_throughput(0.0)
 
     def __enter__(self) -> "DownloadUI":
         self.start()
@@ -150,6 +184,7 @@ class DownloadUI:
                     delta = downloaded - previous
                     if delta:
                         self._samples.append((self._now(), delta))
+                        update_aggregate_throughput(self._throughput())
             elif event_type == "episode_done":
                 self._active.discard(key)
                 self._terminal.add(key)
@@ -164,7 +199,7 @@ class DownloadUI:
 
     def _throughput(self) -> float:
         now = self._now()
-        cutoff = now - 2.0
+        cutoff = now - self.THROUGHPUT_WINDOW_SECONDS
         while self._samples and self._samples[0][0] < cutoff:
             self._samples.popleft()
         if not self._samples:
@@ -328,6 +363,29 @@ class RichDownloadUI(DownloadUI):
         current = self.speed_ref[0]
         new_value = max(self.MIN_SPEED, min(self.MAX_SPEED, current + delta))
         self.speed_ref[0] = new_value
+        self._push_speed_to_limiter()
+
+    def _push_speed_to_limiter(self) -> None:
+        """Propagate the current ``speed_ref`` value to the bandwidth limiter.
+
+        Without this call the displayed speed percent would only live in
+        ``speed_ref`` and the underlying ``FairBandwidthLimiter`` would
+        keep the budget it was constructed with — i.e. the live
+        ``[``/``]`` dial would change the UI but never actually throttle.
+        Mirrors the legacy ``StatusBar._handle_menu_key`` pattern in
+        ``components/download/control_panel.py``.
+        """
+        if self.limiter is None:
+            return
+        percent = self.speed_ref[0]
+        if percent >= 100 or self.max_speed_mbps <= 0:
+            total_bps = 0
+        else:
+            total_bps = max(1, int((self.max_speed_mbps * 1_000_000 / 8) * (percent / 100)))
+        if hasattr(self.limiter, "update_total_limit"):
+            self.limiter.update_total_limit(total_bps)
+        elif hasattr(self.limiter, "update_speed"):
+            self.limiter.update_speed(percent, self.max_speed_mbps)
 
     def on_4k_toggle(self, handler: Callable[[bool], None]) -> None:
         """Register a callback fired with the new value when 4K is toggled."""

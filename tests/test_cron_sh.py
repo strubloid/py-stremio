@@ -186,6 +186,29 @@ def test_install_root_path_is_honoured(crontab_sandbox, tmp_path):
     assert f'PY_STREMIO_ROOT="{custom_root}"' in wrapper_text
 
 
+def test_wrapper_acquires_flock_to_serialize_concurrent_runs(crontab_sandbox):
+    """Overlapping cron jobs (00:00 fires 4 jobs at once) must
+    serialise. The wrapper uses ``flock -n`` on a fixed lockfile so
+    the second job exits immediately instead of corrupting .part
+    files, racing on state writes, or doubling the bandwidth cap.
+    """
+    _run_cron_sh("install")
+    wrapper = _read_wrapper()
+    assert "flock" in wrapper
+    assert "flock -n" in wrapper
+    assert "py-stremio-cron.lock" in wrapper
+
+
+def test_wrapper_skip_message_references_job_name(crontab_sandbox):
+    """When a concurrent run is skipped, the wrapper must log which
+    job tried to run so the operator can correlate skip events
+    with the crontab entry that triggered them."""
+    _run_cron_sh("install")
+    wrapper = _read_wrapper()
+    assert "skipping" in wrapper
+    assert "${1:-" in wrapper  # the skipped job name is interpolated
+
+
 def test_cron_lines_invoke_wrapper_not_binary(crontab_sandbox):
     """Each cron line must call the wrapper by name, not the raw
     binary path — that's the whole point of the wrapper indirection.

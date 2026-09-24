@@ -98,6 +98,16 @@ class Settings:
     DOWNLOAD_THREADS: int = field(default_factory=lambda: int(os.getenv("DOWNLOAD_THREADS", "2")))
     DOWNLOAD_STALL_TIMEOUT: float = field(default_factory=lambda: float(os.getenv("DOWNLOAD_STALL_TIMEOUT", "60")))
     VALIDATE_DOWNLOAD_STRUCTURE: bool = field(default_factory=lambda: os.getenv("VALIDATE_DOWNLOAD_STRUCTURE", "true").lower() in ("true", "1", "yes"))
+    # When True, every finished download is ffprobed for embedded
+    # subtitle tracks and any missing language (the ``subtitles`` field
+    # on the folder's ``download-config.json``, default ``english``) is
+    # fetched from a Stremio subtitle addon (OpenSubtitles) and saved
+    # next to the file as ``<videoname>.<lang>.srt``. Set to ``false``
+    # to disable globally; individual folders can opt out by setting
+    # ``subtitles`` to ``off`` / ``none``.
+    DOWNLOAD_MISSING_SUBTITUTES: bool = field(
+        default_factory=lambda: os.getenv("DOWNLOAD_MISSING_SUBTITUTES", "true").lower() in ("true", "1", "yes")
+    )
     METADATA_CACHE_HOURS: int = field(default_factory=lambda: int(os.getenv("METADATA_CACHE_HOURS", "24")))
     INTERNET_SPEED_LIMIT: int = field(default_factory=lambda: int(os.getenv("INTERNET_SPEED_LIMIT", "100")))
     INTERNET_MAX_SPEED_MBPS: float = field(default_factory=lambda: float(os.getenv("INTERNET_MAX_SPEED_MBPS", "100")))

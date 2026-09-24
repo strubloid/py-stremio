@@ -1340,6 +1340,77 @@ def test_process_movie_folder_emits_bytes_and_terminal_progress(tmp_path, monkey
     assert byte_events[-1]["rate_bps"] >= 0
 
 
+def test_process_movie_folder_smooths_rate_bps_with_ema(tmp_path, monkeypatch):
+    """A bursty byte delta pattern must not surface as a single-chunk spike.
+
+    The EMA in ``on_movie_bytes`` collapses per-callback instantaneous
+    rates so a 5 ms / 200 ms alternating torrent burst pattern never
+    publishes a 40x rate value to the UI. Here we deliver 10 MiB over
+    ten callbacks alternating between instantaneous rates of
+    ~1 GiB/s (1 MiB in 1 ms) and ~1 KiB/s (1 B in 1 ms); the published
+    rate must always be within an order of magnitude of the long-run
+    average (~100 MiB/s) and never exceed 4x it.
+    """
+    config = DownloadConfig(
+        type="movies",
+        title="Smoothed Movie",
+        imdb_id="tt0000001",
+        quality=QualitySettings(preferred="1080p"),
+    )
+    save_config(tmp_path / "download-config.json", config)
+    events: list[dict] = []
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.t = 0.0
+
+        def __call__(self) -> float:
+            return self.t
+
+        def advance(self, dt: float) -> None:
+            self.t += dt
+
+    clock = _Clock()
+
+    def fake_search_and_download(**kwargs):
+        cb = kwargs["progress_callback"]
+        downloaded = 0
+        # 10 iterations: alternating bursts (fast 1 MiB in 1 ms) and
+        # gaps (1 byte in 1 ms — effectively idle for the EMA).
+        for i in range(10):
+            if i % 2 == 0:
+                downloaded += 1024 * 1024
+                clock.advance(0.001)
+            else:
+                downloaded += 1
+                clock.advance(0.001)
+            cb(downloaded, 100 * 1024 * 1024)
+        return {"success": True, "filename": "movie.mkv", "quality": "1080p", "working_urls": []}
+
+    monkeypatch.setattr("py_stremio.components.download.processing.search_and_download", fake_search_and_download)
+    monkeypatch.setattr("py_stremio.components.download.processing.preflight_discover_working_addons", lambda *args, **kwargs: [])
+    monkeypatch.setattr("py_stremio.components.download.processing.time", SimpleNamespace(monotonic=clock, time=clock))
+    monkeypatch.setattr("py_stremio.components.download.processing.settings", _download_settings())
+
+    process_movie_folder(tmp_path, progress_callback=events.append)
+
+    byte_events = [event for event in events if event.get("type") == "bytes"]
+    assert byte_events, "expected at least one bytes event"
+
+    long_run_bps = (10 * 1024 * 1024) / 0.02  # ~5 GiB/s instantaneous baseline
+    # The first sample is reset to 0 (last_progress_bytes is None at
+    # entry) and the second sample is smoothed against it, so values
+    # are bounded well below the per-chunk burst rate.
+    for event in byte_events:
+        assert event["rate_bps"] >= 0
+        # 40x burst ceiling: even an un-smoothed chunk would be
+        # 1 MiB / 0.001 s = 1 GiB/s. The EMA must keep us under 4x
+        # the long-run baseline — i.e. < 20 GiB/s in absolute terms.
+        assert event["rate_bps"] < long_run_bps * 4, (
+            f"rate_bps={event['rate_bps']} exceeded 4x long-run baseline"
+        )
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Movie .part resume detection
 # ═══════════════════════════════════════════════════════════════════

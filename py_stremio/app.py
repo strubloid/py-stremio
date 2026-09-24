@@ -128,8 +128,16 @@ class AppService:
             self.run_pipeline(download=True, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
             return
 
-        # ── Download only (menu option 1, without library refresh) ──
-        if "--download-only" in args or action == "1":
+        # ── Download only (menu option 0, without library refresh) ──
+        # ``--download`` is accepted as an alias for ``--download-only``
+        # so the cron wrapper's ``py-stremio-cron --download`` call
+        # does what its docstring (``cron.sh:136``) already claims:
+        # download missing items without refreshing the library. The
+        # legacy ``action == "1"`` shorthand is preserved so
+        # ``py-stremio 1`` (CLI positional) keeps its current
+        # download-only behavior; the interactive menu's option 1
+        # (full pipeline) is dispatched in ``_run_menu`` instead.
+        if "--download-only" in args or "--download" in args or action == "1":
             self._banner()
             self.downloader.run(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
             print_error_summary()
@@ -261,18 +269,27 @@ class AppService:
         self._menu()
 
         while True:
-            choice = input(_c("Select 1-5 › ", ACCENT)).strip()
+            choice = input(_c("Select 0-5 › ", ACCENT)).strip()
 
             if choice == "5" or choice == "":
                 cleanup_terminal()
                 print("Bye.")
                 break
 
-            if choice not in ("1", "2", "3", "4"):
-                print(_c("Unknown option. Choose 1-5.", RED))
+            if choice not in ("0", "1", "2", "3", "4"):
+                print(_c("Unknown option. Choose 0-5.", RED))
                 continue
 
-            if choice == "1":
+            if choice == "0":
+                # Quick download: skip the metadata refresh entirely.
+                # ``DownloadService.run`` does its own lightweight folder
+                # scan when ``folders`` is None, so no IMDb / Cinemeta
+                # work is done here.
+                max_workers, speed_percent = self._ask_download_options()
+                self._phase("\n⬇ Downloads", f"starting with {max_workers} thread(s) at {speed_percent}% speed (library refresh skipped)...")
+                self.downloader.run(quiet=True, max_workers=max_workers, speed_percent=speed_percent)
+
+            elif choice == "1":
                 # The main "do everything" action: scan, fetch metadata, find
                 # any new addons, then download missing episodes/movies.
                 max_workers, speed_percent = self._ask_download_options()
@@ -459,6 +476,7 @@ class AppService:
     def _menu(self) -> None:
         print()
         print(_c("Choose a step", ACCENT))
+        print("  0  ⬇   Download only (skip library refresh)")
         print("  1  ⬇   Download missing episodes/movies")
         print("  2  📚  Update library (scan + metadata)")
         print("  3  📦  Addons (validate, find more)")
@@ -595,7 +613,12 @@ class AppService:
 
     def _interrupted(self) -> None:
         request_shutdown()
-        print(_c("\nInterrupted — shutting down workers and exiting.", YELLOW), flush=True)
+        from py_stremio.services.terminal_ui import get_last_aggregate_throughput_str
+        suffix = get_last_aggregate_throughput_str()
+        msg = "\nInterrupted — shutting down workers and exiting."
+        if suffix:
+            msg += f" Last aggregate: {suffix}"
+        print(_c(msg, YELLOW), flush=True)
 
     def _ask_download_options(self) -> tuple[int, int]:
         """Ask interactive py-stremio users for download threads and speed."""
