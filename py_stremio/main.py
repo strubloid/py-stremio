@@ -7,7 +7,7 @@ from contextlib import nullcontext
 
 from .app import AppService
 
-__all__ = ["run", "run_cron", "update_config_imdb_ids"]
+__all__ = ["run", "run_cron", "update_config_imdb_ids", "run_migrate"]
 
 
 CRON_DOWNLOAD_THREADS = 5
@@ -114,6 +114,12 @@ def run() -> None:
     if "--show-config" in sys.argv:
         _print_resolved_config()
         return
+    if "--migrate" in sys.argv or (len(sys.argv) > 1 and sys.argv[1] == "migrate"):
+        run_migrate()
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "export-json":
+        run_export_json()
+        return
     _apply_retry_failed_flag()
     overrides = _apply_cli_env_overrides()
     with _job_log_context():
@@ -152,6 +158,20 @@ def run_cron() -> None:
             default_speed_percent=_cron_speed_percent(),
             cli_overrides=overrides,
         )
+
+
+def run_api() -> None:
+    """Start the optional local dashboard API."""
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise SystemExit("Install the API extra with `pip install 'py-stremio[api]'`.") from exc
+    uvicorn.run(
+        "py_stremio.api.main:app",
+        host=os.environ.get("PY_STREMIO_API_HOST", "127.0.0.1"),
+        port=int(os.environ.get("PY_STREMIO_API_PORT", "8765")),
+        reload=os.environ.get("PY_STREMIO_API_RELOAD", "false").lower() in ("1", "true", "yes"),
+    )
 
 
 def _apply_retry_failed_flag() -> None:
@@ -224,6 +244,62 @@ def update_config_imdb_ids(quiet: bool = False) -> int:
     """Backward-compat alias — delegates to MetadataService."""
     from py_stremio.services.metadata import MetadataService
     return MetadataService().run(quiet=quiet)
+
+
+def run_migrate() -> None:
+    """Migrate per-folder JSON configs/states to SQLite catalog."""
+    import argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(
+        prog="py-stremio migrate",
+        description="Migrate download-config.json + .download-state.json to SQLite catalog",
+    )
+    parser.add_argument("--db", type=Path, help="Target SQLite database path (default: ~/.local/share/py-stremio/library.sqlite)")
+    parser.add_argument("--root", type=Path, help="Media root folder (default: from .env/ROOT_FOLDER)")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be migrated without writing")
+    parser.add_argument("--export", type=Path, help="Export a folder's config/state from SQLite back to JSON (debugging)")
+
+    args = parser.parse_args(sys.argv[2:])
+
+    if args.export:
+        from py_stremio.storage.migration import export_json
+        from py_stremio.components.configs.app_settings import settings
+        export_json(args.export, args.export.parent)
+        print(f"Exported {args.export} to {args.export.parent}")
+        return
+
+    from py_stremio.storage.migration import migrate
+    from py_stremio.components.configs.app_settings import settings
+
+    root = args.root or settings.ROOT_FOLDER
+    print(f"Migrating from {root} to SQLite catalog...")
+    if args.dry_run:
+        print("  (dry-run mode — no changes will be written)")
+
+    counts = migrate(root_folder=root, db_path=args.db, dry_run=args.dry_run)
+
+    print("Migration complete:")
+    print(f"  Series:   {counts['series']}")
+    print(f"  Seasons:  {counts['seasons']}")
+    print(f"  Movies:   {counts['movies']}")
+    print(f"  Files:    {counts['files']}")
+    print(f"  States:   {counts['states']}")
+
+
+def run_export_json() -> None:
+    """Export one catalog folder to the transitional JSON format."""
+    import argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(prog="py-stremio export-json")
+    parser.add_argument("folder", type=Path, help="Managed season or movie folder")
+    args = parser.parse_args(sys.argv[2:])
+
+    from py_stremio.storage.migration import export_json
+
+    export_json(args.folder, args.folder)
+    print(f"Exported JSON config and state to {args.folder}")
 
 
 if __name__ == "__main__":

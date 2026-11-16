@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from py_stremio.utils.atomic_write import atomic_write_json
+from py_stremio.storage.compat import load_state as _load_state, save_state as _save_state
 
 # How long an indeterminate preflight result is honoured before the
 # per-episode pipeline is allowed to re-attempt the full search.
@@ -521,8 +522,8 @@ def _episode_number_from_stem(stem: str) -> int | None:
         return None
 
 
-def load_state(folder_path: Path) -> DownloadState:
-    """Load state from folder, creating default if missing."""
+def _load_state_json(folder_path: Path) -> DownloadState:
+    """Load state from JSON file (legacy implementation)."""
     state_path = folder_path / ".download-state.json"
     if not state_path.exists():
         return DownloadState(folder_path=folder_path)
@@ -565,8 +566,8 @@ def load_state(folder_path: Path) -> DownloadState:
     )
 
 
-def save_state(folder_path: Path, state: DownloadState) -> None:
-    """Save state to file.
+def _save_state_json(folder_path: Path, state: DownloadState) -> None:
+    """Save state to JSON file (legacy implementation).
 
     I/O errors (disk full, ``OSError`` from a flaky network mount, …) are
     reported through :func:`py_stremio.components.errors.report_error` but
@@ -596,3 +597,17 @@ def save_state(folder_path: Path, state: DownloadState) -> None:
             exception=exc,
             url=str(state_path),
         )
+
+
+def load_state(folder_path: Path) -> DownloadState:
+    """Load state from folder, creating default if missing (uses active storage backend)."""
+    return _load_state(folder_path)
+
+
+def save_state(folder_path: Path, state: DownloadState) -> None:
+    """Save state to active storage backend."""
+    _save_state(folder_path, state)
+
+
+# Re-export from compat for backward compatibility
+from py_stremio.storage.compat import load_state, save_state

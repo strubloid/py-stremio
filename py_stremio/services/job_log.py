@@ -94,7 +94,9 @@ def job_run(job: str) -> Iterator[None]:
         raise
     except BaseException as exc:  # noqa: BLE001 — record, then re-raise
         status = "failed"
-        error = f"{type(exc).__name__}: {exc}"
+        from py_stremio.components.errors.error_reporter import redact_url
+
+        error = redact_url(f"{type(exc).__name__}: {exc}")
         raise
     finally:
         # AppService.run swallows KeyboardInterrupt internally but sets
@@ -114,4 +116,16 @@ def job_run(job: str) -> Iterator[None]:
             append_job_run(record)
         except OSError:
             # Logging must never break the underlying run.
+            pass
+        try:
+            from py_stremio.storage.catalog import record_job_run
+
+            record_job_run(
+                job,
+                status,
+                record["started_at"],
+                record["ended_at"],
+                detail=error,
+            )
+        except Exception:
             pass

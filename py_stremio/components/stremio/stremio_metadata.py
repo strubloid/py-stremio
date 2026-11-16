@@ -2,6 +2,7 @@
 from collections import defaultdict
 from datetime import datetime, timezone
 from functools import lru_cache
+from html.parser import HTMLParser
 import gzip
 import io
 import json
@@ -90,8 +91,23 @@ def _normalize_language_values(value) -> list[str]:
     return list(dict.fromkeys(str(item).strip().casefold() for item in values if item and str(item).strip()))
 
 
-def get_imdb_movie_languages(imdb_id: str) -> list[str]:
-    """Read a movie's language list from IMDb's public title markup."""
+class _TitlePageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.poster_url: str | None = None
+        self.languages: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag.casefold() != "meta":
+            return
+        values = {key.casefold(): value for key, value in attrs if value}
+        if values.get("property", "").casefold() == "og:image":
+            self.poster_url = values.get("content")
+
+
+@lru_cache(maxsize=512)
+def _get_imdb_title_page_data(imdb_id: str) -> tuple[list[str], str | None]:
+    """Read language and poster metadata from IMDb's public title markup."""
     try:
         response = _get_with_retry(
             f"https://www.imdb.com/title/{imdb_id}/",
@@ -99,7 +115,9 @@ def get_imdb_movie_languages(imdb_id: str) -> list[str]:
             follow_redirects=True,
         )
         if response.status_code != 200:
-            return []
+            return [], None
+        parser = _TitlePageParser()
+        parser.feed(response.text)
         for raw_json in re.findall(
             r'<script type="application/ld\+json">(.*?)</script>', response.text, flags=re.DOTALL
         ):
@@ -108,24 +126,37 @@ def get_imdb_movie_languages(imdb_id: str) -> list[str]:
             except json.JSONDecodeError:
                 continue
             if languages:
-                return languages
+                parser.languages = languages
+                break
+        return parser.languages, parser.poster_url
     except Exception:
-        pass
-    return []
+        return [], None
+
+
+def get_imdb_movie_languages(imdb_id: str) -> list[str]:
+    return _get_imdb_title_page_data(imdb_id)[0]
 
 
 def get_movie_metadata(title: str, imdb_id: str | None = None) -> dict | None:
-    """Resolve one movie folder's canonical title, IMDb ID, and IMDb languages."""
+    """Resolve a movie's canonical title, IMDb ID, languages, and poster URL."""
     try:
         match = _best_movie_match(title)
         resolved_id = imdb_id or (match or {}).get("imdb_id") or (match or {}).get("id")
         if not resolved_id:
             return None
-        return {
+        languages, imdb_poster_url = _get_imdb_title_page_data(resolved_id)
+        metadata = {
             "imdb_id": resolved_id,
             "title": (match or {}).get("name") or title,
-            "languages": get_imdb_movie_languages(resolved_id),
+            "languages": languages,
         }
+        poster_url = imdb_poster_url or (match or {}).get("poster")
+        if poster_url:
+            metadata["poster_url"] = poster_url
+        background_url = (match or {}).get("background")
+        if background_url:
+            metadata["background_url"] = background_url
+        return metadata
     except Exception:
         return None
 
@@ -270,6 +301,38 @@ def get_current_year_series_seasons(title: str, year: int) -> list[dict]:
         return []
 
 
+def get_series_calendar_episodes(imdb_id: str) -> list[dict] | None:
+    """Fetch dated episode records for a series IMDb ID from Cinemeta."""
+    try:
+        response = _get_with_retry(
+            f"https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json",
+            follow_redirects=True,
+        )
+        if response.status_code != 200:
+            return None
+        meta = response.json().get("meta", {})
+        episodes = []
+        for video in meta.get("videos", []):
+            season = int(video.get("season") or 0)
+            episode = _episode_number(video)
+            release_at = _video_release_datetime(video)
+            if season <= 0 or episode <= 0 or release_at is None or _is_placeholder_episode(video):
+                continue
+            if release_at.tzinfo is None:
+                release_at = release_at.replace(tzinfo=timezone.utc)
+            episodes.append({
+                "season": season,
+                "episode": episode,
+                "title": video.get("name"),
+                "overview": video.get("overview") or video.get("description"),
+                "release_at": release_at.astimezone(timezone.utc).isoformat(),
+                "thumbnail_url": video.get("thumbnail"),
+            })
+        return episodes
+    except Exception:
+        return None
+
+
 def get_imdb_id(title: str) -> str | None:
     """Resolve a movie IMDb ID from Cinemeta's movie catalog."""
     metadata = get_movie_metadata(title)
@@ -317,17 +380,28 @@ def _series_metadata_from_search_meta(search_meta: dict, title: str, season: int
         if video.get("season") == season and _episode_number(video) > 0 and _is_available_episode(video)
     })
     episode_count = max(season_episodes) if season_episodes else None
-    return {
+    metadata = {
         "imdb_id": meta.get("imdb_id") or imdb_id,
         "title": meta.get("name") or search_meta.get("name") or title,
         "episode_count": episode_count,
         "available_episodes": season_episodes,
         "season_exists": bool(season_episodes),
     }
+    season_video = next((video for video in videos if video.get("season") == season and video.get("thumbnail")), None)
+    poster_url = _get_imdb_title_page_data(imdb_id)[1] or meta.get("poster") or search_meta.get("poster")
+    if poster_url:
+        metadata["poster_url"] = poster_url
+    season_poster_url = (season_video or {}).get("thumbnail") or poster_url
+    if season_poster_url:
+        metadata["season_poster_url"] = season_poster_url
+    background_url = meta.get("background") or search_meta.get("background")
+    if background_url:
+        metadata["background_url"] = background_url
+    return metadata
 
 
 def get_series_metadata(title: str, season: int) -> dict | None:
-    """Return IMDB ID, canonical title, and available episode count for a season."""
+    """Return series/season metadata and IMDb-linked artwork for one season."""
     try:
         metas = _search_series(title)
         if not metas:

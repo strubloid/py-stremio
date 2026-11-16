@@ -21,6 +21,11 @@ py-stremio --run
 py-stremio-cron 2     # update metadata + download
 py-stremio-cron 3     # update metadata
 py-stremio-cron 4     # download missing episodes
+
+# Optional local dashboard (build its assets first)
+pip install -e '.[api]'
+cd ui/react && npm install && npm run build
+cd ../.. && py-stremio-api
 ```
 
 ## Folder Structure
@@ -98,6 +103,8 @@ py-stremio --download         # freshness gate + download missing episodes/movie
 py-stremio --download-only    # download only, skip the library refresh
 py-stremio --download-all     # alias for --download (kept for backwards compat)
 py-stremio --run 7 100        # full pipeline, 7 threads, 100% speed
+py-stremio migrate            # import per-folder JSON into SQLite
+py-stremio export-json <folder> # export one catalog folder back to JSON
 
 # Addon management (menu 3)
 py-stremio --validate-addons  # menu 3.1: validate every URL in addons.txt
@@ -113,7 +120,26 @@ py-stremio-cron --download     # freshness gate + download missing
 py-stremio-cron --validate-addons
 py-stremio-cron --discover-addons
 py-stremio status --jobs       # recent cron job_runs (ok / failed / skipped)
+py-stremio-api                 # local dashboard at http://127.0.0.1:8765
 ```
+
+The dashboard needs the optional `api` extra and a built frontend (`npm run build` from
+`ui/react`). It binds to localhost by default; set `PY_STREMIO_API_TOKEN` to require a
+Bearer token. For frontend development, run `npm run dev` from `ui/react`; it starts
+the API and Vite together. It checks the project’s `venv` and `.venv` before using
+`PATH`; set `PY_STREMIO_API_BIN` to override the executable path.
+
+The dashboard includes Home, Series, Films, Calendar, Activity, and Settings views. It
+groups series into clickable titles and seasons, with episode file details, watched
+controls, and safe re-download actions. IMDb/Cinemeta artwork fills in after the
+background metadata refresh. The Calendar view shows episode release dates from Cinemeta.
+Download preferences persist in SQLite; service keys entered in Settings are stored in
+the owner-only local catalog, masked in the UI, and never returned by the API. Environment
+variables can still provide keys at API startup.
+
+Run `py-stremio migrate` to import existing folders. After a successful non-empty
+migration, SQLite becomes the default backend automatically. Set `STORAGE_BACKEND=json`
+to keep the legacy backend active during comparison or rollback.
 
 # Crontab example
 # PATH=/home/strubloid/apps/py-stremio/venv/bin:/usr/local/bin:/usr/bin:/bin

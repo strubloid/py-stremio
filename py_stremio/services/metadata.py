@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 from py_stremio.components.configs.app_settings import settings
-from py_stremio.components.configs.config_file import load_config
+from py_stremio.components.configs.config_file import load_config, save_config
 from py_stremio.components.library.library_scanner import Scanner, FolderType
 from py_stremio.components.library.media_file import infer_next_episode_download
 from py_stremio.components.stremio.stremio_client import get_series_imdb_id
@@ -13,10 +13,67 @@ from py_stremio.services.progress import ACCENT, GREEN, YELLOW, RED, RESET, buil
 from py_stremio.utils.media import parse_season_from_folder
 from py_stremio.utils.atomic_write import atomic_write_json
 from py_stremio.utils.cancellation import clear_shutdown, request_shutdown, shutdown_executor_now, shutdown_requested
+from py_stremio.storage.compat import use_sqlite
+from py_stremio.storage.catalog import (
+    get_movie_by_rel_path,
+    get_season_by_rel_path,
+    get_series_by_rel_path,
+    update_movie_artwork,
+    update_season_artwork,
+    update_series_artwork,
+)
 
 
 def _c(text: str, color: str) -> str:
     return f"{color}{text}{RESET}"
+
+
+def _persist_config(config_path, config_model, config_data: dict) -> None:
+    if use_sqlite():
+        for key, value in config_data.items():
+            if key != "quality" and hasattr(config_model, key):
+                setattr(config_model, key, value)
+        save_config(config_path, config_model)
+    else:
+        atomic_write_json(config_path, config_data, indent=2)
+
+
+def _persist_artwork(folder, kind: str, metadata: dict | None) -> None:
+    from py_stremio.storage.db import get_db_path, init_db
+
+    if not metadata or not get_db_path().is_file():
+        return
+    init_db()
+    root = settings.ROOT_FOLDER
+    rel_path = str(folder.path.relative_to(root))
+    if kind == "season":
+        series_rel_path = str(folder.path.parent.relative_to(root))
+        series = get_series_by_rel_path(series_rel_path)
+        season = get_season_by_rel_path(rel_path)
+        if series:
+            update_series_artwork(series["id"], metadata.get("poster_url"), metadata.get("background_url"))
+        if season:
+            update_season_artwork(season["id"], metadata.get("season_poster_url") or metadata.get("poster_url"))
+    else:
+        movie = get_movie_by_rel_path(rel_path)
+        if movie:
+            update_movie_artwork(movie["id"], metadata.get("poster_url"), metadata.get("background_url"))
+
+
+def _folder_artwork_missing(folder_path) -> bool:
+    from py_stremio.storage.db import get_db_path, init_db
+
+    if not get_db_path().is_file():
+        return False
+    init_db()
+    root = settings.ROOT_FOLDER
+    rel_path = str(folder_path.relative_to(root))
+    if folder_path.parent.parent.name == "series":
+        season = get_season_by_rel_path(rel_path)
+        series = get_series_by_rel_path(str(folder_path.parent.relative_to(root)))
+        return not (season and season["poster_url"]) or not (series and series["poster_url"])
+    movie = get_movie_by_rel_path(rel_path)
+    return not (movie and movie["poster_url"])
 
 
 def _format_duration(seconds: float) -> str:
@@ -225,15 +282,16 @@ class MetadataService:
         canonical_title = config.get("title") or folder_title
         season_label = f"S{season:02d}"
 
-        if use_cache and self._metadata_cache_fresh(config, cache_hours=cache_hours):
+        if use_cache and self._metadata_cache_fresh(config, cache_hours=cache_hours) and not _folder_artwork_missing(folder.path):
             if changed:
-                atomic_write_json(config_path, config, indent=2)
+                _persist_config(config_path, config_model, config)
             ep_display = str(config.get("episode_count") or "?")
             imdb_display = config.get("imdb_id") or "--"
             return changed, [canonical_title, season_label, ep_display, imdb_display, "cached"]
 
         metadata = get_series_metadata(title, season)
         checked_at = datetime.now(timezone.utc).isoformat()
+        _persist_artwork(folder, "season", metadata)
         if metadata:
             imdb_id = metadata.get("imdb_id")
             if imdb_id:
@@ -313,7 +371,7 @@ class MetadataService:
             changed = True
 
         if changed:
-            atomic_write_json(config_path, config, indent=2)
+            _persist_config(config_path, config_model, config)
 
         return changed, status_row
 
@@ -370,12 +428,13 @@ class MetadataService:
             except ValueError:
                 pass
 
-        if use_cached:
+        if use_cached and not _folder_artwork_missing(folder.path):
             if changed:
-                atomic_write_json(config_path, config, indent=2)
+                _persist_config(config_path, config_model, config)
             return changed
 
         metadata = get_movie_metadata(title, config.get("imdb_id"))
+        _persist_artwork(folder, "movie", metadata)
         if metadata:
             imdb_id = metadata.get("imdb_id")
             if imdb_id and config.get("imdb_id") != imdb_id:
@@ -410,7 +469,7 @@ class MetadataService:
             changed = True
 
         if changed:
-            atomic_write_json(config_path, config, indent=2)
+            _persist_config(config_path, config_model, config)
 
         return changed
 

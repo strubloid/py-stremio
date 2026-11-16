@@ -365,6 +365,27 @@ class RichDownloadUI(DownloadUI):
         self.speed_ref[0] = new_value
         self._push_speed_to_limiter()
 
+    def apply_controls(
+        self,
+        *,
+        workers: int | None = None,
+        speed_percent: int | None = None,
+        allow_4k: bool | None = None,
+    ) -> dict[str, int | bool]:
+        """Apply session-only control changes from the local dashboard."""
+        if workers is not None:
+            self.workers_ref[0] = max(self.MIN_WORKERS, min(self.MAX_WORKERS, workers))
+        if speed_percent is not None:
+            self.speed_ref[0] = max(self.MIN_SPEED, min(self.MAX_SPEED, speed_percent))
+            self._push_speed_to_limiter()
+        if allow_4k is not None and self.allow_4k_ref[0] != allow_4k:
+            self._handle_4k_toggle()
+        return {
+            "threads": self.workers_ref[0],
+            "speed_percent": self.speed_ref[0],
+            "allow_4k": self.allow_4k_ref[0],
+        }
+
     def _push_speed_to_limiter(self) -> None:
         """Propagate the current ``speed_ref`` value to the bandwidth limiter.
 

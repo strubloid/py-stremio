@@ -20,6 +20,10 @@ cloudflare = [
     "tls_client>=1.0.0",
     "cloudscraper>=1.2.71",
 ]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
@@ -28,6 +32,7 @@ dev = [
 [project.scripts]
 py-stremio = "py_stremio.main:run"
 py-stremio-cron = "py_stremio.main:run_cron"
+py-stremio-api = "py_stremio.main:run_api"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

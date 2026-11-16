@@ -56,6 +56,53 @@ def test_get_movie_metadata_resolves_title_and_languages_from_imdb(monkeypatch):
     }
 
 
+def test_get_movie_metadata_includes_imdb_poster_url(monkeypatch):
+    from py_stremio.components.stremio.stremio_metadata import get_movie_metadata
+
+    def fake_get(url, timeout, **kwargs):
+        if "/catalog/movie/" in url:
+            return FakeResponse({"metas": [{"imdb_id": "tt1234567", "name": "Example Film"}]})
+        return FakeTextResponse(
+            '<meta property="og:image" content="https://m.media-amazon.com/images/example-poster.jpg">'
+            '<script type="application/ld+json">{"name":"Example Film","inLanguage":["English"]}</script>'
+        )
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+
+    metadata = get_movie_metadata("Example Film")
+
+    assert metadata["poster_url"] == "https://m.media-amazon.com/images/example-poster.jpg"
+
+
+def test_get_series_metadata_includes_imdb_poster_and_season_thumbnail(monkeypatch):
+    from py_stremio.components.stremio.stremio_metadata import get_series_metadata
+
+    def fake_get(url, timeout, **kwargs):
+        if "/catalog/series/" in url:
+            return FakeResponse({"metas": [{"imdb_id": "tt7654321", "name": "Example Show"}]})
+        if "/meta/series/" in url:
+            return FakeResponse({"meta": {
+                "imdb_id": "tt7654321",
+                "name": "Example Show",
+                "poster": "https://images.example/series.jpg",
+                "background": "https://images.example/background.jpg",
+                "videos": [{
+                    "season": 2,
+                    "episode": 1,
+                    "thumbnail": "https://images.example/s02e01.jpg",
+                }],
+            }})
+        return FakeTextResponse('<meta property="og:image" content="https://m.media-amazon.com/images/example-show.jpg">')
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+
+    metadata = get_series_metadata("Example Show", 2)
+
+    assert metadata["poster_url"] == "https://m.media-amazon.com/images/example-show.jpg"
+    assert metadata["season_poster_url"] == "https://images.example/s02e01.jpg"
+    assert metadata["background_url"] == "https://images.example/background.jpg"
+
+
 def test_get_series_metadata_follows_cinemeta_meta_redirects(monkeypatch):
     calls = []
 

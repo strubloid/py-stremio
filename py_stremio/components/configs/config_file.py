@@ -109,12 +109,12 @@ def repair_series_season_config(folder_path: Path, config: DownloadConfig) -> bo
     return changed
 
 
-def load_config(folder_path: Path) -> tuple[DownloadConfig, Path]:
-    """Load config from folder, creating default if missing."""
+def _load_config_json(folder_path: Path) -> tuple[DownloadConfig, Path]:
+    """Load config from JSON file (legacy implementation)."""
     config_path = folder_path / "download-config.json"
     if not config_path.exists():
         config = get_default_config(folder_path)
-        save_config(config_path, config)
+        _save_config_json(config_path, config)
         return config, config_path
     try:
         with open(config_path) as f:
@@ -122,7 +122,7 @@ def load_config(folder_path: Path) -> tuple[DownloadConfig, Path]:
     except (json.JSONDecodeError, OSError):
         # File exists but is empty / corrupted — recreate with defaults
         config = get_default_config(folder_path)
-        save_config(config_path, config)
+        _save_config_json(config_path, config)
         return config, config_path
     quality_data = data.pop("quality", None)
     quality = QualitySettings(**quality_data) if quality_data else QualitySettings()
@@ -131,12 +131,12 @@ def load_config(folder_path: Path) -> tuple[DownloadConfig, Path]:
         data["current_episode_download"] = max(1, int(data.get("current_episode_download") or 1))
     config = DownloadConfig(quality=quality, **data)
     if repair_series_season_config(folder_path, config):
-        save_config(config_path, config)
+        _save_config_json(config_path, config)
     return config, config_path
 
 
-def save_config(config_path: Path, config: DownloadConfig) -> None:
-    """Save config to file.
+def _save_config_json(config_path: Path, config: DownloadConfig) -> None:
+    """Save config to JSON file (legacy implementation).
 
     Mirrors :func:`py_stremio.components.state.app_state.save_state`:
     I/O errors are reported through the error reporter but never raised,
@@ -158,3 +158,7 @@ def save_config(config_path: Path, config: DownloadConfig) -> None:
             exception=exc,
             url=str(config_path),
         )
+
+
+# Re-export from compat for backward compatibility
+from py_stremio.storage.compat import load_config, save_config

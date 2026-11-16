@@ -170,6 +170,7 @@ def setup_season_folder(
     folder_path: Path,
     bandwidth_limiter=None,
     quiet_output: bool = False,
+    force_episode: int | None = None,
 ) -> SeasonFolderTask | None:
     """Prepare a season folder for download — load config, scan, pre-flight.
 
@@ -204,9 +205,12 @@ def setup_season_folder(
     quality = _preferred_quality(config)
     preferred_languages = _preferred_languages(config)
 
-    existing_episodes = detect_existing_season_episodes(folder_path, config.episode_count)
+    existing_episodes = _existing_episodes_for_folder(folder_path, config.episode_count)
     start_episode = max(1, config.current_episode_download or 1)
     missing = _missing_episodes(folder_path, config, state, season, existing_episodes)
+    if force_episode is not None:
+        known_episodes = set(config.available_episodes or range(1, config.episode_count + 1))
+        missing = [force_episode] if force_episode in known_episodes else []
 
     # ── Resume-first ordering ─────────────────────────────────────────────
     # Sync the in_progress markers with the actual .part files on disk,
@@ -1286,6 +1290,37 @@ def _missing_episodes(folder_path: Path, config, state, season: int, existing_ep
     return missing
 
 
+def _existing_episodes_for_folder(folder_path: Path, episode_count: int | None) -> set[int]:
+    from py_stremio.storage.compat import use_sqlite
+
+    if not use_sqlite():
+        return detect_existing_season_episodes(folder_path, episode_count)
+
+    from py_stremio.storage.catalog import get_files, get_season_by_rel_path
+
+    try:
+        rel_path = str(folder_path.relative_to(settings.ROOT_FOLDER))
+    except ValueError:
+        return detect_existing_season_episodes(folder_path, episode_count)
+    season_row = get_season_by_rel_path(rel_path)
+    if not season_row:
+        return detect_existing_season_episodes(folder_path, episode_count)
+    files = [file for file in get_files("season", season_row["id"]) if not file["is_part"]]
+    if not files:
+        return set()
+    if not episode_count or episode_count <= 0:
+        return {file["episode"] for file in files if file["episode"] is not None}
+
+    parsed = sorted(file["episode"] for file in files if file["episode"] is not None)
+    season_local = {episode for episode in parsed if 1 <= episode <= episode_count}
+    if season_local:
+        return season_local
+    if parsed:
+        consecutive = parsed == list(range(parsed[0], parsed[0] + len(parsed)))
+        return set(range(1, min(len(parsed), episode_count) + 1)) if consecutive else set()
+    return set(range(1, min(len(files), episode_count) + 1))
+
+
 def _drop_existing_episodes_from_task(task: SeasonFolderTask) -> int:
     """Remove episodes whose generated final file already exists from a task.
 
@@ -1322,6 +1357,7 @@ def process_season_folder(
     quiet_output: bool = False,
     live_configs: list | None = None,
     workers_ref: list[int] | None = None,
+    force_episode: int | None = None,
 ) -> dict:
     """Process a season folder — backward-compatible wrapper around the task system.
 
@@ -1342,6 +1378,7 @@ def process_season_folder(
         folder_path=folder_path,
         bandwidth_limiter=bandwidth_limiter,
         quiet_output=quiet_output,
+        force_episode=force_episode,
     )
     if task is None:
         return {"skipped": True, "reason": "setup returned no task"}
@@ -1404,6 +1441,14 @@ def process_season_folder(
             for successful_url in successful_urls:
                 if successful_url and successful_url not in verified_servers:
                     verified_servers.append(successful_url)
+            from py_stremio.storage.compat import use_sqlite
+
+            if use_sqlite():
+                from py_stremio.storage.repositories import AddonRepo
+
+                for successful_url in successful_urls:
+                    if successful_url:
+                        AddonRepo.mark_working(successful_url)
             with servers_lock:
                 task.servers = _save_verified_server_urls(task.config, task.config_path, verified_servers)
             if completed_successes is not None:
@@ -1631,6 +1676,7 @@ def process_movie_folder(
     progress_callback=None,
     bandwidth_limiter=None,
     live_configs: list | None = None,
+    force_redownload: bool = False,
 ) -> dict:
     """Process a movie folder and download missing content from Stremio.
 
@@ -1666,7 +1712,7 @@ def process_movie_folder(
     video_files = iter_video_files(folder_path)
     quality = _preferred_quality(config)
 
-    if video_files:
+    if video_files and not force_redownload:
         for file_path in video_files:
             if not state.is_downloaded(file_path.name):
                 state.add_download(file_path.name, quality, "stremio")

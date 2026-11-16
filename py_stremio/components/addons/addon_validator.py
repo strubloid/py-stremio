@@ -311,6 +311,18 @@ def validate_and_update(
     working, failed = validate_all_addons(filepath, quiet=quiet)
     changes = update_addons_file(filepath, working=working, failed=failed)
 
+    from py_stremio.storage.compat import use_sqlite
+
+    if use_sqlite():
+        from py_stremio.storage.db import init_db
+        from py_stremio.storage.repositories import AddonRepo
+
+        init_db()
+        for url in working:
+            AddonRepo.mark_tested_working(url)
+        for url in failed:
+            AddonRepo.mark_failed(url, "validation failed")
+
     if changes:
         print(f"  Removed {changes} non-working URL(s) from {filepath}")
 

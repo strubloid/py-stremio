@@ -1,0 +1,54 @@
+export type LibraryEntry = {
+  kind: 'season' | 'movie'
+  id: number
+  series_id?: number
+  title: string
+  imdb_id?: string | null
+  poster_url?: string | null
+  background_url?: string | null
+  season?: number
+  downloaded: number
+  total: number
+  missing: number
+  enabled: boolean
+  episode_numbers?: number[]
+  downloaded_episodes?: number[]
+  watched_episodes?: number[]
+  watched?: boolean
+  metadata_due_at: string | null
+}
+
+export type SeriesSummary = {
+  id: number
+  title: string
+  imdb_id?: string | null
+  poster_url?: string | null
+  background_url?: string | null
+  seasons: LibraryEntry[]
+  downloaded: number
+  total: number
+  missing: number
+  unwatchedDownloaded: number
+}
+
+export type EpisodeHistory = {
+  files: {
+    rel_path: string
+    episode: number | null
+    size: number | null
+    mtime_ns: number | null
+    is_part: number
+  }[]
+  attempts: {
+    episode: number | null
+    success: number | null
+    server_url: string
+    error: string
+    started_at: string | null
+    completed_at: string | null
+    quality: string | null
+  }[]
+  watched_episodes: number[]
+}
+
+export type Section = 'home' | 'series' | 'movies' | 'calendar' | 'activity' | 'settings'

@@ -93,7 +93,14 @@ class DownloadService:
         """Download missing items for folders and return a report."""
         clear_shutdown()
         if folders is None:
-            folders = self.scanner.scan()
+            from py_stremio.storage.compat import use_sqlite
+
+            if use_sqlite():
+                from py_stremio.services.ensure import EnsureFreshService
+
+                folders = EnsureFreshService().run(quiet=quiet)
+            else:
+                folders = self.scanner.scan()
         folders = self._dedupe_duplicate_series_seasons(folders)
 
         if speed_percent is None:
@@ -135,6 +142,12 @@ class DownloadService:
 
         def progress(event: dict[str, Any]) -> None:
             ui.progress(event)
+            try:
+                from py_stremio.api.progress import progress_hub
+
+                progress_hub.publish(event)
+            except ImportError:
+                pass
 
         # Live-loaded folder configs (filled as we process each folder).
         # The 4K toggle handler mutates these in place so the very next
@@ -219,6 +232,9 @@ class DownloadService:
             })
 
         try:
+            from py_stremio.services.session_controls import register_download_ui
+
+            register_download_ui(ui)
             ui.start()
             if max_workers > 1 and len(runnable) > 1:
                 executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -260,6 +276,9 @@ class DownloadService:
             print_and_send_report(report)
             return report
         finally:
+            from py_stremio.services.session_controls import unregister_download_ui
+
+            unregister_download_ui(ui)
             ui.stop()
             restore_thread_stdout_filter(restore_stdout)
     # ------------------------------------------------------------------

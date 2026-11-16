@@ -48,6 +48,9 @@ class AppService:
     """
 
     def __init__(self):
+        from py_stremio.services.preferences import load_saved_preferences
+
+        load_saved_preferences()
         self.scanner = ScanService()
         self.metadata = MetadataService()
         self.downloader = DownloadService()
@@ -294,15 +297,18 @@ class AppService:
     # ------------------------------------------------------------------
 
     def ensure_fresh(self, quiet: bool = True) -> list:
-        """Scan folders and refresh configs/metadata, then return the folder list.
+        """Refresh stale library metadata and return managed download folders.
 
-        The transitional freshness gate for the cron ``configs`` /
-        ``download`` jobs (the SQLite catalog in ``plan.md`` replaces
-        this with a stored per-folder freshness budget).  Uses the
-        short ``CONFIGS_CACHE_HOURS`` window so a download run never
-        starts on stale episode lists, without re-hitting Cinemeta for
-        every folder on each run.
+        SQLite mode uses catalog mtime and due-date signals; JSON mode
+        retains the filesystem scan with its short metadata cache.
         """
+        from py_stremio.storage.compat import use_sqlite
+
+        if use_sqlite():
+            from py_stremio.services.ensure import EnsureFreshService
+
+            return EnsureFreshService(self.metadata).run(quiet=quiet)
+
         if not quiet:
             self._phase("\n🔄 Ensure fresh", "scanning folders and refreshing configs...")
         start = time.monotonic()

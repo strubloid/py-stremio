@@ -133,6 +133,10 @@ class Settings:
     #                    unencrypted playlists.
     HLS_DOWNLOAD_METHOD: str = field(default_factory=lambda: os.getenv("HLS_DOWNLOAD_METHOD", "ffmpeg").lower().strip())
 
+    # Storage backend: "json" (per-folder files) or "sqlite" (catalog)
+    # Defaults to "json" for backward compatibility during transition.
+    STORAGE_BACKEND: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "json").lower().strip())
+
     PREFERRED_LANGUAGES: list[str] = field(default_factory=lambda: [
         lang.strip() for lang in os.getenv("PREFERRED_LANGUAGES", "english").split(",") if lang.strip()
     ])
