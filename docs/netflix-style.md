@@ -21,7 +21,8 @@ Netflix branding, assets, or proprietary interface details.
 ## Information hierarchy
 
 1. **Home** gives one featured series and a few purposeful shelves. Each title appears
-   once, regardless of how many season folders it has.
+   once, regardless of how many season folders it has. Portrait posters are the default
+   cover layout. Backdrop, Compact, Mosaic, and Editorial layouts are selected in Settings.
 2. **Series** opens a title detail view with its season folders grouped together.
 3. **Season** opens an episode list with download state, watched state, file name, size,
    completion time, and the verified source when available.
@@ -34,6 +35,8 @@ Netflix branding, assets, or proprietary interface details.
    dates come from Cinemeta episode metadata and can be refreshed.
 7. **Settings** centralizes downloader preferences and service-key status. Secret values
    are masked, stored in the owner-only local catalog, and never returned to the client.
+   A top-right gear menu is a shortcut for the five layout choices; the full Settings
+   page remains in the main navigation for all other preferences.
 
 Artwork is keyed by the existing IMDb ID. Metadata refresh prefers IMDb's public
 `og:image` poster URL and falls back to the matching Cinemeta poster; season tiles use

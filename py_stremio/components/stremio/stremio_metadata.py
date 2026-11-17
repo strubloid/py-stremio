@@ -95,6 +95,7 @@ class _TitlePageParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.poster_url: str | None = None
+        self.release_date: str | None = None
         self.languages: list[str] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:
@@ -106,8 +107,8 @@ class _TitlePageParser(HTMLParser):
 
 
 @lru_cache(maxsize=512)
-def _get_imdb_title_page_data(imdb_id: str) -> tuple[list[str], str | None]:
-    """Read language and poster metadata from IMDb's public title markup."""
+def _get_imdb_title_page_data(imdb_id: str) -> tuple[list[str], str | None, str | None]:
+    """Read language, poster, and release-date metadata from IMDb title markup."""
     try:
         response = _get_with_retry(
             f"https://www.imdb.com/title/{imdb_id}/",
@@ -115,22 +116,23 @@ def _get_imdb_title_page_data(imdb_id: str) -> tuple[list[str], str | None]:
             follow_redirects=True,
         )
         if response.status_code != 200:
-            return [], None
+            return [], None, None
         parser = _TitlePageParser()
         parser.feed(response.text)
         for raw_json in re.findall(
             r'<script type="application/ld\+json">(.*?)</script>', response.text, flags=re.DOTALL
         ):
             try:
-                languages = _normalize_language_values(json.loads(raw_json).get("inLanguage"))
+                title_data = json.loads(raw_json)
             except json.JSONDecodeError:
                 continue
+            languages = _normalize_language_values(title_data.get("inLanguage"))
+            parser.release_date = title_data.get("datePublished") or parser.release_date
             if languages:
                 parser.languages = languages
-                break
-        return parser.languages, parser.poster_url
+        return parser.languages, parser.poster_url, parser.release_date
     except Exception:
-        return [], None
+        return [], None, None
 
 
 def get_imdb_movie_languages(imdb_id: str) -> list[str]:
@@ -140,22 +142,37 @@ def get_imdb_movie_languages(imdb_id: str) -> list[str]:
 def get_movie_metadata(title: str, imdb_id: str | None = None) -> dict | None:
     """Resolve a movie's canonical title, IMDb ID, languages, and poster URL."""
     try:
-        match = _best_movie_match(title)
+        match = _best_movie_match(title) if not imdb_id else None
         resolved_id = imdb_id or (match or {}).get("imdb_id") or (match or {}).get("id")
         if not resolved_id:
             return None
-        languages, imdb_poster_url = _get_imdb_title_page_data(resolved_id)
+        languages, imdb_poster_url, imdb_release_date = _get_imdb_title_page_data(resolved_id)
+        cinemeta_meta = {}
+        try:
+            response = _get_with_retry(
+                f"https://v3-cinemeta.strem.io/meta/movie/{resolved_id}.json",
+                follow_redirects=True,
+            )
+            if response.status_code == 200:
+                cinemeta_meta = response.json().get("meta", {})
+        except Exception:
+            pass
         metadata = {
             "imdb_id": resolved_id,
-            "title": (match or {}).get("name") or title,
+            "title": cinemeta_meta.get("name") or (match or {}).get("name") or title,
             "languages": languages,
         }
-        poster_url = imdb_poster_url or (match or {}).get("poster")
+        poster_url = imdb_poster_url or cinemeta_meta.get("poster") or (match or {}).get("poster")
         if poster_url:
             metadata["poster_url"] = poster_url
-        background_url = (match or {}).get("background")
+        background_url = cinemeta_meta.get("background") or (match or {}).get("background")
         if background_url:
             metadata["background_url"] = background_url
+        release_date = imdb_release_date or cinemeta_meta.get("released") or (match or {}).get("released")
+        if not release_date and (match or {}).get("year"):
+            release_date = f"{match['year']}-01-01"
+        if release_date:
+            metadata["release_date"] = str(release_date)[:10]
         return metadata
     except Exception:
         return None

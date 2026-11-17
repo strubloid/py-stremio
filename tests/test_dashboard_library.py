@@ -5,6 +5,8 @@ from py_stremio.api.main import app
 from py_stremio.storage.catalog import (
     get_or_create_season,
     get_or_create_series,
+    get_or_create_movie,
+    update_movie_artwork,
     update_season_artwork,
     update_series_artwork,
     upsert_files,
@@ -212,6 +214,53 @@ def test_calendar_refresh_caches_upcoming_cinemeta_events(tmp_path, monkeypatch)
     close_connection()
 
 
+def test_spotlight_returns_recent_series_episodes_and_movies(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from py_stremio.storage.db import execute
+
+    monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "spotlight.sqlite"))
+    monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
+    close_connection()
+    today = datetime.now(timezone.utc).date()
+    release_at = f"{today.isoformat()}T23:59:59+00:00"
+    movie_release = today.isoformat()
+    monkeypatch.setattr(
+        "py_stremio.services.calendar.get_calendar_month",
+        lambda _year, _month: {"needs_refresh": False, "last_refreshed": release_at},
+    )
+
+    with TestClient(app) as client:
+        series_id = get_or_create_series("Recent Show", "series/Recent Show", "tt1234567")
+        update_series_artwork(series_id, "https://images.example/show.jpg", "https://images.example/backdrop.jpg")
+        execute(
+            """INSERT INTO calendar_episodes
+               (series_id, season, episode, title, release_at, thumbnail_url)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (series_id, 2, 4, "The Return", release_at, "https://images.example/episode.jpg"),
+        )
+        movie_id = get_or_create_movie("Recent Film", "movies/Recent Film", "tt7654321")
+        update_movie_artwork(
+            movie_id,
+            "https://images.example/film.jpg",
+            "https://images.example/film-backdrop.jpg",
+            movie_release,
+        )
+
+        response = client.get("/api/spotlight", headers={"Authorization": "Bearer test-token"})
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        series_item = next(item for item in items if item["kind"] == "series")
+        movie_item = next(item for item in items if item["kind"] == "movie")
+        episode_id = fetchone("SELECT id FROM calendar_episodes")['id']
+        assert (series_item["title"], series_item["season"], series_item["episode"]) == ("Recent Show", 2, 4)
+        assert series_item["episode_image_url"] == f"/api/artwork/calendar/{episode_id}?variant=thumbnail"
+        assert movie_item["release_at"] == movie_release
+        assert movie_item["poster_url"] == f"/api/artwork/movie/{movie_id}"
+    close_connection()
+
+
 def test_settings_api_persists_preferences_but_never_returns_secret_values(tmp_path, monkeypatch):
     monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "settings.sqlite"))
     monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
@@ -220,12 +269,16 @@ def test_settings_api_persists_preferences_but_never_returns_secret_values(tmp_p
     close_connection()
 
     with TestClient(app) as client:
+        inactive_controls = client.get("/api/controls", headers={"Authorization": "Bearer test-token"})
+        assert inactive_controls.status_code == 200
+        assert inactive_controls.json() is None
         response = client.put(
             "/api/settings",
             headers={"Authorization": "Bearer test-token"},
             json={
                 "download_threads": 6,
                 "preferred_languages": ["english", "spanish"],
+                "library_layout": "mosaic",
                 "real_debrid_api_key": "runtime-only-key",
             },
         )
@@ -233,6 +286,7 @@ def test_settings_api_persists_preferences_but_never_returns_secret_values(tmp_p
         body = response.json()
         assert body["download_threads"] == 6
         assert body["preferred_languages"] == ["english", "spanish"]
+        assert body["library_layout"] == "mosaic"
         assert body["secrets_configured"]["real_debrid"] is True
         assert "runtime-only-key" not in response.text
 

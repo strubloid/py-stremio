@@ -37,7 +37,7 @@ class EnsureFreshService:
         for row in fetchall("SELECT * FROM seasons WHERE poster_url IS NULL"):
             stale_season_rows.setdefault(row["id"], dict(row))
         stale_movie_rows = {row["id"]: row for row in get_stale_movies()}
-        for row in fetchall("SELECT * FROM movies WHERE poster_url IS NULL"):
+        for row in fetchall("SELECT * FROM movies WHERE poster_url IS NULL OR release_date IS NULL"):
             stale_movie_rows.setdefault(row["id"], dict(row))
 
         for kind, row in [("season", item) for item in stale_season_rows.values()]:

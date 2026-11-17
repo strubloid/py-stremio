@@ -11,7 +11,7 @@ from typing import Any
 from py_stremio.components.configs.app_settings import settings
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = """
 -- catalog metadata / schema version
@@ -67,6 +67,7 @@ CREATE TABLE movies (
     imdb_id                TEXT,
     poster_url             TEXT,
     background_url         TEXT,
+    release_date           TEXT,
     rel_path               TEXT NOT NULL,
     enabled                INTEGER DEFAULT 1,
     quality                TEXT,
@@ -175,6 +176,8 @@ CREATE INDEX idx_seasons_metadata_due_at ON seasons(metadata_due_at);
 CREATE INDEX idx_files_owner ON files(owner_kind, owner_id, episode);
 CREATE INDEX idx_series_imdb_id ON series(imdb_id);
 CREATE INDEX idx_movies_metadata_due_at ON movies(metadata_due_at);
+CREATE INDEX idx_movies_release_date ON movies(release_date);
+CREATE INDEX idx_calendar_release_at ON calendar_episodes(release_at);
 CREATE INDEX idx_attempts_owner ON attempts(owner_kind, owner_id, episode);
 CREATE INDEX idx_job_runs_job_started ON job_runs(job, started_at);
 """
@@ -320,6 +323,12 @@ def _run_migrations(conn: sqlite3.Connection, from_version: int, to_version: int
                 refreshed_at TEXT NOT NULL
             )"""
         )
+    if from_version < 6 <= to_version:
+        cursor.execute("ALTER TABLE movies ADD COLUMN release_date TEXT")
+        cursor.execute(
+            "UPDATE movies SET metadata_due_at=? WHERE release_date IS NULL",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
         cursor.execute(
             """CREATE TABLE IF NOT EXISTS calendar_episodes (
                 id INTEGER PRIMARY KEY,
@@ -333,6 +342,8 @@ def _run_migrations(conn: sqlite3.Connection, from_version: int, to_version: int
                 UNIQUE(series_id, season, episode)
             )"""
         )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_movies_release_date ON movies(release_date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_calendar_release_at ON calendar_episodes(release_at)")
     cursor.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(to_version),))
     conn.commit()
 

@@ -15,6 +15,7 @@ export type LibraryEntry = {
   downloaded_episodes?: number[]
   watched_episodes?: number[]
   watched?: boolean
+  release_date?: string | null
   metadata_due_at: string | null
 }
 
@@ -52,3 +53,18 @@ export type EpisodeHistory = {
 }
 
 export type Section = 'home' | 'series' | 'movies' | 'calendar' | 'activity' | 'settings'
+export type LibraryLayout = 'cinematic' | 'streaming' | 'backdrop' | 'mosaic' | 'editorial' | 'smart'
+
+export type SpotlightItem = {
+  kind: 'series' | 'movie'
+  id: number
+  series_id?: number
+  title: string
+  poster_url?: string | null
+  background_url?: string | null
+  episode_image_url?: string | null
+  season?: number
+  episode?: number
+  episode_title?: string | null
+  release_at: string
+}

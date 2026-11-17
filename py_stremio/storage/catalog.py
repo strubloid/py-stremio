@@ -113,13 +113,20 @@ def update_season_artwork(season_id: int, poster_url: str | None) -> None:
         conn.execute("UPDATE seasons SET poster_url=? WHERE id=?", (poster_url, season_id))
 
 
-def update_movie_artwork(movie_id: int, poster_url: str | None, background_url: str | None = None) -> None:
-    if not poster_url and not background_url:
+def update_movie_artwork(
+    movie_id: int,
+    poster_url: str | None,
+    background_url: str | None = None,
+    release_date: str | None = None,
+) -> None:
+    if not poster_url and not background_url and not release_date:
         return
     with transaction() as conn:
         conn.execute(
-            "UPDATE movies SET poster_url=COALESCE(?,poster_url), background_url=COALESCE(?,background_url) WHERE id=?",
-            (poster_url, background_url, movie_id),
+            """UPDATE movies SET poster_url=COALESCE(?,poster_url),
+                      background_url=COALESCE(?,background_url),
+                      release_date=COALESCE(?,release_date) WHERE id=?""",
+            (poster_url, background_url, release_date, movie_id),
         )
 
 

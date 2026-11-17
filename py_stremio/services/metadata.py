@@ -57,7 +57,9 @@ def _persist_artwork(folder, kind: str, metadata: dict | None) -> None:
     else:
         movie = get_movie_by_rel_path(rel_path)
         if movie:
-            update_movie_artwork(movie["id"], metadata.get("poster_url"), metadata.get("background_url"))
+            update_movie_artwork(
+                movie["id"], metadata.get("poster_url"), metadata.get("background_url"), metadata.get("release_date")
+            )
 
 
 def _folder_artwork_missing(folder_path) -> bool:
@@ -73,7 +75,7 @@ def _folder_artwork_missing(folder_path) -> bool:
         series = get_series_by_rel_path(str(folder_path.parent.relative_to(root)))
         return not (season and season["poster_url"]) or not (series and series["poster_url"])
     movie = get_movie_by_rel_path(rel_path)
-    return not (movie and movie["poster_url"])
+    return not (movie and movie["poster_url"] and movie["release_date"])
 
 
 def _format_duration(seconds: float) -> str:

@@ -22,6 +22,12 @@ _IMAGE_TYPES = {
     "image/webp": ".webp",
     "image/avif": ".avif",
 }
+_APPROVED_IMAGE_HOSTS = {
+    "images.metahub.space",
+    "live.metahub.space",
+    "episodes.metahub.space",
+    "image.tmdb.org",
+}
 
 
 @dataclass(frozen=True)
@@ -31,7 +37,7 @@ class CachedArtwork:
 
 
 def _allowed_host(host: str | None) -> bool:
-    return bool(host and (host == "images.metahub.space" or host == "media-amazon.com" or host.endswith(".media-amazon.com")))
+    return bool(host and (host in _APPROVED_IMAGE_HOSTS or host == "media-amazon.com" or host.endswith(".media-amazon.com")))
 
 
 def get_cached_artwork(url: str) -> CachedArtwork:

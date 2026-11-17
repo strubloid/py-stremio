@@ -74,6 +74,49 @@ def test_get_movie_metadata_includes_imdb_poster_url(monkeypatch):
     assert metadata["poster_url"] == "https://m.media-amazon.com/images/example-poster.jpg"
 
 
+def test_get_movie_metadata_includes_imdb_release_date(monkeypatch):
+    from py_stremio.components.stremio.stremio_metadata import get_movie_metadata
+
+    def fake_get(url, timeout, **kwargs):
+        if "/catalog/movie/" in url:
+            return FakeResponse({"metas": [{"imdb_id": "tt9988776", "name": "Example Film"}]})
+        return FakeTextResponse(
+            '<script type="application/ld+json">'
+            '{"name":"Example Film","datePublished":"2025-03-14","inLanguage":["English"]}'
+            "</script>"
+        )
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+
+    metadata = get_movie_metadata("Example Film")
+
+    assert metadata["release_date"] == "2025-03-14"
+
+
+def test_get_movie_metadata_uses_supplied_imdb_id_for_cinemeta_artwork(monkeypatch):
+    from py_stremio.components.stremio.stremio_metadata import get_movie_metadata
+
+    def fake_get(url, timeout, **kwargs):
+        if "/title/tt4455667/" in url:
+            return FakeTextResponse('<meta property="og:image" content="https://m.media-amazon.com/images/movie.jpg">')
+        if "/meta/movie/tt4455667.json" in url:
+            return FakeResponse({"meta": {
+                "name": "Canonical Film",
+                "background": "https://images.metahub.space/background/medium/tt4455667/img",
+                "released": "2024-09-12T00:00:00.000Z",
+            }})
+        raise AssertionError(f"Unexpected metadata request: {url}")
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+
+    metadata = get_movie_metadata("Ambiguous title", "tt4455667")
+
+    assert metadata["imdb_id"] == "tt4455667"
+    assert metadata["title"] == "Canonical Film"
+    assert metadata["background_url"].endswith("tt4455667/img")
+    assert metadata["release_date"] == "2024-09-12"
+
+
 def test_get_series_metadata_includes_imdb_poster_and_season_thumbnail(monkeypatch):
     from py_stremio.components.stremio.stremio_metadata import get_series_metadata
 

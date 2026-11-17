@@ -16,6 +16,7 @@ _PREFERENCE_KEYS = {
     "preferred_languages": "PREFERRED_LANGUAGES",
     "max_download_attempts": "MAX_DOWNLOAD_ATTEMPTS",
     "configs_cache_hours": "CONFIGS_CACHE_HOURS",
+    "library_layout": "",
 }
 _SECRET_SETTINGS = {
     "real_debrid": "REAL_DEBRID_API_KEY",
@@ -24,6 +25,8 @@ _SECRET_SETTINGS = {
     "hdhub": "HDHUB_DEBRID_KEY",
     "torrent_proxy": "TORRENT_PROXY_URL",
 }
+_LAYOUT_ALIASES = {"poster": "cinematic", "compact": "smart"}
+_LIBRARY_LAYOUTS = {"cinematic", "streaming", "backdrop", "mosaic", "editorial", "smart"}
 
 
 def load_saved_preferences() -> None:
@@ -46,7 +49,12 @@ def load_saved_preferences() -> None:
                 parsed = max(0.0, min(168.0, float(parsed)))
             elif key == "preferred_languages":
                 parsed = [str(language).strip() for language in parsed if str(language).strip()]
-            setattr(settings, setting_name, parsed)
+            elif key == "library_layout":
+                parsed = _LAYOUT_ALIASES.get(parsed, parsed)
+                if parsed not in _LIBRARY_LAYOUTS:
+                    continue
+            if setting_name:
+                setattr(settings, setting_name, parsed)
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
     for key, setting_name in _SECRET_SETTINGS.items():
@@ -75,18 +83,32 @@ def save_preferences(values: dict) -> dict:
             value = max(0.0, min(168.0, float(value)))
         elif key == "preferred_languages":
             value = [str(language).strip() for language in value if str(language).strip()]
+        elif key == "library_layout":
+            value = _LAYOUT_ALIASES.get(value, value)
+            if value not in _LIBRARY_LAYOUTS:
+                continue
         set_runtime_setting(f"ui_pref_{key}", json.dumps(value))
-        setattr(settings, _PREFERENCE_KEYS[key], value)
+        if _PREFERENCE_KEYS[key]:
+            setattr(settings, _PREFERENCE_KEYS[key], value)
     return get_preferences()
 
 
 def get_preferences() -> dict:
+    library_layout = get_runtime_setting("ui_pref_library_layout", json.dumps("cinematic"))
+    try:
+        library_layout = json.loads(library_layout)
+    except (TypeError, json.JSONDecodeError):
+        library_layout = "cinematic"
+    library_layout = _LAYOUT_ALIASES.get(library_layout, library_layout)
+    if library_layout not in _LIBRARY_LAYOUTS:
+        library_layout = "cinematic"
     return {
         "download_threads": settings.DOWNLOAD_THREADS,
         "internet_speed_limit": settings.INTERNET_SPEED_LIMIT,
         "preferred_languages": list(settings.PREFERRED_LANGUAGES),
         "max_download_attempts": settings.MAX_DOWNLOAD_ATTEMPTS,
         "configs_cache_hours": settings.CONFIGS_CACHE_HOURS,
+        "library_layout": library_layout,
         "root_folder": str(settings.ROOT_FOLDER),
         "storage_backend": get_storage_backend(),
         "secrets_configured": {

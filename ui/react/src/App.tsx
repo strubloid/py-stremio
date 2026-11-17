@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Activity, Search, Tv } from 'lucide-react'
+import { Activity, Search, Settings2, Tv } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { LibraryHome } from '@/library/LibraryHome'
 import { MovieDetail } from '@/library/MovieDetail'
 import { SeriesDetail } from '@/library/SeriesDetail'
-import type { EpisodeHistory, LibraryEntry, Section, SeriesSummary } from '@/library/types'
+import type { EpisodeHistory, LibraryEntry, Section, SeriesSummary, SpotlightItem } from '@/library/types'
 import { CalendarPage } from '@/calendar/CalendarPage'
 import type { CalendarData } from '@/calendar/CalendarPage'
 import { SettingsPage } from '@/settings/SettingsPage'
@@ -25,11 +34,13 @@ type ProgressEvent = { id: number; message: string }
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem('py-stremio-token') ?? '')
   const [library, setLibrary] = useState<LibraryResponse | null>(null)
+  const [spotlight, setSpotlight] = useState<SpotlightItem[]>([])
   const [jobs, setJobs] = useState<JobsResponse | null>(null)
   const [addons, setAddons] = useState<AddonHealth[]>([])
   const [controls, setControls] = useState<ControlValues | null>(null)
   const [settings, setSettings] = useState<SettingsValues | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [savingLayout, setSavingLayout] = useState(false)
   const [calendar, setCalendar] = useState<CalendarData | null>(null)
   const [calendarLoading, setCalendarLoading] = useState(false)
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -44,6 +55,7 @@ export function App() {
   const [detailOwner, setDetailOwner] = useState<{ id: number; kind: 'season' | 'movie' } | null>(null)
   const [selectedSeriesId, setSelectedSeriesId] = useState<number | null>(null)
   const [selectedSeasonId, setSelectedSeasonId] = useState<number | null>(null)
+  const [focusedEpisode, setFocusedEpisode] = useState<number | null>(null)
   const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null)
   const [section, setSection] = useState<Section>('home')
   const [search, setSearch] = useState('')
@@ -70,11 +82,56 @@ export function App() {
           : 'The dashboard API could not be reached.')
       }
       setError(null)
-      setLibrary(await libraryResponse.json() as LibraryResponse)
+      const libraryData = await libraryResponse.json() as LibraryResponse
+      setLibrary(libraryData)
       setJobs(await jobsResponse.json() as JobsResponse)
-      setControls(controlsResponse.ok ? await controlsResponse.json() as ControlValues : null)
+      setControls(controlsResponse.ok ? await controlsResponse.json() as ControlValues | null : null)
       if (addonsResponse.ok) setAddons((await addonsResponse.json() as { addons: AddonHealth[] }).addons)
       if (settingsResponse.ok) setSettings(await settingsResponse.json() as SettingsValues)
+
+      const today = new Date().toISOString().slice(0, 10)
+      const start = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const monthKeys = [...new Set([start.slice(0, 7), today.slice(0, 7)])]
+      const calendarResponses = await Promise.all(monthKeys.map((month) => {
+        const [year, monthNumber] = month.split('-')
+        return fetch(`/api/calendar?year=${year}&month=${Number(monthNumber)}`, { headers })
+      }))
+      if (calendarResponses.some((response) => !response.ok)) {
+        throw new Error('Could not load recent releases from the calendar.')
+      }
+      const calendarMonths = await Promise.all(calendarResponses.map((response) => response.json() as Promise<CalendarData>))
+      const recentEpisodes = calendarMonths.flatMap((month) => month.events)
+        .filter((event) => event.release_at.slice(0, 10) >= start && event.release_at.slice(0, 10) <= today)
+        .toSorted((left, right) => right.release_at.localeCompare(left.release_at))
+      const seenSeries = new Set<number>()
+      const episodeSpotlight: SpotlightItem[] = recentEpisodes.flatMap((event) => {
+        if (seenSeries.has(event.series_id)) return []
+        seenSeries.add(event.series_id)
+        return [{
+          kind: 'series',
+          id: event.series_id,
+          series_id: event.series_id,
+          title: event.series_title,
+          poster_url: event.poster_url || event.image_url,
+          episode_image_url: event.image_url,
+          season: event.season,
+          episode: event.episode,
+          episode_title: event.title,
+          release_at: event.release_at,
+        }]
+      })
+      const movieSpotlight: SpotlightItem[] = libraryData.entries.flatMap((entry) => {
+        if (entry.kind !== 'movie' || !entry.release_date || entry.release_date < start || entry.release_date > today) return []
+        return [{
+          kind: 'movie',
+          id: entry.id,
+          title: entry.title,
+          poster_url: entry.poster_url,
+          background_url: entry.background_url,
+          release_at: entry.release_date,
+        }]
+      })
+      setSpotlight([...episodeSpotlight, ...movieSpotlight].toSorted((left, right) => right.release_at.localeCompare(left.release_at)))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unexpected dashboard error.')
     } finally {
@@ -197,11 +254,15 @@ export function App() {
   }
 
   const openSeries = (seriesId: number) => {
+    const firstSeason = series.find((item) => item.id === seriesId)?.seasons
+      .toSorted((left, right) => (left.season ?? 0) - (right.season ?? 0))[0]
     setSelectedSeriesId(seriesId)
-    setSelectedSeasonId(null)
+    setSelectedSeasonId(firstSeason?.id ?? null)
+    setFocusedEpisode(null)
     setSelectedMovieId(null)
     setHistory(null)
     setSection('series')
+    if (firstSeason) void loadEpisodeHistory({ id: firstSeason.id, kind: 'season' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -214,8 +275,27 @@ export function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const openSpotlight = (item: SpotlightItem) => {
+    if (item.kind === 'movie') {
+      const movie = movies.find((entry) => entry.id === item.id)
+      if (movie) openMovie(movie)
+      return
+    }
+    const seriesId = item.series_id ?? item.id
+    const matchingSeason = series.find((entry) => entry.id === seriesId)?.seasons.find((season) => season.season === item.season)
+    setSelectedSeriesId(seriesId)
+    setSelectedSeasonId(matchingSeason?.id ?? null)
+    setFocusedEpisode(item.episode ?? null)
+    setSelectedMovieId(null)
+    setHistory(null)
+    setSection('series')
+    if (matchingSeason) void loadEpisodeHistory({ id: matchingSeason.id, kind: 'season' })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const selectSeason = (season: LibraryEntry) => {
     setSelectedSeasonId(season.id)
+    setFocusedEpisode(null)
     void loadEpisodeHistory({ id: season.id, kind: 'season' })
   }
 
@@ -302,6 +382,27 @@ export function App() {
     }
   }
 
+  const updateLayout = async (library_layout: SettingsValues['library_layout']): Promise<boolean> => {
+    const previous = settings?.library_layout ?? 'cinematic'
+    setSettings((current) => current ? { ...current, library_layout } : current)
+    setSavingLayout(true)
+    const headers = new Headers({ 'Content-Type': 'application/json' })
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    try {
+      const response = await fetch('/api/settings', { method: 'PUT', headers, body: JSON.stringify({ library_layout }) })
+      if (!response.ok) throw new Error('Could not save the library layout.')
+      setSettings(await response.json() as SettingsValues)
+      setError(null)
+      return true
+    } catch (caught) {
+      setSettings((current) => current ? { ...current, library_layout: previous } : current)
+      setError(caught instanceof Error ? caught.message : 'Could not save the library layout.')
+      return false
+    } finally {
+      setSavingLayout(false)
+    }
+  }
+
   const changeCalendarMonth = (month: string) => {
     setCalendarMonth(month)
     setCalendarDate(`${month}-01`)
@@ -313,6 +414,7 @@ export function App() {
       setSelectedSeriesId(null)
       setSelectedMovieId(null)
       setSelectedSeasonId(null)
+      setFocusedEpisode(null)
       setDetailOwner(null)
     }
   }
@@ -334,29 +436,52 @@ export function App() {
             <TabsTrigger value="movies">Films</TabsTrigger>
             <TabsTrigger value="calendar">Calendar</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
+            <TabsTrigger value="settings"><Settings2 data-icon="inline-start" size={15} /> Settings</TabsTrigger>
           </TabsList>
         </Tabs>
         <div className="nav-tools">
           <label className="nav-search"><Search size={16} /><Input aria-label="Search your library" placeholder="Search titles" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
           <label className="token-field"><span>API token</span><Input aria-label="API token" type="password" autoComplete="off" placeholder="Optional" value={token} onChange={(event) => { setToken(event.target.value); setError(null) }} /></label>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Open settings menu"><Settings2 /></Button>} />
+            <DropdownMenuContent align="end" className="layout-menu w-64">
+              <p className="layout-menu-label">Library layout{savingLayout ? ' · Saving…' : ''}</p>
+              <DropdownMenuRadioGroup
+                value={settings?.library_layout ?? 'cinematic'}
+                onValueChange={(value) => {
+                  if (value === 'cinematic' || value === 'streaming' || value === 'backdrop' || value === 'mosaic' || value === 'editorial' || value === 'smart') void updateLayout(value)
+                }}
+              >
+                <DropdownMenuRadioItem value="cinematic" disabled={savingLayout}>Cinematic spotlight</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="streaming" disabled={savingLayout}>Streaming board</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="backdrop" disabled={savingLayout}>Backdrop gallery</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="mosaic" disabled={savingLayout}>Dynamic mosaic</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="editorial" disabled={savingLayout}>Editorial magazine</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="smart" disabled={savingLayout}>Smart library</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleSectionChange('settings')}>Open full settings…</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
       <main className="streaming-main">
         {error && <div className="error-banner" role="alert">{error}</div>}
-        {loading && !library ? <LoadingLibrary /> : section === 'home' ? <LibraryHome section="home" series={series} movies={movies} search={search} onOpenSeries={openSeries} onOpenMovie={openMovie} />
+        {loading && !library ? <LoadingLibrary /> : section === 'home' ? <LibraryHome section="home" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'cinematic'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
           : section === 'series' ? selectedSeries ? <SeriesDetail
+            key={`${selectedSeries.id}-${selectedSeasonId}-${focusedEpisode ?? ''}`}
             series={selectedSeries}
             selectedSeason={selectedSeason}
             history={detailOwner?.kind === 'season' ? history : null}
             loading={detailLoading && detailOwner?.kind === 'season'}
             busyEpisode={busyAction?.startsWith(`season-${selectedSeasonId}-`) ? Number(busyAction.split('-').at(-1)) : null}
+            initialEpisode={focusedEpisode}
             onBack={() => { setSelectedSeriesId(null); setSelectedSeasonId(null); setDetailOwner(null) }}
             onSelectSeason={selectSeason}
             onSetWatched={(episodes, watched) => selectedSeason && void setWatched({ id: selectedSeason.id, kind: 'season' }, episodes, watched)}
             onRedownload={(season, episode) => void redownload({ id: season.id, kind: 'season' }, episode)}
-          /> : <LibraryHome section="series" series={series} movies={movies} search={search} onOpenSeries={openSeries} onOpenMovie={openMovie} />
+          /> : <LibraryHome section="series" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'cinematic'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
             : section === 'movies' ? selectedMovie ? <MovieDetail
               movie={selectedMovie}
               history={detailOwner?.kind === 'movie' ? history : null}
@@ -365,7 +490,7 @@ export function App() {
               onBack={() => { setSelectedMovieId(null); setDetailOwner(null) }}
               onSetWatched={(watched) => void setWatched({ id: selectedMovie.id, kind: 'movie' }, [0], watched)}
               onRedownload={() => void redownload({ id: selectedMovie.id, kind: 'movie' })}
-            /> : <LibraryHome section="movies" series={series} movies={movies} search={search} onOpenSeries={openSeries} onOpenMovie={openMovie} />
+              /> : <LibraryHome section="movies" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'cinematic'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
               : section === 'calendar' ? <CalendarPage
                 month={calendarMonth}
                 selectedDate={calendarDate}
@@ -375,7 +500,7 @@ export function App() {
                 onMonthChange={changeCalendarMonth}
                 onSelectDate={setCalendarDate}
                 onRefresh={refreshCalendar}
-              /> : section === 'settings' ? settings ? <SettingsPage settings={settings} saving={savingSettings} onSave={updateSettings} /> : <LoadingLibrary />
+              /> : section === 'settings' ? settings ? <SettingsPage settings={settings} saving={savingSettings} savingLayout={savingLayout} onSave={updateSettings} onLayoutChange={updateLayout} /> : <LoadingLibrary />
                 : <OperationsPanel jobs={jobs} addons={addons} events={events} controls={controls} updateControls={updateControls} runJob={runJob} busyAction={busyAction} />}
       </main>
     </div>

@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -53,6 +53,7 @@ class SettingsUpdate(BaseModel):
     preferred_languages: list[str] | None = Field(default=None, max_length=15)
     max_download_attempts: int | None = Field(default=None, ge=0, le=50)
     configs_cache_hours: float | None = Field(default=None, ge=0, le=168)
+    library_layout: Literal["cinematic", "streaming", "backdrop", "mosaic", "editorial", "smart"] | None = None
     real_debrid_api_key: SecretStr | None = None
     premiumize_api_key: SecretStr | None = None
     alldebrid_api_key: SecretStr | None = None
@@ -173,13 +174,14 @@ def library(authorization: str | None = Header(default=None)) -> dict:
             "imdb_id": row["imdb_id"], "downloaded": downloaded_count,
             "poster_url": f"/api/artwork/movie/{row['id']}" if row["poster_url"] else None,
             "background_url": f"/api/artwork/movie/{row['id']}?variant=background" if row["background_url"] else None,
+            "release_date": row["release_date"],
             "total": 1, "missing": max(0, 1 - downloaded_count),
             "watched": 0 in watched_by_owner.get(("movie", row["id"]), []),
             "enabled": bool(row["enabled"]), "metadata_due_at": row["metadata_due_at"],
             "rel_path": row["rel_path"],
         })
         missing_total += entries[-1]["missing"]
-    if any(not entry.get("poster_url") for entry in entries):
+    if any(not entry.get("poster_url") or (entry["kind"] == "movie" and not entry.get("release_date")) for entry in entries):
         _schedule_artwork_refresh()
     return {"entries": entries, "series_seasons": len(seasons), "movies": len(movies), "missing": missing_total}
 
@@ -442,6 +444,70 @@ def calendar(
     return data
 
 
+@app.get("/api/spotlight")
+def spotlight(
+    days: int = Query(default=14, ge=1, le=90),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    from py_stremio.services.calendar import get_calendar_month
+    from py_stremio.storage.db import fetchall
+
+    now = datetime.now(timezone.utc)
+    cutoff = (now.date() - timedelta(days=days)).isoformat()
+    today = now.date().isoformat()
+    calendar_cache = get_calendar_month(now.year, now.month)
+    if calendar_cache["needs_refresh"]:
+        _schedule_calendar_refresh()
+
+    recent_episodes = fetchall(
+        """SELECT series.id AS series_id, series.title, series.poster_url, series.background_url,
+                  calendar_episodes.id AS calendar_episode_id, calendar_episodes.season,
+                  calendar_episodes.episode, calendar_episodes.title AS episode_title,
+                  calendar_episodes.release_at, calendar_episodes.thumbnail_url
+           FROM calendar_episodes JOIN series ON series.id=calendar_episodes.series_id
+           WHERE substr(calendar_episodes.release_at, 1, 10)>=?
+             AND substr(calendar_episodes.release_at, 1, 10)<=?
+           ORDER BY calendar_episodes.release_at DESC""",
+        (cutoff, today),
+    )
+    items = []
+    seen_series: set[int] = set()
+    for row in recent_episodes:
+        if row["series_id"] in seen_series:
+            continue
+        seen_series.add(row["series_id"])
+        items.append({
+            "kind": "series",
+            "id": row["series_id"],
+            "series_id": row["series_id"],
+            "title": row["title"],
+            "poster_url": f"/api/artwork/series/{row['series_id']}" if row["poster_url"] else None,
+            "background_url": f"/api/artwork/series/{row['series_id']}?variant=background" if row["background_url"] else None,
+            "episode_image_url": f"/api/artwork/calendar/{row['calendar_episode_id']}?variant=thumbnail" if row["thumbnail_url"] else None,
+            "season": row["season"],
+            "episode": row["episode"],
+            "episode_title": row["episode_title"],
+            "release_at": row["release_at"],
+        })
+
+    recent_movies = fetchall(
+        """SELECT id, title, release_date, poster_url, background_url FROM movies
+           WHERE release_date>=? AND release_date<=? ORDER BY release_date DESC, title""",
+        (cutoff, today),
+    )
+    items.extend({
+        "kind": "movie",
+        "id": row["id"],
+        "title": row["title"],
+        "poster_url": f"/api/artwork/movie/{row['id']}" if row["poster_url"] else None,
+        "background_url": f"/api/artwork/movie/{row['id']}?variant=background" if row["background_url"] else None,
+        "release_at": row["release_date"],
+    } for row in recent_movies)
+    items.sort(key=lambda item: item["release_at"], reverse=True)
+    return {"days": days, "items": items, "refreshed_at": calendar_cache["last_refreshed"]}
+
+
 @app.get("/api/artwork/{kind}/{owner_id}", include_in_schema=False)
 def artwork(
     kind: Literal["series", "season", "movie", "calendar"],
@@ -515,13 +581,13 @@ def update_settings(
 
 
 @app.get("/api/controls")
-def get_controls(authorization: str | None = Header(default=None)) -> dict:
+def get_controls(authorization: str | None = Header(default=None)) -> dict | None:
     _authorize(authorization)
     from py_stremio.services.session_controls import apply_session_controls
 
     current = apply_session_controls()
     if current is None:
-        raise HTTPException(status_code=409, detail="No download session is active")
+        return None
     return current
 
 

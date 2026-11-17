@@ -4,6 +4,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import type { LibraryLayout } from '@/library/types'
 
 export type SecretName = 'real_debrid' | 'premiumize' | 'alldebrid' | 'hdhub' | 'torrent_proxy'
 
@@ -13,6 +15,7 @@ export type SettingsValues = {
   preferred_languages: string[]
   max_download_attempts: number
   configs_cache_hours: number
+  library_layout: LibraryLayout
   root_folder: string
   storage_backend: string
   secrets_configured: Record<SecretName, boolean>
@@ -24,6 +27,7 @@ export type SettingsUpdate = {
   preferred_languages: string[]
   max_download_attempts: number
   configs_cache_hours: number
+  library_layout?: LibraryLayout
   real_debrid_api_key?: string
   premiumize_api_key?: string
   alldebrid_api_key?: string
@@ -35,15 +39,18 @@ export type SettingsUpdate = {
 type Props = {
   settings: SettingsValues
   saving: boolean
+  savingLayout: boolean
   onSave: (values: SettingsUpdate) => void
+  onLayoutChange: (layout: LibraryLayout) => Promise<boolean>
 }
 
-export function SettingsPage({ settings, saving, onSave }: Props) {
+export function SettingsPage({ settings, saving, savingLayout, onSave, onLayoutChange }: Props) {
   const [threads, setThreads] = useState(String(settings.download_threads))
   const [speed, setSpeed] = useState(String(settings.internet_speed_limit))
   const [languages, setLanguages] = useState(settings.preferred_languages.join(', '))
   const [attempts, setAttempts] = useState(String(settings.max_download_attempts))
   const [cacheHours, setCacheHours] = useState(String(settings.configs_cache_hours))
+  const [layout, setLayout] = useState<LibraryLayout>(settings.library_layout)
   const [secrets, setSecrets] = useState<Partial<Record<SecretName, string>>>({})
   const [clearSecrets, setClearSecrets] = useState<SecretName[]>([])
 
@@ -84,6 +91,20 @@ export function SettingsPage({ settings, saving, onSave }: Props) {
           <label className="settings-field-wide"><span>Preferred languages</span><Input value={languages} placeholder="english, spanish" onChange={(event) => setLanguages(event.target.value)} /><small>Comma-separated language preferences for new series seasons.</small></label>
           <label><span>Maximum download attempts</span><Input type="number" min="0" max="50" value={attempts} onChange={(event) => setAttempts(event.target.value)} /></label>
           <label><span>Metadata refresh window (hours)</span><Input type="number" min="0" max="168" step="0.5" value={cacheHours} onChange={(event) => setCacheHours(event.target.value)} /></label>
+          <div className="settings-field-wide layout-setting"><span>Library artwork layout {savingLayout && <small>Saving…</small>}</span><ToggleGroup multiple={false} disabled={savingLayout} value={[layout]} onValueChange={(values) => {
+            const value = values[0]
+            if (value === 'cinematic' || value === 'streaming' || value === 'backdrop' || value === 'mosaic' || value === 'editorial' || value === 'smart') {
+              setLayout(value)
+              void onLayoutChange(value).then((saved) => { if (!saved) setLayout(settings.library_layout) })
+            }
+          }} variant="outline" aria-label="Default library card layout">
+            <ToggleGroupItem value="cinematic">Cinematic</ToggleGroupItem>
+            <ToggleGroupItem value="streaming">Board</ToggleGroupItem>
+            <ToggleGroupItem value="backdrop">Backdrop</ToggleGroupItem>
+            <ToggleGroupItem value="mosaic">Mosaic</ToggleGroupItem>
+            <ToggleGroupItem value="editorial">Editorial</ToggleGroupItem>
+            <ToggleGroupItem value="smart">Smart</ToggleGroupItem>
+          </ToggleGroup><small>Selection saves immediately and updates every library view.</small></div>
           <div className="settings-readonly settings-field-wide"><span>Library folder</span><code>{settings.root_folder}</code></div>
           <div className="settings-readonly"><span>Storage</span><Badge variant="outline">{settings.storage_backend}</Badge></div>
           <div className="settings-save settings-field-wide"><Button onClick={submit} disabled={saving}><Save data-icon="inline-start" size={16} />{saving ? 'Saving…' : 'Save preferences'}</Button><small>Preferences are stored in the local catalog and applied to future runs.</small></div>
