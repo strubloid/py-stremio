@@ -41,6 +41,7 @@ export function App() {
   const [settings, setSettings] = useState<SettingsValues | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
   const [savingLayout, setSavingLayout] = useState(false)
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false)
   const [calendar, setCalendar] = useState<CalendarData | null>(null)
   const [calendarLoading, setCalendarLoading] = useState(false)
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -383,7 +384,7 @@ export function App() {
   }
 
   const updateLayout = async (library_layout: SettingsValues['library_layout']): Promise<boolean> => {
-    const previous = settings?.library_layout ?? 'cinematic'
+    const previous = settings?.library_layout ?? 'stremio'
     setSettings((current) => current ? { ...current, library_layout } : current)
     setSavingLayout(true)
     const headers = new Headers({ 'Content-Type': 'application/json' })
@@ -442,25 +443,28 @@ export function App() {
         <div className="nav-tools">
           <label className="nav-search"><Search size={16} /><Input aria-label="Search your library" placeholder="Search titles" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
           <label className="token-field"><span>API token</span><Input aria-label="API token" type="password" autoComplete="off" placeholder="Optional" value={token} onChange={(event) => { setToken(event.target.value); setError(null) }} /></label>
-          <DropdownMenu>
+          <DropdownMenu open={layoutMenuOpen} onOpenChange={setLayoutMenuOpen}>
             <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Open settings menu"><Settings2 /></Button>} />
             <DropdownMenuContent align="end" className="layout-menu w-64">
-              <p className="layout-menu-label">Library layout{savingLayout ? ' · Saving…' : ''}</p>
+              <p className="layout-menu-label">Library Layout</p>
               <DropdownMenuRadioGroup
-                value={settings?.library_layout ?? 'cinematic'}
+                value={settings?.library_layout ?? 'stremio'}
                 onValueChange={(value) => {
-                  if (value === 'cinematic' || value === 'streaming' || value === 'backdrop' || value === 'mosaic' || value === 'editorial' || value === 'smart') void updateLayout(value)
+                  if (value === 'stremio' || value === 'netflix' || value === 'apple-tv' || value === 'plex' || value === 'disney-plus' || value === 'prime-video') {
+                    void updateLayout(value)
+                    setLayoutMenuOpen(false)
+                  }
                 }}
               >
-                <DropdownMenuRadioItem value="cinematic" disabled={savingLayout}>Cinematic spotlight</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="streaming" disabled={savingLayout}>Streaming board</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="backdrop" disabled={savingLayout}>Backdrop gallery</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="mosaic" disabled={savingLayout}>Dynamic mosaic</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="editorial" disabled={savingLayout}>Editorial magazine</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="smart" disabled={savingLayout}>Smart library</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="stremio" disabled={savingLayout}>Stremio</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="netflix" disabled={savingLayout}>Netflix</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="apple-tv" disabled={savingLayout}>Apple TV</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="plex" disabled={savingLayout}>Plex</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="disney-plus" disabled={savingLayout}>Disney+</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="prime-video" disabled={savingLayout}>Prime Video</DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => handleSectionChange('settings')}>Open full settings…</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleSectionChange('settings')}>Open full settings...</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -468,7 +472,7 @@ export function App() {
 
       <main className="streaming-main">
         {error && <div className="error-banner" role="alert">{error}</div>}
-        {loading && !library ? <LoadingLibrary /> : section === 'home' ? <LibraryHome section="home" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'cinematic'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
+        {loading && !library ? <LoadingLibrary /> : section === 'home' ? <LibraryHome section="home" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'stremio'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
           : section === 'series' ? selectedSeries ? <SeriesDetail
             key={`${selectedSeries.id}-${selectedSeasonId}-${focusedEpisode ?? ''}`}
             series={selectedSeries}
@@ -481,7 +485,7 @@ export function App() {
             onSelectSeason={selectSeason}
             onSetWatched={(episodes, watched) => selectedSeason && void setWatched({ id: selectedSeason.id, kind: 'season' }, episodes, watched)}
             onRedownload={(season, episode) => void redownload({ id: season.id, kind: 'season' }, episode)}
-          /> : <LibraryHome section="series" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'cinematic'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
+          /> : <LibraryHome section="series" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'stremio'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
             : section === 'movies' ? selectedMovie ? <MovieDetail
               movie={selectedMovie}
               history={detailOwner?.kind === 'movie' ? history : null}
@@ -490,7 +494,7 @@ export function App() {
               onBack={() => { setSelectedMovieId(null); setDetailOwner(null) }}
               onSetWatched={(watched) => void setWatched({ id: selectedMovie.id, kind: 'movie' }, [0], watched)}
               onRedownload={() => void redownload({ id: selectedMovie.id, kind: 'movie' })}
-              /> : <LibraryHome section="movies" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'cinematic'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
+               /> : <LibraryHome section="movies" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'stremio'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
               : section === 'calendar' ? <CalendarPage
                 month={calendarMonth}
                 selectedDate={calendarDate}

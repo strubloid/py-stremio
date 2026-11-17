@@ -53,7 +53,7 @@ export type EpisodeHistory = {
 }
 
 export type Section = 'home' | 'series' | 'movies' | 'calendar' | 'activity' | 'settings'
-export type LibraryLayout = 'cinematic' | 'streaming' | 'backdrop' | 'mosaic' | 'editorial' | 'smart'
+export type LibraryLayout = 'stremio' | 'netflix' | 'apple-tv' | 'plex' | 'disney-plus' | 'prime-video'
 
 export type SpotlightItem = {
   kind: 'series' | 'movie'

@@ -202,6 +202,18 @@
 .browser-season-actions > div { display: flex; gap: 1px; }
 .browser-season-actions button { height: 26px; padding-inline: 7px; color: #c3c3c8; font-size: .58rem; }
 .episode-browser-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-color: #3d3e44 transparent; scrollbar-width: thin; }
+.movie-story-copy h1 { max-width: 14ch; }
+.movie-story-copy .series-progress { width: 100%; max-width: none; }
+.movie-file-art { background: linear-gradient(145deg, #465661, #1a1d24); }
+.movie-file-art .movie-file-kind { position: absolute; inset: auto 0 8px; z-index: 1; font-size: .58rem; letter-spacing: .13em; text-align: center; }
+.movie-file-art > svg { position: relative; z-index: 1; color: rgb(255 255 255 / 78%); }
+.movie-browser-intro { margin: 0 0 12px; color: #96979e; font-size: .72rem; }
+.movie-browser-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-color: #3d3e44 transparent; scrollbar-width: thin; }
+.movie-browser-file { display: grid; min-height: 64px; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px; border-bottom: 1px solid rgb(255 255 255 / 7%); }
+.movie-browser-file > div { display: grid; min-width: 0; gap: 5px; }
+.movie-browser-file strong { overflow: hidden; color: #e5e5e8; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+.movie-browser-file small { color: #85868e; font-size: .62rem; }
+.movie-browser-file [data-slot="badge"] { font-size: .57rem; }
 .episode-browser-row { display: grid; width: 100%; min-height: 58px; grid-template-columns: 7px 1fr auto auto; justify-content: stretch; gap: 10px; padding: 7px 9px; color: #ebebed; border-bottom: 1px solid rgb(255 255 255 / 6%); border-radius: 4px; text-align: left; }
 .episode-browser-row:hover, .episode-browser-row--active { background: #23242b; }
 .episode-state { width: 6px; height: 6px; align-self: center; border-radius: 50%; background: #777881; }
@@ -213,6 +225,184 @@
 .episode-watched-mark { color: #8ab89a; }
 .episode-queued { color: #d8c99e; font-size: .58rem; }
 .browser-empty { display: grid; min-height: 120px; place-items: center; color: #96979e; font-size: .72rem; }
+.platform-layout { width: 100%; min-width: 0; padding-bottom: 32px; }
+.platform-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: 28px 0 22px; }
+.platform-heading h1 { margin: 0; color: #f7f7f8; font-size: clamp(1.5rem, 2.4vw, 2.4rem); font-weight: 680; letter-spacing: -.04em; line-height: 1.06; }
+.platform-heading p { max-width: 65ch; margin: 7px 0 0; color: #a7a8af; font-size: .8rem; line-height: 1.5; }
+.platform-heading [data-slot="badge"] { flex: 0 0 auto; color: #b7b8be; }
+.platform-hero { position: relative; isolation: isolate; display: flex; min-width: 0; min-height: clamp(340px, 48vh, 630px); align-items: center; overflow: hidden; background: #15161b; }
+.platform-hero > .media-art-image, .platform-hero > .media-art-skeleton, .platform-hero > .media-art-fallback { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; }
+.platform-hero > .media-art-image { object-fit: cover; opacity: .56; }
+.platform-hero-shade { position: absolute; z-index: 1; inset: 0; background: linear-gradient(90deg, #08090b 0%, rgb(8 9 11 / 88%) 26%, rgb(8 9 11 / 25%) 72%, rgb(8 9 11 / 10%) 100%), linear-gradient(0deg, #08090b 0%, transparent 40%); }
+.platform-hero-copy { position: relative; z-index: 2; width: min(560px, 55%); margin: 0 0 0 clamp(28px, 6vw, 104px); padding: 44px 0 60px; }
+.platform-hero-copy [data-slot="badge"] { margin-bottom: 18px; color: #f3f3f5; background: rgb(12 13 16 / 48%); border-color: rgb(255 255 255 / 25%); font-size: .64rem; letter-spacing: .12em; }
+.platform-hero-copy h2 { max-width: 12ch; margin: 0; color: white; font-size: clamp(2.6rem, 6vw, 6rem); font-weight: 740; letter-spacing: -.055em; line-height: .96; text-wrap: balance; }
+.platform-hero-copy p { max-width: 58ch; margin: 16px 0 21px; color: #dedee3; font-size: .88rem; line-height: 1.5; }
+.platform-hero-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.platform-hero-actions button { min-height: 40px; padding-inline: 17px; }
+.platform-hero-pagination { position: absolute; z-index: 3; right: clamp(18px, 4vw, 58px); bottom: 18px; display: flex; align-items: center; gap: 4px; padding: 4px; color: #eee; background: rgb(9 10 13 / 78%); border: 1px solid rgb(255 255 255 / 15%); border-radius: 999px; }
+.platform-hero-pagination > button { width: 31px; height: 31px; color: white; }
+.platform-hero-pagination > span { min-width: 42px; color: #c8c9ce; font-size: .66rem; font-variant-numeric: tabular-nums; text-align: center; }
+.platform-hero-dots { display: flex; align-items: center; gap: 2px; }
+.platform-hero-dots button { width: 22px; height: 30px; padding: 0; }
+.platform-hero-dots button > span { width: 6px; height: 6px; border-radius: 50%; background: rgb(255 255 255 / 50%); transition: width 160ms ease, border-radius 160ms ease, background 160ms ease; }
+.platform-hero-dots button[aria-current="true"] > span { width: 16px; border-radius: 4px; background: white; }
+.platform-hero-pagination button:focus-visible { outline: 2px solid white; outline-offset: 2px; }
+.platform-hero--stremio { min-height: clamp(270px, 34vh, 430px); margin-bottom: 26px; border: 1px solid rgb(255 255 255 / 8%); border-radius: 8px; }
+.platform-hero--stremio .media-art-image { opacity: .38; }
+.platform-hero--stremio .platform-hero-copy { width: min(500px, 65%); margin-left: clamp(22px, 4vw, 58px); }
+.platform-hero--stremio .platform-hero-copy h2 { font-size: clamp(2.2rem, 4.4vw, 4.4rem); }
+.platform-hero--netflix { min-height: clamp(450px, 66vh, 760px); margin: 0 calc(0px - var(--content-gutter)) 0; }
+.platform-hero--netflix .media-art-image { opacity: .62; }
+.platform-hero--netflix .platform-hero-copy { margin-left: clamp(28px, 6vw, 104px); }
+.platform-hero--netflix .platform-hero-shade { background: linear-gradient(90deg, #08090b 0%, rgb(8 9 11 / 86%) 25%, rgb(8 9 11 / 20%) 72%, rgb(8 9 11 / 6%) 100%), linear-gradient(0deg, #08090b 0%, transparent 40%); }
+.netflix-content { padding-top: 8px; }
+.platform-hero--apple-tv { min-height: clamp(500px, 72vh, 820px); align-items: end; justify-content: center; background: #090a0c; }
+.platform-hero--apple-tv .media-art-image { opacity: .75; }
+.platform-hero--apple-tv .platform-hero-shade { background: linear-gradient(0deg, #08090b 0%, rgb(8 9 11 / 61%) 18%, transparent 65%); }
+.platform-hero--apple-tv .platform-hero-copy { width: min(820px, 78%); margin: 0 auto 34px; text-align: center; }
+.platform-hero--apple-tv .platform-hero-copy [data-slot="badge"] { display: none; }
+.platform-hero--apple-tv .platform-hero-copy h2 { max-width: 18ch; margin-inline: auto; font-size: clamp(2.6rem, 5.6vw, 5.4rem); }
+.platform-hero--apple-tv .platform-hero-copy p { margin-inline: auto; }
+.platform-hero--apple-tv .platform-hero-actions { justify-content: center; }
+.apple-library { padding-top: 12px; }
+.apple-wide-rail .media-card-wrap--landscape { flex-basis: clamp(330px, 34vw, 590px); }
+.platform-hero--disney-plus { min-height: clamp(400px, 58vh, 680px); margin: 4px 0 30px; border: 1px solid rgb(145 174 255 / 17%); border-radius: 14px; background: #080e21; }
+.platform-hero--disney-plus .media-art-image { opacity: .62; }
+.platform-hero--disney-plus .platform-hero-shade { background: linear-gradient(90deg, #071024 0%, rgb(7 16 36 / 83%) 30%, rgb(7 16 36 / 17%) 78%), linear-gradient(0deg, #08090b 0%, transparent 42%); }
+.platform-hero--disney-plus .platform-hero-copy { margin-left: clamp(28px, 5vw, 86px); }
+.disney-library { padding-top: 4px; }
+.disney-large-rail .media-card-wrap--collection { flex-basis: clamp(310px, 33vw, 560px); }
+.disney-collection-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 22px 16px; }
+.disney-collection-grid .media-card-wrap--collection { min-width: 0; }
+.platform-hero--prime-video { min-height: 100%; height: 100%; }
+.platform-hero--prime-video .media-art-image { opacity: .55; }
+.platform-hero--prime-video .platform-hero-copy { width: min(520px, 70%); margin-left: clamp(24px, 3vw, 48px); }
+.platform-hero--prime-video .platform-hero-copy h2 { font-size: clamp(2.1rem, 4vw, 4rem); }
+.platform-hero--prime-video .platform-hero-shade { background: linear-gradient(90deg, #09101a 0%, rgb(9 16 26 / 80%) 28%, rgb(9 16 26 / 15%) 100%), linear-gradient(0deg, #08090b 0%, transparent 42%); }
+.prime-discovery-top { display: grid; min-height: clamp(360px, 50vh, 600px); grid-template-columns: minmax(0, 1fr) minmax(270px, 340px); gap: 12px; margin-bottom: 26px; }
+.prime-quick-list { display: grid; min-width: 0; align-content: start; gap: 9px; padding: 17px; overflow: hidden; border: 1px solid #293141; border-radius: 8px; background: #0d131d; }
+.prime-quick-heading { display: flex; align-items: start; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.prime-quick-heading h2 { margin: 0; color: #f3f5f9; font-size: .96rem; font-weight: 650; }
+.prime-quick-heading p { margin: 4px 0 0; color: #8f9aaa; font-size: .66rem; }
+.prime-quick-heading [data-slot="badge"] { color: #aeb9ca; }
+.prime-quick-list .media-card-wrap--compact { width: 100%; }
+.prime-quick-empty { display: grid; min-height: 150px; place-items: center; color: #9099a7; font-size: .72rem; text-align: center; }
+.prime-discovery-content { min-width: 0; }
+.platform-empty { display: grid; min-height: 220px; justify-items: center; align-content: center; gap: 10px; color: #9698a0; text-align: center; }
+.platform-empty p { max-width: 45ch; margin: 0; font-size: .82rem; line-height: 1.5; }
+.stremio-refresh-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -5px 0 22px; color: #9ea0a8; font-size: .72rem; }
+.media-rail { min-width: 0; margin: 0 0 31px; }
+.media-rail-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.media-rail-heading h2 { margin: 0; color: #f1f1f3; font-size: clamp(.98rem, 1.35vw, 1.2rem); font-weight: 650; letter-spacing: -.02em; }
+.media-rail-heading p { margin: 4px 0 0; color: #96979e; font-size: .68rem; }
+.media-rail-controls { display: flex; flex: 0 0 auto; gap: 6px; }
+.media-rail-controls button { border-color: #34363c; color: #f3f3f4; background: #15171b; }
+.media-rail-track { display: flex; min-width: 0; gap: 13px; padding: 3px 4px 14px; overflow-x: auto; overscroll-behavior-x: contain; scroll-padding-inline: 4px; scroll-snap-type: x mandatory; scrollbar-color: #3b3d44 transparent; scrollbar-width: thin; touch-action: pan-x pan-y; cursor: grab; }
+.media-rail-track > * { scroll-snap-align: start; }
+.media-rail-track:focus-visible { outline: 2px solid #e50914; outline-offset: 2px; }
+.media-rail-track--dragging { cursor: grabbing; scroll-snap-type: none; }
+.media-card-wrap { min-width: 0; flex: 0 0 clamp(150px, 14vw, 205px); }
+.media-card-wrap--landscape { flex-basis: clamp(250px, 25vw, 390px); }
+.media-card-wrap--collection { flex-basis: clamp(245px, 26vw, 430px); }
+.media-card-wrap--compact { flex-basis: clamp(235px, 25vw, 340px); }
+.media-card-wrap--list { width: 100%; }
+.media-card { position: relative; display: block; width: 100%; height: auto; padding: 0; overflow: hidden; color: white; white-space: normal; border: 1px solid rgb(255 255 255 / 12%); border-radius: 7px; background: #15171c; text-align: left; transition: transform 180ms ease-out, border-color 180ms ease-out, filter 180ms ease-out; }
+.media-card:hover, .media-card:focus-visible { z-index: 2; border-color: rgb(255 255 255 / 56%); filter: brightness(1.06); transform: translateY(-3px) scale(1.015); }
+.media-card-art { position: relative; display: block; width: 100%; aspect-ratio: 2 / 3; overflow: hidden; background: linear-gradient(145deg, #20242d, #15161b); }
+.media-card--landscape .media-card-art { aspect-ratio: 16 / 9; }
+.media-card--collection .media-card-art { aspect-ratio: 1.7 / 1; }
+.media-card--compact .media-card-art { aspect-ratio: 2.45 / 1; }
+.media-card--list { height: 98px; }
+.media-card--list .media-card-art { height: 100%; aspect-ratio: auto; }
+.media-art-image, .media-art-skeleton { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.media-art-image { opacity: 0; transition: opacity 180ms ease-out; }
+.media-art-image--loaded { opacity: 1; }
+.media-art-skeleton { border-radius: 0; background: #23252c; }
+.media-art-fallback { position: absolute; inset: 0; display: grid; justify-items: center; align-content: center; gap: 8px; color: #d8dae0; background: linear-gradient(145deg, #262c37, #111419); font-size: clamp(1.6rem, 4vw, 3rem); font-weight: 700; }
+.media-art-fallback small { color: #969ba5; font-size: .58rem; font-weight: 500; }
+.media-card-shade { position: absolute; z-index: 1; inset: 0; background: linear-gradient(180deg, rgb(4 6 9 / 3%) 8%, rgb(4 6 9 / 12%) 42%, rgb(4 6 9 / 91%) 100%); }
+.media-card-eyebrow { position: absolute; z-index: 2; top: 12px; left: 12px; color: rgb(255 255 255 / 84%); font-size: .55rem; font-weight: 700; letter-spacing: .12em; text-shadow: 0 1px 4px #000; text-transform: uppercase; }
+.media-card-copy { position: absolute; z-index: 2; inset: auto 0 0; display: grid; gap: 6px; padding: 13px; }
+.media-card-title { display: -webkit-box; overflow: hidden; color: #fff; font-size: clamp(.88rem, 1.15vw, 1.2rem); font-weight: 700; letter-spacing: -.025em; line-height: 1.08; text-overflow: ellipsis; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.media-card-detail { overflow: hidden; color: rgb(243 244 247 / 77%); font-size: .65rem; text-overflow: ellipsis; white-space: nowrap; }
+.media-card-action { position: absolute; z-index: 3; right: 11px; bottom: 11px; display: inline-flex; align-items: center; gap: 5px; color: white; font-size: .65rem; font-weight: 650; opacity: 0; transform: translateY(4px); transition: opacity 160ms ease, transform 160ms ease; }
+.media-card:hover .media-card-action, .media-card:focus-visible .media-card-action { opacity: 1; transform: translateY(0); }
+.media-card-progress { height: 3px; margin-top: 4px; background: #292b31; }
+.media-card-progress [data-slot="progress-indicator"] { background: #d7192d; }
+.media-card-caption { display: block; margin-top: 7px; overflow: hidden; color: #dedfe3; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.media-card--list .media-card-art { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; }
+.media-card--list .media-art-image, .media-card--list .media-art-skeleton, .media-card--list .media-art-fallback { inset: 7px auto 7px 7px; width: 62px; height: calc(100% - 14px); border-radius: 3px; }
+.media-card--list .media-art-fallback { font-size: 1.1rem; }
+.media-card--list .media-card-shade { background: linear-gradient(90deg, transparent 0 20%, #111317 34%, #111317 100%); }
+.media-card--list .media-card-eyebrow { top: 12px; left: 82px; font-size: .5rem; }
+.media-card--list .media-card-copy { inset: 0 12px 0 79px; align-content: center; padding: 9px; }
+.media-card--list .media-card-title { font-size: .88rem; }
+.media-card--list .media-card-action { display: none; }
+.plex-library-header { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 23px; }
+.plex-library-header .platform-heading { flex: 1; margin-bottom: 0; }
+.plex-library-tools { display: flex; align-items: center; gap: 12px; }
+.plex-sort-controls { display: flex; gap: 4px; }
+.plex-sort-controls button { color: #c3c5ca; font-size: .68rem; }
+.plex-library-content { display: grid; gap: 27px; }
+.plex-library-group { min-width: 0; }
+.plex-group-heading { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+.plex-group-heading h2 { margin: 0; font-size: 1rem; font-weight: 650; }
+.plex-group-heading [data-slot="badge"] { color: #a9abb2; }
+.plex-title-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 18px 13px; }
+.plex-library-content--list .plex-title-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 8px; }
+.plex-library-content--list .media-card-caption { display: none; }
+@media (max-width: 1000px) {
+  .platform-hero-copy { width: min(560px, 68%); }
+  .prime-discovery-top { grid-template-columns: minmax(0, 1fr) 285px; }
+  .media-card-wrap { flex-basis: clamp(148px, 19vw, 190px); }
+  .media-card-wrap--landscape { flex-basis: clamp(235px, 31vw, 340px); }
+  .media-card-wrap--collection { flex-basis: clamp(250px, 34vw, 390px); }
+  .plex-library-header { align-items: start; flex-direction: column; gap: 12px; }
+}
+@media (max-width: 720px) {
+  .platform-heading { align-items: start; margin-top: 22px; }
+  .platform-hero { min-height: 430px; }
+  .platform-hero-copy { width: 82%; margin-left: 22px; padding-bottom: 58px; }
+  .platform-hero-copy h2 { font-size: clamp(2.35rem, 9vw, 4.2rem); }
+  .platform-hero--netflix { min-height: 56vh; margin-inline: calc(0px - var(--content-gutter)); }
+  .platform-hero--apple-tv { min-height: 60vh; }
+  .platform-hero--apple-tv .platform-hero-copy { width: 90%; margin: 0 auto 24px; }
+  .platform-hero--disney-plus { min-height: 420px; }
+  .prime-discovery-top { grid-template-columns: minmax(0, 1fr); }
+  .prime-discovery-top > .platform-hero { min-height: 440px; }
+  .prime-quick-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .prime-quick-heading, .prime-quick-empty { grid-column: 1 / -1; }
+  .prime-quick-list .media-card-wrap--compact { min-width: 0; }
+  .disney-collection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 10px; }
+  .media-card-wrap { flex-basis: 150px; }
+  .media-card-wrap--landscape { flex-basis: min(78vw, 310px); }
+  .media-card-wrap--collection { flex-basis: min(82vw, 340px); }
+  .media-rail-heading { align-items: end; }
+  .plex-library-tools { width: 100%; justify-content: space-between; }
+  .plex-title-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+@media (max-width: 460px) {
+  .platform-heading { gap: 8px; }
+  .platform-heading p { max-width: 34ch; font-size: .72rem; }
+  .platform-hero { min-height: 400px; }
+  .platform-hero-copy { width: 91%; margin-left: 17px; }
+  .platform-hero-copy h2 { font-size: clamp(2.15rem, 10vw, 3.4rem); }
+  .platform-hero-copy p { max-width: 34ch; font-size: .76rem; }
+  .platform-hero--netflix { min-height: 520px; }
+  .platform-hero--apple-tv { min-height: 520px; }
+  .platform-hero--disney-plus { min-height: 390px; }
+  .platform-hero-pagination { right: 10px; bottom: 10px; }
+  .platform-hero-dots button { width: 17px; }
+  .platform-hero-dots button[aria-current="true"] > span { width: 12px; }
+  .media-rail-controls button { width: 29px; height: 29px; }
+  .media-rail-heading p { max-width: 26ch; }
+  .disney-collection-grid { grid-template-columns: minmax(0, 1fr); }
+  .prime-quick-list { padding: 11px; }
+  .plex-title-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 8px; }
+  .plex-library-content--list .plex-title-grid { grid-template-columns: minmax(0, 1fr); }
+  .plex-sort-controls button { padding-inline: 7px; font-size: .62rem; }
+}
 .back-link { margin-bottom: 13px; color: #c7c7cb; }
 .detail-hero { position: relative; display: flex; min-height: 300px; align-items: center; gap: 30px; padding: 27px clamp(22px, 4vw, 52px); overflow: hidden; border: 1px solid rgb(255 255 255 / 8%); border-radius: 9px; background: linear-gradient(110deg, #15161b 4%, #202029 52%, #33262d 100%); }
 .detail-hero::after { position: absolute; inset: 0; background: radial-gradient(ellipse at 82% 25%, rgb(181 104 80 / 31%), transparent 33%), linear-gradient(90deg, transparent 37%, rgb(8 9 11 / 24%)); content: ""; pointer-events: none; }
@@ -327,38 +517,46 @@
 .calendar-month-controls strong { min-width: 145px; color: #efeff1; font-size: .9rem; text-align: center; }
 .calendar-month-controls button { min-height: 34px; }
 .calendar-hint { margin: 0 0 14px; color: #d8c99e; font-size: .72rem; }
-.calendar-layout { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 14px; align-items: start; }
+.calendar-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, clamp(320px, 22vw, 390px)); gap: 14px; align-items: start; }
 .calendar-board { min-width: 0; overflow: hidden; border: 1px solid #28292f; border-radius: 8px; background: #121317; }
 .calendar-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid #2c2d33; }
-.calendar-weekdays span { padding: 10px 7px; color: #9b9ca3; font-size: .66rem; text-align: center; }
+.calendar-weekdays span { padding: 11px 7px; color: #c4c5cc; font-size: .72rem; font-weight: 600; text-align: center; }
+.calendar-weekday-short { display: none; }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.calendar-day { position: relative; display: flex; min-width: 0; min-height: 124px; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 7px; padding: 8px; overflow: hidden; color: #e8e8eb; background: transparent; border: 0; border-right: 1px solid #28292f; border-bottom: 1px solid #28292f; border-radius: 0; text-align: left; }
+.calendar-day { position: relative; display: flex; min-width: 0; min-height: clamp(130px, 13.5vh, 154px); flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 9px; padding: 9px; overflow: hidden; color: #e8e8eb; background: transparent; border: 0; border-right: 1px solid #28292f; border-bottom: 1px solid #28292f; border-radius: 0; text-align: left; }
 .calendar-day:hover { background: #1c1d22; }
 .calendar-day--outside { color: #666770; background: #0f1013; }
 .calendar-day--selected { box-shadow: inset 0 0 0 1px #9d3440; background: #1b171b; }
-.calendar-day-number { font-size: .69rem; font-weight: 600; }
-.calendar-day-events { display: grid; gap: 4px; min-width: 0; }
-.calendar-day-event { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; color: #c5c5cb; font-size: .61rem; }
-.calendar-day-event img { width: 22px; height: 30px; flex: 0 0 22px; border-radius: 2px; object-fit: cover; }
-.calendar-day-event span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.calendar-day-events > small { color: #a6a6ad; font-size: .6rem; }
+.calendar-day-number { color: #f4f4f6; font-size: .84rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.calendar-day-events { display: flex; min-width: 0; min-height: 0; gap: 5px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-color: #555762 transparent; scrollbar-width: thin; }
+.calendar-day-event { display: block; min-width: 0; flex: 0 0 clamp(42px, 3vw, 58px); scroll-snap-align: start; }
+.calendar-day-event img { display: block; width: 100%; aspect-ratio: 2 / 3; border: 1px solid rgb(255 255 255 / 13%); border-radius: 4px; object-fit: cover; }
+.calendar-day-events { scroll-snap-type: x proximity; }
 .calendar-count { position: absolute; top: 6px; right: 6px; height: 17px; min-width: 17px; justify-content: center; padding: 0 4px; font-size: .58rem; }
-.calendar-agenda { position: sticky; top: 86px; display: grid; gap: 10px; max-height: calc(100vh - 110px); padding: 14px; overflow: auto; border: 1px solid #292a30; border-radius: 8px; background: #121317; }
-.agenda-heading { padding-bottom: 7px; border-bottom: 1px solid #292a30; }
+.calendar-agenda { position: sticky; top: 86px; display: grid; align-content: start; gap: 10px; max-height: calc(100vh - 110px); padding: 10px; overflow: auto; overscroll-behavior-y: contain; scroll-behavior: smooth; scrollbar-color: #3d3e44 transparent; scrollbar-width: thin; border: 1px solid #292a30; border-radius: 9px; background: #121317; }
+.agenda-heading { position: sticky; z-index: 2; top: -10px; padding: 10px 6px 11px; border-bottom: 1px solid #292a30; background: #121317; }
 .agenda-heading span { color: #888991; font-size: .58rem; font-weight: 650; letter-spacing: .13em; }
 .agenda-heading h2 { margin: 5px 0 0; color: #f2f2f4; font-size: .95rem; }
-.agenda-event { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 10px; padding: 9px; border: 1px solid #2b2c32; border-radius: 6px; background: #191a1f; }
-.agenda-event > img { width: 66px; height: 91px; border-radius: 3px; object-fit: cover; }
-.agenda-event h3 { margin: 6px 0 2px; color: #f1f1f3; font-size: .75rem; line-height: 1.25; }
+.agenda-day { display: grid; gap: 8px; padding: 9px; scroll-margin-block: 12px; border: 1px solid transparent; border-radius: 9px; background: #17181f; }
+.agenda-day--selected { border-color: #e3e3e9; background: #201f2c; }
+.agenda-day-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 3px; }
+.agenda-day-heading h3 { margin: 0; color: #f0f0f3; font-size: .78rem; font-weight: 650; }
+.agenda-day-heading [data-slot="badge"] { font-size: .55rem; }
+.agenda-day-events { display: grid; gap: 7px; }
+.agenda-event { display: grid; min-width: 0; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 80px; padding: 7px; border: 1px solid rgb(255 255 255 / 6%); border-radius: 8px; background: #1c1d25; }
+.agenda-event > img { width: 112px; height: 64px; border-radius: 5px; object-fit: cover; }
+.agenda-event h4 { margin: 5px 0 2px; color: #f1f1f3; font-size: .76rem; line-height: 1.2; }
 .agenda-event p { margin: 0; color: #b0b1b8; font-size: .66rem; }
-.agenda-event small { display: -webkit-box; margin-top: 7px; overflow: hidden; color: #83848b; font-size: .62rem; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.agenda-event [data-slot="badge"] { font-size: .57rem; }
+.agenda-event small { display: -webkit-box; margin-top: 5px; overflow: hidden; color: #92949d; font-size: .6rem; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.agenda-event [data-slot="badge"] { font-size: .55rem; }
 .agenda-empty { display: grid; min-height: 110px; align-content: center; gap: 7px; color: #92939a; font-size: .73rem; }
 .agenda-empty p { margin: 0; }
 .agenda-empty small, .calendar-updated { color: #777982; font-size: .62rem; }
 .calendar-updated { padding-top: 3px; }
 .calendar-skeleton { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.calendar-skeleton [data-slot="skeleton"] { height: 124px; border: 1px solid #25262b; border-radius: 0; background: #15161a; }
+.calendar-skeleton [data-slot="skeleton"] { height: clamp(130px, 13.5vh, 154px); border: 1px solid #25262b; border-radius: 0; background: #15161a; }
+.calendar-agenda-skeleton { display: grid; gap: 9px; }
+.agenda-skeleton-event { height: 94px; border: 1px solid rgb(255 255 255 / 6%); background: #1c1d25; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -410,7 +608,15 @@
   .operations-grid { grid-template-columns: minmax(0, 1fr); }
   .settings-layout { grid-template-columns: minmax(0, 1fr); }
   .calendar-layout { grid-template-columns: minmax(0, 1fr); }
-  .calendar-agenda { position: static; max-height: none; }
+  .calendar-agenda { position: static; max-height: min(68vh, 620px); }
+  .calendar-weekday-full { display: none; }
+  .calendar-weekday-short { display: inline; }
+  .calendar-day { min-height: 112px; gap: 6px; padding: 6px 4px; }
+  .calendar-day-events { gap: 3px; }
+  .calendar-day-event { flex-basis: 40px; }
+  .calendar-day-event img { width: 40px; height: 60px; }
+  .agenda-event { grid-template-columns: 100px minmax(0, 1fr); }
+  .agenda-event > img { width: 100px; height: 58px; }
   .series-screen-layout { grid-template-columns: minmax(0, 1fr) minmax(340px, 42%); gap: 18px; }
   .selected-episode-card { grid-template-columns: 105px minmax(0, 1fr); gap: 12px; }
   .selected-episode-art { height: 92px; }
@@ -436,8 +642,12 @@
   .calendar-heading { align-items: start; flex-direction: column; }
   .calendar-month-controls { width: 100%; flex-wrap: wrap; }
   .calendar-month-controls strong { flex: 1; }
-  .calendar-weekdays span { padding: 8px 2px; font-size: .55rem; }
-  .calendar-day { min-height: 85px; padding: 5px 3px; }
+  .calendar-weekdays span { padding: 8px 2px; font-size: .59rem; }
+  .calendar-day { min-height: 92px; padding: 5px 3px; }
+  .calendar-day-number { font-size: .7rem; }
+  .calendar-day-event { flex-basis: 32px; }
+  .calendar-day-event img { width: 32px; height: 48px; }
+  .calendar-count { height: 16px; min-width: 16px; font-size: .54rem; }
   .calendar-day-event { justify-content: center; }
   .calendar-day-event img { width: 28px; height: 38px; flex-basis: 28px; }
   .calendar-day-event span { display: none; }

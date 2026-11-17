@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { createConnection } from 'node:net'
 import { fileURLToPath } from 'node:url'
 
@@ -14,7 +14,11 @@ const localBins = [
 const apiCommand = process.env.PY_STREMIO_API_BIN ?? localBins.find(existsSync) ?? executable
 const api = spawn(apiCommand, [], {
   stdio: 'inherit',
-  env: { ...process.env, PY_STREMIO_API_RELOAD: 'true' },
+  env: {
+    ...process.env,
+    PYTHONPATH: [repositoryRoot, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
+    PY_STREMIO_API_RELOAD: 'true',
+  },
 })
 let vite
 let apiError

@@ -53,7 +53,7 @@ class SettingsUpdate(BaseModel):
     preferred_languages: list[str] | None = Field(default=None, max_length=15)
     max_download_attempts: int | None = Field(default=None, ge=0, le=50)
     configs_cache_hours: float | None = Field(default=None, ge=0, le=168)
-    library_layout: Literal["cinematic", "streaming", "backdrop", "mosaic", "editorial", "smart"] | None = None
+    library_layout: Literal["stremio", "netflix", "apple-tv", "plex", "disney-plus", "prime-video"] | None = None
     real_debrid_api_key: SecretStr | None = None
     premiumize_api_key: SecretStr | None = None
     alldebrid_api_key: SecretStr | None = None

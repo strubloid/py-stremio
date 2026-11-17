@@ -278,7 +278,7 @@ def test_settings_api_persists_preferences_but_never_returns_secret_values(tmp_p
             json={
                 "download_threads": 6,
                 "preferred_languages": ["english", "spanish"],
-                "library_layout": "mosaic",
+                "library_layout": "disney-plus",
                 "real_debrid_api_key": "runtime-only-key",
             },
         )
@@ -286,7 +286,7 @@ def test_settings_api_persists_preferences_but_never_returns_secret_values(tmp_p
         body = response.json()
         assert body["download_threads"] == 6
         assert body["preferred_languages"] == ["english", "spanish"]
-        assert body["library_layout"] == "mosaic"
+        assert body["library_layout"] == "disney-plus"
         assert body["secrets_configured"]["real_debrid"] is True
         assert "runtime-only-key" not in response.text
 
@@ -302,4 +302,24 @@ def test_settings_api_persists_preferences_but_never_returns_secret_values(tmp_p
     load_saved_preferences()
     assert settings.DOWNLOAD_THREADS == 6
     assert settings.REAL_DEBRID_API_KEY == "runtime-only-key"
+
+
+def test_library_layout_defaults_to_stremio_and_migrates_saved_layout_ids(tmp_path, monkeypatch):
+    import json
+
+    from py_stremio.services.preferences import get_preferences
+    from py_stremio.storage.catalog import set_runtime_setting
+
+    monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "layout-preferences.sqlite"))
+    close_connection()
+    init_db()
+
+    assert get_preferences()["library_layout"] == "stremio"
+
+    set_runtime_setting("ui_pref_library_layout", json.dumps("cinematic"))
+    assert get_preferences()["library_layout"] == "netflix"
+
+    set_runtime_setting("ui_pref_library_layout", json.dumps("mosaic"))
+    assert get_preferences()["library_layout"] == "disney-plus"
+    close_connection()
     close_connection()

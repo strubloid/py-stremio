@@ -91,19 +91,19 @@ export function SettingsPage({ settings, saving, savingLayout, onSave, onLayoutC
           <label className="settings-field-wide"><span>Preferred languages</span><Input value={languages} placeholder="english, spanish" onChange={(event) => setLanguages(event.target.value)} /><small>Comma-separated language preferences for new series seasons.</small></label>
           <label><span>Maximum download attempts</span><Input type="number" min="0" max="50" value={attempts} onChange={(event) => setAttempts(event.target.value)} /></label>
           <label><span>Metadata refresh window (hours)</span><Input type="number" min="0" max="168" step="0.5" value={cacheHours} onChange={(event) => setCacheHours(event.target.value)} /></label>
-          <div className="settings-field-wide layout-setting"><span>Library artwork layout {savingLayout && <small>Saving…</small>}</span><ToggleGroup multiple={false} disabled={savingLayout} value={[layout]} onValueChange={(values) => {
+          <div className="settings-field-wide layout-setting"><span>Library Layout {savingLayout && <small>Saving…</small>}</span><ToggleGroup multiple={false} disabled={savingLayout} value={[layout]} onValueChange={(values) => {
             const value = values[0]
-            if (value === 'cinematic' || value === 'streaming' || value === 'backdrop' || value === 'mosaic' || value === 'editorial' || value === 'smart') {
+            if (value === 'stremio' || value === 'netflix' || value === 'apple-tv' || value === 'plex' || value === 'disney-plus' || value === 'prime-video') {
               setLayout(value)
               void onLayoutChange(value).then((saved) => { if (!saved) setLayout(settings.library_layout) })
             }
-          }} variant="outline" aria-label="Default library card layout">
-            <ToggleGroupItem value="cinematic">Cinematic</ToggleGroupItem>
-            <ToggleGroupItem value="streaming">Board</ToggleGroupItem>
-            <ToggleGroupItem value="backdrop">Backdrop</ToggleGroupItem>
-            <ToggleGroupItem value="mosaic">Mosaic</ToggleGroupItem>
-            <ToggleGroupItem value="editorial">Editorial</ToggleGroupItem>
-            <ToggleGroupItem value="smart">Smart</ToggleGroupItem>
+          }} variant="outline" aria-label="Default library layout">
+            <ToggleGroupItem value="stremio">Stremio</ToggleGroupItem>
+            <ToggleGroupItem value="netflix">Netflix</ToggleGroupItem>
+            <ToggleGroupItem value="apple-tv">Apple TV</ToggleGroupItem>
+            <ToggleGroupItem value="plex">Plex</ToggleGroupItem>
+            <ToggleGroupItem value="disney-plus">Disney+</ToggleGroupItem>
+            <ToggleGroupItem value="prime-video">Prime Video</ToggleGroupItem>
           </ToggleGroup><small>Selection saves immediately and updates every library view.</small></div>
           <div className="settings-readonly settings-field-wide"><span>Library folder</span><code>{settings.root_folder}</code></div>
           <div className="settings-readonly"><span>Storage</span><Badge variant="outline">{settings.storage_backend}</Badge></div>

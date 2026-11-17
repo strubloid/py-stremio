@@ -25,8 +25,17 @@ _SECRET_SETTINGS = {
     "hdhub": "HDHUB_DEBRID_KEY",
     "torrent_proxy": "TORRENT_PROXY_URL",
 }
-_LAYOUT_ALIASES = {"poster": "cinematic", "compact": "smart"}
-_LIBRARY_LAYOUTS = {"cinematic", "streaming", "backdrop", "mosaic", "editorial", "smart"}
+_LAYOUT_ALIASES = {
+    "poster": "stremio",
+    "compact": "plex",
+    "cinematic": "netflix",
+    "streaming": "prime-video",
+    "backdrop": "apple-tv",
+    "mosaic": "disney-plus",
+    "editorial": "apple-tv",
+    "smart": "plex",
+}
+_LIBRARY_LAYOUTS = {"stremio", "netflix", "apple-tv", "plex", "disney-plus", "prime-video"}
 
 
 def load_saved_preferences() -> None:
@@ -94,14 +103,14 @@ def save_preferences(values: dict) -> dict:
 
 
 def get_preferences() -> dict:
-    library_layout = get_runtime_setting("ui_pref_library_layout", json.dumps("cinematic"))
+    library_layout = get_runtime_setting("ui_pref_library_layout", json.dumps("stremio"))
     try:
         library_layout = json.loads(library_layout)
     except (TypeError, json.JSONDecodeError):
-        library_layout = "cinematic"
+        library_layout = "stremio"
     library_layout = _LAYOUT_ALIASES.get(library_layout, library_layout)
     if library_layout not in _LIBRARY_LAYOUTS:
-        library_layout = "cinematic"
+        library_layout = "stremio"
     return {
         "download_threads": settings.DOWNLOAD_THREADS,
         "internet_speed_limit": settings.INTERNET_SPEED_LIMIT,
