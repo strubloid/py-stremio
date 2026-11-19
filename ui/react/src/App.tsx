@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Activity, Search, Settings2, Tv } from 'lucide-react'
+import { Activity, ArrowDownToLine, Search, Settings2, Tv } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,6 +23,7 @@ import { CalendarPage } from '@/calendar/CalendarPage'
 import type { CalendarData } from '@/calendar/CalendarPage'
 import { SettingsPage } from '@/settings/SettingsPage'
 import type { SettingsUpdate, SettingsValues } from '@/settings/SettingsPage'
+import { DownloadPage } from '@/download/DownloadPage'
 import './App.css'
 
 type LibraryResponse = { entries: LibraryEntry[]; series_seasons: number; movies: number; missing: number }
@@ -59,7 +60,7 @@ export function App() {
   const [selectedSeasonId, setSelectedSeasonId] = useState<number | null>(null)
   const [focusedEpisode, setFocusedEpisode] = useState<number | null>(null)
   const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null)
-  const [section, setSection] = useState<Section>('home')
+  const [section, setSection] = useState<Section>(() => window.location.pathname === '/download' ? 'download' : 'home')
   const [search, setSearch] = useState('')
   const [events, setEvents] = useState<ProgressEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -430,7 +431,8 @@ export function App() {
   }
 
   const handleSectionChange = (value: string) => {
-    if (value === 'home' || value === 'series' || value === 'movies' || value === 'library' || value === 'calendar' || value === 'activity' || value === 'settings') {
+    if (value === 'home' || value === 'series' || value === 'movies' || value === 'library' || value === 'calendar' || value === 'activity' || value === 'download' || value === 'settings') {
+      window.history.pushState({}, '', value === 'download' ? '/download' : '/')
       setSection(value)
       setSelectedSeriesId(null)
       setSelectedMovieId(null)
@@ -458,6 +460,7 @@ export function App() {
             <TabsTrigger value="library">Library</TabsTrigger>
             <TabsTrigger value="calendar">Calendar</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
+            <TabsTrigger value="download"><ArrowDownToLine data-icon="inline-start" size={15} /> Downloads</TabsTrigger>
             <TabsTrigger value="settings"><Settings2 data-icon="inline-start" size={15} /> Settings</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -517,7 +520,8 @@ export function App() {
               onSetWatched={(watched) => void setWatched({ id: selectedMovie.id, kind: 'movie' }, [0], watched)}
               onRedownload={() => void redownload({ id: selectedMovie.id, kind: 'movie' })}
                /> : <LibraryHome section="movies" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'stremio'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
-              : section === 'calendar' ? <CalendarPage
+               : section === 'download' ? <DownloadPage entries={library?.entries ?? []} events={events} running={Boolean(jobs?.active.some((job) => job.job === 'download'))} busy={busyAction !== null} onStart={() => void runJob('download')} />
+               : section === 'calendar' ? <CalendarPage
                 month={calendarMonth}
                 selectedDate={calendarDate}
                 data={calendar}

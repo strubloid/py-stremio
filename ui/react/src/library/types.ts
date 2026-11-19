@@ -53,7 +53,7 @@ export type EpisodeHistory = {
   watched_episodes: number[]
 }
 
-export type Section = 'home' | 'series' | 'movies' | 'library' | 'calendar' | 'activity' | 'settings'
+export type Section = 'home' | 'series' | 'movies' | 'library' | 'calendar' | 'activity' | 'download' | 'settings'
 export type LibraryLayout = 'stremio' | 'netflix' | 'apple-tv' | 'plex' | 'disney-plus' | 'prime-video'
 
 export type SpotlightItem = {
