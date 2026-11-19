@@ -17,6 +17,7 @@ import {
 import { LibraryHome } from '@/library/LibraryHome'
 import { MovieDetail } from '@/library/MovieDetail'
 import { SeriesDetail } from '@/library/SeriesDetail'
+import { LibraryManager } from '@/library/LibraryManager'
 import type { EpisodeHistory, LibraryEntry, Section, SeriesSummary, SpotlightItem } from '@/library/types'
 import { CalendarPage } from '@/calendar/CalendarPage'
 import type { CalendarData } from '@/calendar/CalendarPage'
@@ -404,13 +405,32 @@ export function App() {
     }
   }
 
+  const removeLibraryItem = async (kind: 'series' | 'movie', id: number) => {
+    const title = kind === 'series'
+      ? series.find((item) => item.id === id)?.title
+      : movies.find((item) => item.id === id)?.title
+    const confirmed = window.confirm(`Remove ${title ?? 'this item'} from your library? This removes its catalog entry and download history, but does not delete any video files.`)
+    if (!confirmed) return
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+    try {
+      const response = await fetch(`/api/library/${kind}/${id}`, { method: 'DELETE', headers })
+      if (!response.ok) throw new Error(response.status === 401 ? 'The API token was rejected.' : 'Could not remove this library item.')
+      setSection('library')
+      setSelectedSeriesId(null)
+      setSelectedMovieId(null)
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not remove this library item.')
+    }
+  }
+
   const changeCalendarMonth = (month: string) => {
     setCalendarMonth(month)
     setCalendarDate(`${month}-01`)
   }
 
   const handleSectionChange = (value: string) => {
-    if (value === 'home' || value === 'series' || value === 'movies' || value === 'calendar' || value === 'activity' || value === 'settings') {
+    if (value === 'home' || value === 'series' || value === 'movies' || value === 'library' || value === 'calendar' || value === 'activity' || value === 'settings') {
       setSection(value)
       setSelectedSeriesId(null)
       setSelectedMovieId(null)
@@ -435,6 +455,7 @@ export function App() {
             <TabsTrigger value="home">Home</TabsTrigger>
             <TabsTrigger value="series">Series</TabsTrigger>
             <TabsTrigger value="movies">Films</TabsTrigger>
+            <TabsTrigger value="library">Library</TabsTrigger>
             <TabsTrigger value="calendar">Calendar</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
             <TabsTrigger value="settings"><Settings2 data-icon="inline-start" size={15} /> Settings</TabsTrigger>
@@ -473,6 +494,7 @@ export function App() {
       <main className="streaming-main">
         {error && <div className="error-banner" role="alert">{error}</div>}
         {loading && !library ? <LoadingLibrary /> : section === 'home' ? <LibraryHome section="home" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'stremio'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
+          : section === 'library' ? <LibraryManager series={series} movies={movies} onOpenSeries={openSeries} onOpenMovie={openMovie} onRemove={(kind, id) => void removeLibraryItem(kind, id)} />
           : section === 'series' ? selectedSeries ? <SeriesDetail
             key={`${selectedSeries.id}-${selectedSeasonId}-${focusedEpisode ?? ''}`}
             series={selectedSeries}

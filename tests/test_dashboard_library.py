@@ -25,6 +25,8 @@ def test_library_queues_background_artwork_refresh_for_missing_poster(tmp_path, 
     monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
     monkeypatch.setattr("py_stremio.storage.compat._storage_backend", "sqlite")
     close_connection()
+
+
     refresh_requests = []
     monkeypatch.setattr("py_stremio.api.main._schedule_artwork_refresh", lambda: refresh_requests.append(True))
 
@@ -321,5 +323,36 @@ def test_library_layout_defaults_to_stremio_and_migrates_saved_layout_ids(tmp_pa
 
     set_runtime_setting("ui_pref_library_layout", json.dumps("mosaic"))
     assert get_preferences()["library_layout"] == "disney-plus"
+    close_connection()
+
+
+def test_remove_series_from_library_keeps_media_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "remove-library.sqlite"))
+    monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
+    close_connection()
+    media = tmp_path / "episode.mkv"
+    media.write_bytes(b"video")
+
+    with TestClient(app) as client:
+        series_id = get_or_create_series("Duplicate Show", "series/Duplicate Show")
+        season_id = get_or_create_season(series_id, 1, "series/Duplicate Show/s01")
+        upsert_files("season", season_id, [{
+            "rel_path": str(media),
+            "episode": 1,
+            "size": media.stat().st_size,
+            "mtime_ns": media.stat().st_mtime_ns,
+            "is_part": False,
+        }])
+
+        response = client.delete(
+            f"/api/library/series/{series_id}",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 200
+        assert fetchone("SELECT id FROM series WHERE id = ?", (series_id,)) is None
+        assert fetchone("SELECT id FROM seasons WHERE id = ?", (season_id,)) is None
+        assert fetchone("SELECT id FROM files WHERE owner_id = ?", (season_id,)) is None
+        assert media.read_bytes() == b"video"
     close_connection()
     close_connection()

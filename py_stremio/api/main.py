@@ -186,6 +186,38 @@ def library(authorization: str | None = Header(default=None)) -> dict:
     return {"entries": entries, "series_seasons": len(seasons), "movies": len(movies), "missing": missing_total}
 
 
+@app.delete("/api/library/{kind}/{item_id}")
+def remove_library_item(
+    kind: Literal["series", "movie"],
+    item_id: int,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Remove a catalog entry and its tracking data without touching media files."""
+    _authorize(authorization)
+    from py_stremio.storage.db import transaction
+
+    with transaction() as conn:
+        if kind == "series":
+            season_rows = conn.execute("SELECT id FROM seasons WHERE series_id = ?", (item_id,)).fetchall()
+            if not conn.execute("SELECT 1 FROM series WHERE id = ?", (item_id,)).fetchone():
+                raise HTTPException(status_code=404, detail="Series not found")
+            season_ids = [row["id"] for row in season_rows]
+            for season_id in season_ids:
+                for table in ("files", "attempts", "episode_watch_state", "owner_state"):
+                    conn.execute(f"DELETE FROM {table} WHERE owner_kind = 'season' AND owner_id = ?", (season_id,))
+            conn.execute("DELETE FROM calendar_episodes WHERE series_id = ?", (item_id,))
+            conn.execute("DELETE FROM calendar_sync WHERE series_id = ?", (item_id,))
+            conn.execute("DELETE FROM seasons WHERE series_id = ?", (item_id,))
+            conn.execute("DELETE FROM series WHERE id = ?", (item_id,))
+        else:
+            if not conn.execute("SELECT 1 FROM movies WHERE id = ?", (item_id,)).fetchone():
+                raise HTTPException(status_code=404, detail="Movie not found")
+            for table in ("files", "attempts", "episode_watch_state", "owner_state"):
+                conn.execute(f"DELETE FROM {table} WHERE owner_kind = 'movie' AND owner_id = ?", (item_id,))
+            conn.execute("DELETE FROM movies WHERE id = ?", (item_id,))
+    return {"removed": True, "kind": kind, "id": item_id}
+
+
 @app.get("/api/jobs")
 def jobs(authorization: str | None = Header(default=None)) -> dict:
     _authorize(authorization)

@@ -17,6 +17,7 @@ export type LibraryEntry = {
   watched?: boolean
   release_date?: string | null
   metadata_due_at: string | null
+  rel_path?: string
 }
 
 export type SeriesSummary = {
@@ -52,7 +53,7 @@ export type EpisodeHistory = {
   watched_episodes: number[]
 }
 
-export type Section = 'home' | 'series' | 'movies' | 'calendar' | 'activity' | 'settings'
+export type Section = 'home' | 'series' | 'movies' | 'library' | 'calendar' | 'activity' | 'settings'
 export type LibraryLayout = 'stremio' | 'netflix' | 'apple-tv' | 'plex' | 'disney-plus' | 'prime-video'
 
 export type SpotlightItem = {
