@@ -155,9 +155,13 @@ class EnsureFreshService:
         )
         created: list[ScannedFolder] = []
         for series in candidates:
+            excluded_seasons = {
+                row["season"]
+                for row in fetchall("SELECT season FROM seasons WHERE series_id=? AND enabled=0", (series["id"],))
+            }
             for season_info in get_current_year_series_seasons(series["title"], year):
                 season = int(season_info.get("season") or 0)
-                if season <= series["latest_season"] or not season_info.get("episode_count"):
+                if season <= series["latest_season"] or season in excluded_seasons or not season_info.get("episode_count"):
                     continue
                 series_path = root / series["rel_path"]
                 season_path = series_path / f"s{season:02d}"

@@ -681,11 +681,53 @@
 .library-table-imdb { display: block; margin: 2px 0 0 8px; color: #777a84; font-size: .58rem; }
 .library-table-path { max-width: 280px; overflow: hidden; color: #92949d !important; text-overflow: ellipsis; white-space: nowrap !important; }
 .library-table-wrap .manager-empty { padding: 32px 16px; }
+.library-series-drawer { --drawer-content-width: min(96vw, 48rem); border-color: #30313a; background: #111216; }
+.library-series-drawer-header { display: flex; flex-direction: row; align-items: center; gap: 15px; padding: 22px 24px 17px; text-align: left; }
+.library-series-drawer-header > img { width: 54px; height: 76px; flex: 0 0 auto; border-radius: 6px; object-fit: cover; background: #25262c; }
+.library-series-drawer-header > div { display: grid; min-width: 0; flex: 1; gap: 5px; text-align: left; }
+.library-series-drawer-header [data-slot="drawer-title"] { overflow: hidden; font-size: 1.2rem; text-overflow: ellipsis; white-space: nowrap; }
+.library-series-drawer-header [data-slot="drawer-description"] { text-align: left; }
+.library-series-drawer-body { min-height: 0; flex: 1; overflow-y: auto; padding: 4px 24px 28px; }
+.library-series-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 8px 0 10px; }
+.library-series-section-heading h2, .library-add-season h2 { margin: 0; color: #f0f0f3; font-size: .9rem; font-weight: 650; }
+.library-series-section-heading p, .library-add-season p { margin: 4px 0 0; color: #92949d; font-size: .67rem; }
+.library-season-management-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-top: 1px solid rgb(255 255 255 / 8%); }
+.library-season-management-row.is-excluded { opacity: .76; }
+.library-season-management-info { display: grid; min-width: 0; gap: 5px; }
+.library-season-management-info > div { display: flex; align-items: center; gap: 8px; }
+.library-season-management-info strong { color: #ededf1; font-size: .76rem; }
+.library-season-management-info [data-slot="badge"] { height: 18px; font-size: .55rem; }
+.library-season-management-info > span { color: #a1a3ac; font-size: .65rem; }
+.library-season-management-info code { overflow: hidden; color: #777b85; font-size: .59rem; text-overflow: ellipsis; white-space: nowrap; }
+.library-season-management-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
+.library-season-management-actions [data-slot="toggle"] { color: #bbbcc5; font-size: .63rem; }
+.library-season-management-actions [aria-pressed="true"] { color: #a9e8c1; background: #1d3329; }
+.library-season-management-actions [data-slot="button"] { font-size: .63rem; }
+.library-missing-seasons { margin-top: 15px; border-top: 1px solid #30313a; }
+.library-missing-seasons-trigger { display: flex; width: 100%; align-items: center; gap: 8px; padding: 12px 2px; color: #d9dae0; background: transparent; text-align: left; font-size: .72rem; font-weight: 600; }
+.library-missing-seasons-trigger [data-slot="badge"] { margin-left: auto; color: #a4a6af; font-size: .57rem; }
+.library-missing-seasons-trigger > svg { color: #8e9099; transition: transform 150ms ease; }
+.library-missing-seasons-trigger[data-panel-open] > svg { transform: rotate(180deg); }
+.library-missing-seasons-content { border-top: 1px solid rgb(255 255 255 / 7%); }
+.library-missing-season-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 2px; border-bottom: 1px solid rgb(255 255 255 / 6%); }
+.library-missing-season-row > div:first-child { display: grid; gap: 4px; }
+.library-missing-season-row strong { color: #e4e5e9; font-size: .69rem; }
+.library-missing-season-row span { color: #898b95; font-size: .6rem; }
+.library-add-season { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-top: 22px; padding-top: 17px; border-top: 1px solid #30313a; }
+.library-add-season form { display: grid; grid-template-columns: minmax(100px, 130px) auto; align-items: end; gap: 7px; }
+.library-add-season label { grid-column: 1 / -1; color: #b8bac3; font-size: .63rem; }
+.library-add-season input { height: 34px; background: #191a20; }
+.library-add-season button { height: 34px; font-size: .65rem; }
 @media (max-width: 760px) {
   .library-manager-heading { align-items: start; flex-direction: column; }
   .library-manager-search { width: 100%; }
   .library-manager-toolbar { align-items: start; flex-direction: column; }
   .library-manager-toolbar p { text-align: left; }
+  .library-series-drawer-header { align-items: start; padding-inline: 16px; }
+  .library-series-drawer-body { padding-inline: 16px; }
+  .library-season-management-row, .library-add-season { align-items: start; flex-direction: column; }
+  .library-missing-season-row { align-items: start; flex-direction: column; }
+  .library-season-management-actions { flex-wrap: wrap; }
   .manager-row, .manager-movie-row { grid-template-columns: minmax(0, 1fr); gap: 11px; }
   .manager-row-actions { align-items: end; }
   .manager-locations { padding-left: 2px; }

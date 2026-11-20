@@ -143,7 +143,9 @@ def sync_catalog_from_folders(
                 f"but the catalog has {existing_folder_count}; existing entries were preserved"
             )
 
-    stale_seasons = [row for row in fetchall("SELECT id, rel_path FROM seasons") if row["rel_path"] not in live_seasons] if remove_missing else []
+    season_rows = fetchall("SELECT id, rel_path, enabled FROM seasons") if remove_missing else []
+    stale_seasons = [row for row in season_rows if row["rel_path"] not in live_seasons and row["enabled"]]
+    excluded_missing_seasons = [row for row in season_rows if row["rel_path"] not in live_seasons and not row["enabled"]]
     stale_movies = [row for row in fetchall("SELECT id, rel_path FROM movies") if row["rel_path"] not in live_movies] if remove_missing else []
     stale_series = [row for row in fetchall("SELECT id, title FROM series") if row["id"] not in series_ids] if remove_missing else []
 
@@ -152,6 +154,9 @@ def sync_catalog_from_folders(
             for table in ("files", "attempts", "episode_watch_state", "owner_state"):
                 conn.execute(f"DELETE FROM {table} WHERE owner_kind='season' AND owner_id=?", (row["id"],))
             conn.execute("DELETE FROM seasons WHERE id=?", (row["id"],))
+        for row in excluded_missing_seasons:
+            conn.execute("DELETE FROM files WHERE owner_kind='season' AND owner_id=?", (row["id"],))
+            conn.execute("UPDATE seasons SET sync_mtime_ns=NULL WHERE id=?", (row["id"],))
         for row in stale_movies:
             for table in ("files", "attempts", "episode_watch_state", "owner_state"):
                 conn.execute(f"DELETE FROM {table} WHERE owner_kind='movie' AND owner_id=?", (row["id"],))

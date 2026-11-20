@@ -12,7 +12,7 @@ from py_stremio.storage.catalog import (
     upsert_files,
     get_season_by_rel_path,
 )
-from py_stremio.storage.db import close_connection, fetchone, init_db
+from py_stremio.storage.db import close_connection, fetchone, init_db, transaction
 
 
 def test_dashboard_groups_season_and_persists_episode_watch_state(tmp_path, monkeypatch):
@@ -58,7 +58,10 @@ def test_missing_disabled_library_entry_can_be_enabled_from_dashboard(tmp_path, 
 
 def test_remove_season_deletes_its_folder_and_catalog_item(tmp_path, monkeypatch):
     root = tmp_path / "media"
-    season_folder = root / "series" / "Example Show" / "s01"
+    series_folder = root / "series" / "Example Show"
+    existing_season_folder = series_folder / "s08"
+    season_folder = series_folder / "s12"
+    existing_season_folder.mkdir(parents=True)
     season_folder.mkdir(parents=True)
     (season_folder / "Example.Show.S01E01.mkv").write_bytes(b"video")
     monkeypatch.setattr("py_stremio.components.configs.app_settings.settings.ROOT_FOLDER", root)
@@ -72,10 +75,22 @@ def test_remove_season_deletes_its_folder_and_catalog_item(tmp_path, monkeypatch
             series_id = get_or_create_series("Example Show", "series/Example Show", "tt1234567")
             season_id = get_or_create_season(
                 series_id,
-                1,
-                "series/Example Show/s01",
-                {"episode_count": 2, "available_episodes": [1, 2], "enabled": True},
+                12,
+                "series/Example Show/s12",
+                {"episode_count": 10, "available_episodes": list(range(1, 11)), "enabled": True},
             )
+            get_or_create_season(
+                series_id,
+                8,
+                "series/Example Show/s08",
+                {"episode_count": 10, "available_episodes": list(range(1, 11)), "enabled": True},
+            )
+            watched = client.put(
+                f"/api/library/season/{season_id}/watched",
+                headers={"Authorization": "Bearer test-token"},
+                json={"watched": True},
+            )
+            assert watched.status_code == 200
 
             response = client.delete(
                 f"/api/library/season/{season_id}",
@@ -85,7 +100,121 @@ def test_remove_season_deletes_its_folder_and_catalog_item(tmp_path, monkeypatch
             assert response.status_code == 200
             assert response.json()["folder_deleted"] is True
             assert not season_folder.exists()
-            assert get_season_by_rel_path("series/Example Show/s01") is None
+            removed_season = get_season_by_rel_path("series/Example Show/s12")
+            assert removed_season is not None
+            assert removed_season["enabled"] == 0
+            assert removed_season["watched"] == 1
+
+            monkeypatch.setattr(
+                "py_stremio.components.stremio.stremio_metadata.get_current_year_series_seasons",
+                lambda _title, _year: [{"season": 12, "episode_count": 10}],
+            )
+            from py_stremio.components.library.library_scanner import Scanner
+            from py_stremio.services.scanner import ScanService
+
+            scanner = Scanner()
+            scanner.series_root = root / "series"
+            created = ScanService()._create_current_year_season_folders(scanner)
+            assert created == []
+            assert not season_folder.exists()
+            monkeypatch.setattr(
+                "py_stremio.services.ensure.get_current_year_series_seasons",
+                lambda _title, _year: [{"season": 12, "episode_count": 10}],
+            )
+            from py_stremio.services.ensure import EnsureFreshService
+
+            assert EnsureFreshService()._create_new_seasons(root, quiet=True) == []
+            assert not season_folder.exists()
+
+            restored = client.put(
+                f"/api/library/season/{season_id}/enabled",
+                headers={"Authorization": "Bearer test-token"},
+                json={"enabled": True},
+            )
+            assert restored.status_code == 200
+            assert season_folder.is_dir()
+            restored_season = get_season_by_rel_path("series/Example Show/s12")
+            assert restored_season["enabled"] == 1
+            assert restored_season["watched"] == 0
+
+            added = client.post(
+                f"/api/library/series/{series_id}/seasons",
+                headers={"Authorization": "Bearer test-token"},
+                json={"season": 13},
+            )
+            assert added.status_code == 201
+            assert (series_folder / "s13").is_dir()
+            added_season = get_season_by_rel_path("series/Example Show/s13")
+            assert added_season["enabled"] == 1
+            assert added_season["watched"] == 0
+    finally:
+        close_connection()
+
+
+def test_watched_missing_season_is_suppressed_until_explicitly_added(tmp_path, monkeypatch):
+    root = tmp_path / "media"
+    existing_season = root / "series" / "Example Show" / "s08"
+    existing_season.mkdir(parents=True)
+    monkeypatch.setattr("py_stremio.components.configs.app_settings.settings.ROOT_FOLDER", root)
+    monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "missing-season.sqlite"))
+    monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
+    monkeypatch.setattr("py_stremio.storage.compat._storage_backend", "sqlite")
+    close_connection()
+
+    try:
+        with TestClient(app) as client:
+            series_id = get_or_create_series("Example Show", "series/Example Show", "tt1234567")
+            get_or_create_season(
+                series_id,
+                8,
+                "series/Example Show/s08",
+                {"episode_count": 10, "available_episodes": list(range(1, 11)), "enabled": True},
+            )
+            with transaction() as conn:
+                conn.execute(
+                    """INSERT INTO calendar_episodes
+                       (series_id, season, episode, title, release_at)
+                       VALUES (?, 12, 1, 'Premiere', '2026-01-01T00:00:00+00:00')""",
+                    (series_id,),
+                )
+
+            library = client.get("/api/library", headers={"Authorization": "Bearer test-token"}).json()
+            known = next(item for item in library["known_seasons"] if item["series_id"] == series_id)
+            assert any(season["season"] == 12 for season in known["seasons"])
+
+            watched = client.put(
+                f"/api/library/series/{series_id}/seasons/12/watched",
+                headers={"Authorization": "Bearer test-token"},
+                json={"watched": True},
+            )
+            assert watched.status_code == 200
+            placeholder = get_season_by_rel_path("series/Example Show/s12")
+            assert placeholder["enabled"] == 0
+            assert placeholder["watched"] == 1
+            assert not (existing_season.parent / "s12").exists()
+
+            monkeypatch.setattr(
+                "py_stremio.components.stremio.stremio_metadata.get_current_year_series_seasons",
+                lambda _title, _year: [{"season": 12, "episode_count": 10}],
+            )
+            from py_stremio.components.library.library_scanner import Scanner
+            from py_stremio.services.scanner import ScanService
+
+            scanner = Scanner()
+            scanner.series_root = root / "series"
+            assert ScanService()._create_current_year_season_folders(scanner) == []
+            assert not (existing_season.parent / "s12").exists()
+
+            added = client.post(
+                f"/api/library/series/{series_id}/seasons",
+                headers={"Authorization": "Bearer test-token"},
+                json={"season": 12},
+            )
+            assert added.status_code == 201
+            restored = get_season_by_rel_path("series/Example Show/s12")
+            assert restored["enabled"] == 1
+            assert restored["watched"] == 0
+            assert (existing_season.parent / "s12").is_dir()
     finally:
         close_connection()
 

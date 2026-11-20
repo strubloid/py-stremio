@@ -47,6 +47,14 @@ class LibraryEnabledRequest(BaseModel):
     enabled: bool
 
 
+class SeasonWatchRequest(BaseModel):
+    watched: bool
+
+
+class AddSeasonRequest(BaseModel):
+    season: int = Field(ge=0, le=999)
+
+
 class RedownloadRequest(BaseModel):
     kind: Literal["season", "movie"]
     episode: int | None = Field(default=None, ge=1)
@@ -129,6 +137,30 @@ def library(authorization: str | None = Header(default=None)) -> dict:
            FROM seasons JOIN series ON series.id = seasons.series_id ORDER BY series.title, seasons.season"""
     )
     movies = fetchall("SELECT * FROM movies ORDER BY title")
+    released_calendar_rows = fetchall(
+        """SELECT calendar_episodes.series_id, calendar_episodes.season, calendar_episodes.episode
+           FROM calendar_episodes JOIN series ON series.id=calendar_episodes.series_id
+           WHERE calendar_episodes.release_at <= ?
+           ORDER BY calendar_episodes.series_id, calendar_episodes.season, calendar_episodes.episode""",
+        (datetime.now(timezone.utc).isoformat(),),
+    )
+    seasons_by_series: dict[int, dict[int, set[int]]] = {}
+    for calendar_row in released_calendar_rows:
+        seasons_by_series.setdefault(calendar_row["series_id"], {}).setdefault(calendar_row["season"], set()).add(calendar_row["episode"])
+    known_seasons = [
+        {
+            "series_id": series_id,
+            "seasons": [
+                {
+                    "season": season_number,
+                    "episode_count": max(episodes),
+                    "episode_numbers": sorted(episodes),
+                }
+                for season_number, episodes in sorted(seasons.items())
+            ],
+        }
+        for series_id, seasons in sorted(seasons_by_series.items())
+    ]
     inventory = fetchall(
         """SELECT owner_kind, owner_id,
                   COUNT(DISTINCT CASE WHEN owner_kind='season' THEN episode END) AS episodes,
@@ -167,6 +199,8 @@ def library(authorization: str | None = Header(default=None)) -> dict:
             "background_url": f"/api/artwork/series/{row['series_id']}?variant=background" if row["background_url"] else None,
             "downloaded": downloaded_count, "total": episode_total,
             "missing": missing, "enabled": bool(row["enabled"]),
+            "season_watched": bool(row["watched"]),
+            "folder_exists": (settings.ROOT_FOLDER / row["rel_path"]).is_dir(),
             "episode_numbers": available or list(range(1, episode_total + 1)),
             "downloaded_episodes": downloaded_episodes.get(row["id"], []),
             "watched_episodes": watched_by_owner.get(("season", row["id"]), []),
@@ -188,7 +222,13 @@ def library(authorization: str | None = Header(default=None)) -> dict:
         missing_total += entries[-1]["missing"]
     if any(not entry.get("poster_url") or (entry["kind"] == "movie" and not entry.get("release_date")) for entry in entries):
         _schedule_artwork_refresh()
-    return {"entries": entries, "series_seasons": len(seasons), "movies": len(movies), "missing": missing_total}
+    return {
+        "entries": entries,
+        "series_seasons": len(seasons),
+        "movies": len(movies),
+        "missing": missing_total,
+        "known_seasons": known_seasons,
+    }
 
 
 @app.put("/api/library/{kind}/{item_id}/enabled")
@@ -202,15 +242,50 @@ def set_library_item_enabled(
     from py_stremio.components.library.library_scanner import FolderType, ScannedFolder
     from py_stremio.storage.db import fetchone
 
-    table = "seasons" if kind == "season" else "movies"
-    row = fetchone(f"SELECT rel_path FROM {table} WHERE id=?", (item_id,))
+    if kind == "season":
+        row = fetchone(
+            """SELECT seasons.rel_path, seasons.season, seasons.episode_count,
+                      seasons.available_episodes, seasons.current_episode_download,
+                      seasons.servers, series.title AS series_title, series.imdb_id
+               FROM seasons JOIN series ON series.id=seasons.series_id WHERE seasons.id=?""",
+            (item_id,),
+        )
+    else:
+        row = fetchone("SELECT rel_path, title, imdb_id FROM movies WHERE id=?", (item_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Library item not found")
     from py_stremio.components.configs.config_file import load_config, save_config
 
-    config, config_path = load_config(settings.ROOT_FOLDER / row["rel_path"])
+    root = settings.ROOT_FOLDER.resolve()
+    folder_path = root / row["rel_path"]
+    resolved_folder_path = folder_path.resolve()
+    if resolved_folder_path == root or not resolved_folder_path.is_relative_to(root) or folder_path.is_symlink():
+        raise HTTPException(status_code=400, detail="Library folder is outside the configured media root")
+    restored_folder = kind == "season" and request.enabled and not folder_path.exists()
+    if restored_folder:
+        folder_path.mkdir(parents=True, exist_ok=True)
+    config, config_path = load_config(folder_path)
+    if restored_folder:
+        config.type = "series"
+        config.title = row["series_title"]
+        config.imdb_id = row["imdb_id"]
+        config.season = row["season"]
+        config.episode_count = row["episode_count"]
+        config.available_episodes = _decode_json(row["available_episodes"], None)
+        config.current_episode_download = row["current_episode_download"] or 1
+        config.servers = _decode_json(row["servers"], [])
     config.enabled = request.enabled
     save_config(config_path, config)
+    if restored_folder:
+        from py_stremio.storage.db import transaction
+
+        with transaction() as conn:
+            for table in ("files", "attempts", "episode_watch_state", "owner_state"):
+                conn.execute(f"DELETE FROM {table} WHERE owner_kind='season' AND owner_id=?", (item_id,))
+            conn.execute("UPDATE seasons SET watched=0, sync_mtime_ns=NULL WHERE id=?", (item_id,))
+        from py_stremio.storage.catalog import set_season_metadata_due
+
+        set_season_metadata_due(item_id)
     from py_stremio.services.library_catalog import sync_catalog_from_folders
     from py_stremio.utils.media import parse_season_from_folder
 
@@ -227,6 +302,141 @@ def set_library_item_enabled(
     return {"kind": kind, "id": item_id, "enabled": request.enabled}
 
 
+@app.put("/api/library/season/{item_id}/watched")
+def set_season_watched(
+    item_id: int,
+    request: SeasonWatchRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    from py_stremio.storage.db import fetchone, transaction
+
+    if fetchone("SELECT id FROM seasons WHERE id=?", (item_id,)) is None:
+        raise HTTPException(status_code=404, detail="Season not found")
+    with transaction() as conn:
+        conn.execute("UPDATE seasons SET watched=? WHERE id=?", (int(request.watched), item_id))
+    return {"id": item_id, "watched": request.watched}
+
+
+@app.put("/api/library/series/{series_id}/seasons/{season_number}/watched")
+def set_known_season_watched(
+    series_id: int,
+    season_number: int,
+    request: SeasonWatchRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    from py_stremio.storage.catalog import get_or_create_season, update_series_latest_season
+    from py_stremio.storage.db import fetchall, fetchone, transaction
+
+    series = fetchone("SELECT title, imdb_id, rel_path FROM series WHERE id=?", (series_id,))
+    if not series:
+        raise HTTPException(status_code=404, detail="Series not found")
+    row = fetchone("SELECT id FROM seasons WHERE series_id=? AND season=?", (series_id, season_number))
+    if row:
+        season_id = row["id"]
+    else:
+        now = datetime.now(timezone.utc).isoformat()
+        episodes = fetchall(
+            """SELECT episode FROM calendar_episodes
+               WHERE series_id=? AND season=? AND release_at<=? ORDER BY episode""",
+            (series_id, season_number, now),
+        )
+        episode_numbers = sorted({item["episode"] for item in episodes})
+        season_id = get_or_create_season(
+            series_id,
+            season_number,
+            f"{series['rel_path']}/s{season_number:02d}",
+            {
+                "episode_count": max(episode_numbers) if episode_numbers else None,
+                "available_episodes": episode_numbers,
+                "enabled": False,
+            },
+        )
+        with transaction() as conn:
+            conn.execute("UPDATE seasons SET enabled=0 WHERE id=?", (season_id,))
+        update_series_latest_season(series_id, season_number)
+    with transaction() as conn:
+        conn.execute("UPDATE seasons SET watched=? WHERE id=?", (int(request.watched), season_id))
+    return {"id": season_id, "season": season_number, "watched": request.watched}
+
+
+@app.post("/api/library/series/{series_id}/seasons", status_code=201)
+def add_series_season(
+    series_id: int,
+    request: AddSeasonRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    from py_stremio.components.configs.config_file import load_config, save_config
+    from py_stremio.components.library.library_scanner import FolderType, ScannedFolder
+    from py_stremio.services.library_catalog import sync_catalog_from_folders
+    from py_stremio.storage.catalog import get_or_create_season, get_season_by_rel_path, set_season_metadata_due, update_series_latest_season
+    from py_stremio.storage.db import fetchone, transaction
+
+    series = fetchone("SELECT title, imdb_id, rel_path FROM series WHERE id=?", (series_id,))
+    if not series:
+        raise HTTPException(status_code=404, detail="Series not found")
+    root = settings.ROOT_FOLDER.resolve()
+    series_path = (root / series["rel_path"]).resolve()
+    if series_path == root or not series_path.is_relative_to(root):
+        raise HTTPException(status_code=400, detail="Series path is outside the configured media root")
+    season_path = series_path / f"s{request.season:02d}"
+    resolved_season_path = season_path.resolve()
+    if not resolved_season_path.is_relative_to(root) or season_path.is_symlink():
+        raise HTTPException(status_code=400, detail="Season path is outside the configured media root")
+    rel_path = str(season_path.relative_to(root))
+    existing = get_season_by_rel_path(rel_path)
+    if existing and existing["enabled"] and season_path.is_dir():
+        raise HTTPException(status_code=409, detail="This season is already in the library")
+    season_path.mkdir(parents=True, exist_ok=True)
+    config, config_path = load_config(season_path)
+    config.type = "series"
+    config.title = series["title"]
+    config.imdb_id = series["imdb_id"]
+    config.season = request.season
+    config.enabled = True
+    save_config(config_path, config)
+    season_id = get_or_create_season(
+        series_id,
+        request.season,
+        rel_path,
+        {
+            "episode_count": config.episode_count,
+            "available_episodes": config.available_episodes,
+            "current_episode_download": config.current_episode_download,
+            "enabled": True,
+            "quality": {
+                "preferred": config.quality.preferred,
+                "fallbacks": config.quality.fallbacks,
+                "allow_higher": config.quality.allow_higher,
+                "allow_lower": config.quality.allow_lower,
+            } if config.quality else None,
+            "languages": config.languages,
+            "subtitles": config.subtitles,
+            "provider": config.provider,
+            "search_group": config.search_group,
+            "download_all_related": config.download_all_related,
+            "servers": config.servers,
+            "disabled_servers": config.disabled_servers,
+            "working_addons": config.working_addons,
+            "experimental_addons_enabled": config.experimental_addons_enabled,
+            "metadata_last_checked": config.metadata_last_checked,
+        },
+    )
+    with transaction() as conn:
+        conn.execute("UPDATE seasons SET enabled=1, watched=0 WHERE id=?", (season_id,))
+        conn.execute("DELETE FROM episode_watch_state WHERE owner_kind='season' AND owner_id=?", (season_id,))
+        conn.execute("DELETE FROM attempts WHERE owner_kind='season' AND owner_id=?", (season_id,))
+        conn.execute("DELETE FROM owner_state WHERE owner_kind='season' AND owner_id=?", (season_id,))
+    update_series_latest_season(series_id, request.season)
+    set_season_metadata_due(season_id)
+    folder = ScannedFolder(season_path, FolderType.SERIES, series_path, season_number=request.season)
+    sync_catalog_from_folders([folder], remove_missing=False)
+    season = fetchone("SELECT * FROM seasons WHERE id=?", (season_id,))
+    return {"id": season_id, "season": request.season, "enabled": True, "watched": bool(season["watched"])}
+
+
 @app.delete("/api/library/{kind}/{item_id}")
 def remove_library_item(
     kind: Literal["series", "season", "movie"],
@@ -241,7 +451,7 @@ def remove_library_item(
         with _job_lock:
             if any(name in _active_jobs for name in ("download", "download-quick", "configs")):
                 raise HTTPException(status_code=409, detail="Wait for the active library or download job before removing a season")
-        season = fetchone("SELECT id, series_id, rel_path FROM seasons WHERE id=?", (item_id,))
+        season = fetchone("SELECT id, series_id, rel_path, watched FROM seasons WHERE id=?", (item_id,))
         if not season:
             raise HTTPException(status_code=404, detail="Season not found")
         root = settings.ROOT_FOLDER.resolve()
@@ -258,14 +468,19 @@ def remove_library_item(
                 raise HTTPException(status_code=500, detail="Could not delete the season folder") from exc
 
         with transaction() as conn:
-            for table in ("files", "attempts", "episode_watch_state", "owner_state"):
-                conn.execute(f"DELETE FROM {table} WHERE owner_kind='season' AND owner_id=?", (item_id,))
-            conn.execute("DELETE FROM seasons WHERE id=?", (item_id,))
-            if not conn.execute("SELECT 1 FROM seasons WHERE series_id=? LIMIT 1", (season["series_id"],)).fetchone():
-                conn.execute("DELETE FROM calendar_episodes WHERE series_id=?", (season["series_id"],))
-                conn.execute("DELETE FROM calendar_sync WHERE series_id=?", (season["series_id"],))
-                conn.execute("DELETE FROM series WHERE id=?", (season["series_id"],))
-        return {"removed": True, "kind": kind, "id": item_id, "folder_deleted": True}
+            conn.execute("DELETE FROM files WHERE owner_kind='season' AND owner_id=?", (item_id,))
+            conn.execute("DELETE FROM attempts WHERE owner_kind='season' AND owner_id=?", (item_id,))
+            conn.execute("DELETE FROM episode_watch_state WHERE owner_kind='season' AND owner_id=?", (item_id,))
+            conn.execute("DELETE FROM owner_state WHERE owner_kind='season' AND owner_id=?", (item_id,))
+            conn.execute("UPDATE seasons SET enabled=0, sync_mtime_ns=NULL WHERE id=?", (item_id,))
+        return {
+            "removed": True,
+            "kind": kind,
+            "id": item_id,
+            "folder_deleted": True,
+            "watched": bool(season["watched"]),
+            "excluded": True,
+        }
 
     with transaction() as conn:
         if kind == "series":

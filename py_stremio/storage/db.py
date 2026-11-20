@@ -11,7 +11,7 @@ from typing import Any
 from py_stremio.components.configs.app_settings import settings
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 -- catalog metadata / schema version
@@ -43,6 +43,7 @@ CREATE TABLE seasons (
     available_episodes           TEXT,
     current_episode_download     INTEGER DEFAULT 1,
     enabled                      INTEGER DEFAULT 1,
+    watched                      INTEGER NOT NULL DEFAULT 0,
     quality                      TEXT,
     languages                    TEXT,
     subtitles                    TEXT,
@@ -329,6 +330,8 @@ def _run_migrations(conn: sqlite3.Connection, from_version: int, to_version: int
             "UPDATE movies SET metadata_due_at=? WHERE release_date IS NULL",
             (datetime.now(timezone.utc).isoformat(),),
         )
+    if from_version < 7 <= to_version:
+        cursor.execute("ALTER TABLE seasons ADD COLUMN watched INTEGER NOT NULL DEFAULT 0")
         cursor.execute(
             """CREATE TABLE IF NOT EXISTS calendar_episodes (
                 id INTEGER PRIMARY KEY,

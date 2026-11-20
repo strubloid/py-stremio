@@ -112,6 +112,17 @@ class ScanService:
         if not scanner.series_root.exists():
             return created
 
+        excluded_seasons_by_series: dict[str, set[int]] = {}
+        from py_stremio.storage.db import fetchall, get_db_path, init_db
+
+        if get_db_path().is_file():
+            init_db()
+            for row in fetchall(
+                """SELECT series.rel_path, seasons.season FROM seasons
+                   JOIN series ON series.id=seasons.series_id WHERE seasons.enabled=0"""
+            ):
+                excluded_seasons_by_series.setdefault(row["rel_path"], set()).add(row["season"])
+
         for series_path in scanner.series_root.iterdir():
             if not series_path.is_dir():
                 continue
@@ -119,12 +130,18 @@ class ScanService:
                 progress_callback(f"Checking new seasons: {series_path.name}")
             existing = self._existing_series_seasons(series_path)
             latest_existing = max(existing) if existing else 0
+            series_rel_path = str(series_path.relative_to(settings.ROOT_FOLDER))
+            excluded_seasons = excluded_seasons_by_series.get(series_rel_path, set())
             season_infos = get_current_year_series_seasons(series_path.name, year)
             if progress_callback:
                 progress_callback(f"Checked new seasons: {series_path.name}")
             for season_info in season_infos:
                 season = int(season_info.get("season") or 0)
                 if season <= latest_existing or season in existing:
+                    continue
+                if season in excluded_seasons:
+                    if progress_callback:
+                        progress_callback(f"Skipping excluded season: {series_path.name} S{season:02d}")
                     continue
                 # Guard against placeholder/future seasons with too few
                 # episodes listed (Cinemeta may return S04E01 placeholder for

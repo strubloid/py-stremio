@@ -18,7 +18,7 @@ import { LibraryHome } from '@/library/LibraryHome'
 import { MovieDetail } from '@/library/MovieDetail'
 import { SeriesDetail } from '@/library/SeriesDetail'
 import { LibraryManager } from '@/library/LibraryManager'
-import type { EpisodeHistory, LibraryEntry, LibraryMetadataRow, Section, SeriesSummary, SpotlightItem } from '@/library/types'
+import type { EpisodeHistory, KnownSeason, LibraryEntry, LibraryMetadataRow, Section, SeriesSummary, SpotlightItem } from '@/library/types'
 import { CalendarPage } from '@/calendar/CalendarPage'
 import type { CalendarData } from '@/calendar/CalendarPage'
 import { SettingsPage } from '@/settings/SettingsPage'
@@ -26,7 +26,7 @@ import type { SettingsUpdate, SettingsValues } from '@/settings/SettingsPage'
 import { DownloadPage } from '@/download/DownloadPage'
 import './App.css'
 
-type LibraryResponse = { entries: LibraryEntry[]; series_seasons: number; movies: number; missing: number }
+type LibraryResponse = { entries: LibraryEntry[]; series_seasons: number; movies: number; missing: number; known_seasons?: { series_id: number; seasons: KnownSeason[] }[] }
 type DownloadProgressSnapshot = {
   type?: string
   title?: string
@@ -358,6 +358,7 @@ export function App() {
         poster_url: entry.poster_url,
         background_url: entry.background_url,
         seasons: [],
+        known_seasons: library?.known_seasons?.find((catalog) => catalog.series_id === id)?.seasons ?? [],
         downloaded: 0,
         total: 0,
         missing: 0,
@@ -529,6 +530,69 @@ export function App() {
     }
   }
 
+  const setSeasonWatched = async (entry: LibraryEntry, watched: boolean) => {
+    setBusyAction(`watched-season-${entry.id}`)
+    const headers = new Headers({ 'Content-Type': 'application/json' })
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    try {
+      const response = await fetch(`/api/library/season/${entry.id}/watched`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ watched }),
+      })
+      if (!response.ok) throw new Error(response.status === 401 ? 'The API token was rejected.' : 'Could not update the season watch status.')
+      setError(null)
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not update the season watch status.')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const setKnownSeasonWatched = async (seriesId: number, season: number, watched: boolean) => {
+    setBusyAction(`watched-known-season-${seriesId}-${season}`)
+    const headers = new Headers({ 'Content-Type': 'application/json' })
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    try {
+      const response = await fetch(`/api/library/series/${seriesId}/seasons/${season}/watched`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ watched }),
+      })
+      if (!response.ok) throw new Error(response.status === 401 ? 'The API token was rejected.' : 'Could not save this season watch status.')
+      setError(null)
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save this season watch status.')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const addSeriesSeason = async (seriesId: number, season: number) => {
+    setBusyAction(`add-season-${seriesId}-${season}`)
+    const headers = new Headers({ 'Content-Type': 'application/json' })
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    try {
+      const response = await fetch(`/api/library/series/${seriesId}/seasons`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ season }),
+      })
+      if (!response.ok) {
+        const body = await response.json() as { detail?: string }
+        throw new Error(body.detail || (response.status === 401 ? 'The API token was rejected.' : 'Could not add this season.'))
+      }
+      setError(null)
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not add this season.')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   const updateControls = async (values: Partial<ControlValues>) => {
     const headers = new Headers({ 'Content-Type': 'application/json' })
     if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -684,7 +748,17 @@ export function App() {
       <main className="streaming-main">
         {error && <div className="error-banner" role="alert">{error}</div>}
         {loading && !library ? <LoadingLibrary /> : section === 'home' ? <LibraryHome section="home" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'stremio'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
-          : section === 'library' ? <LibraryManager series={series} movies={movies} busy={busyAction !== null || Boolean(jobs?.active.some((job) => job.job === 'download' || job.job === 'download-quick'))} onOpenSeries={openSeries} onOpenMovie={openMovie} onSetEnabled={(entry, enabled) => void setLibraryEntryEnabled(entry, enabled)} onRemoveSeason={(entry) => void removeLibrarySeason(entry)} />
+          : section === 'library' ? <LibraryManager
+            series={series}
+            movies={movies}
+            busy={busyAction !== null || Boolean(jobs?.active.some((job) => job.job === 'download' || job.job === 'download-quick' || job.job === 'configs'))}
+            onOpenMovie={openMovie}
+            onSetEnabled={(entry, enabled) => void setLibraryEntryEnabled(entry, enabled)}
+            onSetSeasonWatched={(entry, watched) => void setSeasonWatched(entry, watched)}
+            onSetKnownSeasonWatched={(seriesId, season, watched) => void setKnownSeasonWatched(seriesId, season, watched)}
+            onAddSeason={(seriesId, season) => void addSeriesSeason(seriesId, season)}
+            onRemoveSeason={(entry) => void removeLibrarySeason(entry)}
+          />
           : section === 'series' ? selectedSeries ? <SeriesDetail
             key={`${selectedSeries.id}-${selectedSeasonId}-${focusedEpisode ?? ''}`}
             series={selectedSeries}

@@ -14,6 +14,8 @@ export type LibraryEntry = {
   episode_numbers?: number[]
   downloaded_episodes?: number[]
   watched_episodes?: number[]
+  season_watched?: boolean
+  folder_exists?: boolean
   watched?: boolean
   release_date?: string | null
   metadata_due_at: string | null
@@ -35,10 +37,17 @@ export type SeriesSummary = {
   poster_url?: string | null
   background_url?: string | null
   seasons: LibraryEntry[]
+  known_seasons?: KnownSeason[]
   downloaded: number
   total: number
   missing: number
   unwatchedDownloaded: number
+}
+
+export type KnownSeason = {
+  season: number
+  episode_count: number
+  episode_numbers: number[]
 }
 
 export type EpisodeHistory = {
