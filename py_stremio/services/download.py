@@ -92,9 +92,12 @@ class DownloadService:
         speed_percent: int | None = None,
         progress_callback=None,
         terminal_output: bool = True,
+        clear_shutdown_flag: bool = True,
+        catalog_progress_callback=None,
     ) -> ReportData:
         """Download missing items for folders and return a report."""
-        clear_shutdown()
+        if clear_shutdown_flag:
+            clear_shutdown()
         if folders is None:
             self.scanner.ensure_folders()
             folders = self.scanner.scan()
@@ -121,7 +124,11 @@ class DownloadService:
                 from py_stremio.services.library_catalog import sync_catalog_from_folders
 
                 current_folders = self.scanner.scan(warn_about_ignored_subfolders=False)
-                sync_catalog_from_folders(current_folders, remove_missing=False)
+                sync_catalog_from_folders(
+                    current_folders,
+                    progress_callback=catalog_progress_callback,
+                    remove_missing=False,
+                )
                 return True
             except Exception as exc:
                 from py_stremio.components.errors import report_error

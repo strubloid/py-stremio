@@ -949,6 +949,32 @@ def _publish_job_output(name: str, message: str, item: dict | None = None) -> No
     progress_hub.publish({"type": "job_output", "job": name, **line})
 
 
+def _job_stop_requested(name: str) -> bool:
+    with _job_lock:
+        return bool(_active_jobs.get(name, {}).get("stop_requested"))
+
+
+def _publish_download_report(name: str, report) -> None:
+    downloaded = int(getattr(report, "total_downloaded", 0) or 0)
+    failed = int(getattr(report, "total_failed", 0) or 0)
+    skipped = int(getattr(report, "skipped_folders", 0) or 0)
+    with _job_lock:
+        job = _active_jobs.get(name)
+        if job is not None:
+            job["download_report_published"] = True
+    _publish_job_output(name, f"Download report: {downloaded} downloaded · {failed} failed · {skipped} skipped")
+    for entry in getattr(report, "folders", []):
+        folder_path = Path(str(entry.get("path") or ""))
+        label = f"{folder_path.parent.name} {folder_path.name}" if entry.get("type") == "series" else folder_path.name
+        for filename in entry.get("downloaded", []):
+            _publish_job_output(name, f"✓ Downloaded: {label} · {filename}")
+        failures = entry.get("failed_reasons") or entry.get("failed") or []
+        for failure in failures:
+            _publish_job_output(name, f"✗ Failed: {label} · {failure}")
+        if entry.get("failed_count") and not failures:
+            _publish_job_output(name, f"✗ Failed: {label} · {entry['failed_count']} item(s)")
+
+
 def _store_download_progress(name: str, event: dict) -> None:
     title = str(event.get("title") or "Download")
     season = event.get("season")
@@ -969,7 +995,7 @@ def _run_job(name: str) -> None:
     started = datetime.now(timezone.utc).isoformat()
     with _job_lock:
         job = _active_jobs.setdefault(name, {"job": name, "output": []})
-        job.update({"job": name, "status": "running", "started_at": started})
+        job.update({"job": name, "status": "stopping" if job.get("stop_requested") else "running", "started_at": started})
         job.setdefault("progress", {})
     status = "ok"
     detail = None
@@ -1000,6 +1026,9 @@ def _run_job(name: str) -> None:
         elif name == "download":
             _publish_job_output(name, "Scanning folders and checking for new seasons")
             folders = service.scanner.run(progress_callback=lambda message: _publish_job_output(name, message))
+            if _job_stop_requested(name):
+                status = "interrupted"
+                return
             _publish_job_output(name, f"Found {len(folders)} managed folder(s); refreshing metadata")
             service.metadata.run(
                 folders=folders,
@@ -1010,7 +1039,11 @@ def _run_job(name: str) -> None:
                     f"{item['status']}: {item['title']} {item['season']}",
                     item=item,
                 ),
+                clear_shutdown_flag=False,
             )
+            if _job_stop_requested(name):
+                status = "interrupted"
+                return
             service.scanner.sync_catalog(
                 folders,
                 progress_callback=lambda message: _publish_job_output(name, message),
@@ -1019,28 +1052,36 @@ def _run_job(name: str) -> None:
             from py_stremio.components.addons.addon_validator import validate_and_update
 
             validate_and_update()
+            if _job_stop_requested(name):
+                status = "interrupted"
+                return
             _publish_job_output(name, f"Starting downloads for {len(folders)} managed folder(s)")
             from py_stremio.components.reports.output_writer import suppress_all_output
 
             with suppress_all_output():
-                service.downloader.run(
+                report = service.downloader.run(
                     folders=folders,
                     quiet=True,
                     max_workers=settings.DOWNLOAD_THREADS,
                     progress_callback=lambda event: _store_download_progress(name, event),
                     terminal_output=False,
+                    clear_shutdown_flag=False,
                 )
+            _publish_download_report(name, report)
         elif name == "download-quick":
             _publish_job_output(name, "Scanning existing library folders before download")
             from py_stremio.components.reports.output_writer import suppress_all_output
 
             with suppress_all_output():
-                service.downloader.run(
+                report = service.downloader.run(
                     quiet=True,
                     max_workers=settings.DOWNLOAD_THREADS,
                     progress_callback=lambda event: _store_download_progress(name, event),
                     terminal_output=False,
+                    clear_shutdown_flag=False,
+                    catalog_progress_callback=lambda message: _publish_job_output(name, message),
                 )
+            _publish_download_report(name, report)
         elif name == "validate-addons":
             from py_stremio.components.addons.addon_validator import validate_and_update
 
@@ -1063,6 +1104,14 @@ def _run_job(name: str) -> None:
         detail = redact_url(str(exc))
         _publish_job_output(name, f"✗ Job failed: {detail}")
     finally:
+        if _job_stop_requested(name) and status == "ok":
+            status = "interrupted"
+        if status == "interrupted":
+            with _job_lock:
+                has_report = bool(_active_jobs.get(name, {}).get("download_report_published"))
+            if name in ("download", "download-quick") and not has_report:
+                _publish_download_report(name, None)
+            _publish_job_output(name, "Download stopped. You can now edit the library.")
         if status == "ok":
             _publish_job_output(name, "✓ Job completed")
         ended = datetime.now(timezone.utc).isoformat()
@@ -1104,6 +1153,10 @@ def start_job(
         download_active = any(key in _active_jobs for key in ("download", "download-quick"))
         if name in _active_jobs or (name in ("download", "download-quick") and (redownload_active or download_active)):
             raise HTTPException(status_code=409, detail="Job is already running")
+        if name in ("download", "download-quick"):
+            from py_stremio.utils.cancellation import clear_shutdown
+
+            clear_shutdown()
         _active_jobs[name] = {
             "job": name,
             "status": "queued",
@@ -1113,6 +1166,30 @@ def start_job(
         }
     background_tasks.add_task(_run_job, name)
     return {"job": name, "status": "queued"}
+
+
+@app.post("/api/jobs/{name}/stop", status_code=202)
+def stop_job(name: str, authorization: str | None = Header(default=None)) -> dict:
+    _authorize(authorization)
+    if name not in ("download", "download-quick"):
+        raise HTTPException(status_code=404, detail="This job cannot be stopped here")
+    with _job_lock:
+        job_name = name
+        job = _active_jobs.get(job_name)
+        if job is None and name == "download":
+            job_name = "download-quick"
+            job = _active_jobs.get(job_name)
+        if job is None:
+            raise HTTPException(status_code=409, detail="No download job is active")
+        if job.get("stop_requested"):
+            return {"job": job_name, "status": "stopping"}
+        job["stop_requested"] = True
+        job["status"] = "stopping"
+    from py_stremio.utils.cancellation import request_shutdown
+
+    request_shutdown()
+    _publish_job_output(job_name, "Stop requested; finishing active download cleanup")
+    return {"job": job_name, "status": "stopping"}
 
 
 @app.websocket("/api/progress")

@@ -53,13 +53,16 @@ def test_sync_reconciles_new_episode_files_and_removes_deleted_seasons(tmp_path,
         (survivor_folder / f"Survivor.S51E{episode:02d}.mkv").write_bytes(b"video")
 
     folder = ScannedFolder(survivor_folder, FolderType.SERIES, survivor_folder.parent, season_number=51)
-    sync_catalog_from_folders([folder])
+    catalog_messages = []
+    assert get_season_by_rel_path("series/Survivor/s51") is None
+    sync_catalog_from_folders([folder], progress_callback=catalog_messages.append)
 
     survivor_id = get_or_create_series("Survivor", "series/Survivor", "tt0239195")
     survivor_season_id = get_or_create_season(survivor_id, 51, "series/Survivor/s51")
     missing = get_missing_episodes(survivor_season_id)
     assert [item.episode for item in missing] == [9]
     assert get_season_by_rel_path("series/House of the Dragon/s03") is None
+    assert "Added to library: Survivor S51" in catalog_messages
 
     (survivor_folder / "Survivor.S51E01.mkv").unlink()
     sync_catalog_from_folders([folder], force=False)

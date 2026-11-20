@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowDownToLine, Check, Circle, HardDrive, LoaderCircle, Play, Search, Wifi, X } from 'lucide-react'
+import { AlertCircle, ArrowDownToLine, Check, Circle, HardDrive, LoaderCircle, Play, Plus, Search, Square, Wifi, X, Minus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { LibraryEntry, LibraryMetadataRow } from '@/library/types'
 
@@ -28,6 +29,7 @@ type DownloadEvent = {
   live_total?: number
   experimental_current?: number
   experimental_total?: number
+  updated_at?: string
 }
 
 type DownloadPageProps = {
@@ -36,22 +38,32 @@ type DownloadPageProps = {
   jobOutput: { id: number; message: string; timestamp: string; status?: string; item?: LibraryMetadataRow }[]
   running: boolean
   busy: boolean
+  downloadThreads: number
+  onDownloadThreadsChange: (threads: number) => Promise<boolean>
+  activeWorkers: number | null
+  onActiveWorkersChange: (threads: number) => void
   onStart: (job: 'configs' | 'download' | 'download-quick') => void
+  downloadRunning: boolean
+  stopping: boolean
+  onStopDownloads: () => void
   onEnable: (entry: LibraryEntry) => void
 }
 
-export function DownloadPage({ entries, events, jobOutput, running, busy, onStart, onEnable }: DownloadPageProps) {
+export function DownloadPage({ entries, events, jobOutput, running, busy, downloadThreads, onDownloadThreadsChange, activeWorkers, onActiveWorkersChange, downloadRunning, stopping, onStopDownloads, onStart, onEnable }: DownloadPageProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [filter, setFilter] = useState('')
   const [activeTab, setActiveTab] = useState<'queue' | 'completed'>('queue')
   const [logOpen, setLogOpen] = useState(false)
   const [logDismissed, setLogDismissed] = useState(false)
+  const [savingThreads, setSavingThreads] = useState(false)
   const logViewport = useRef<HTMLDivElement>(null)
-  const queue = entries.filter((entry) => entry.missing > 0)
+  const availableEntries = entries.filter((entry) => entry.enabled)
+  const queue = availableEntries.filter((entry) => entry.missing > 0)
     .filter((entry) => entry.title.toLowerCase().includes(filter.toLowerCase()))
-  const completed = entries.filter((entry) => entry.missing === 0)
+  const completed = availableEntries.filter((entry) => entry.missing === 0)
   const selected = queue.find((entry) => entry.id === selectedId) ?? queue[0]
-  const current = events[0]
+  const current = events.filter((event) => event.type !== 'episode_done')
+    .toSorted((left, right) => (right.updated_at ?? '').localeCompare(left.updated_at ?? ''))[0] ?? events.at(-1)
   const activeTransfers = events.filter((event) => event.type !== 'episode_done')
   const working = running || busy
   const metadataRows = new Map<string, LibraryMetadataRow>()
@@ -63,8 +75,17 @@ export function DownloadPage({ entries, events, jobOutput, running, busy, onStar
     : working
       ? `Live library activity · ${metadataRows.size} folder(s) checked so far. You can close this drawer and the job will continue.`
       : `Activity from the most recent job · ${metadataRows.size} folder(s) checked.`
-  const recentActivity = jobOutput.filter((line) => !line.item).slice(-10)
+  const downloadSummary = jobOutput.find((line) => line.message.startsWith('Download report:'))
+  const downloadReportItems = jobOutput.filter((line) => line.message.startsWith('✓ Downloaded:') || line.message.startsWith('✗ Failed:'))
+  const recentActivity = jobOutput.filter((line) => !line.item
+    && !line.message.startsWith('Submitting ')
+    && !line.message.startsWith('API accepted the job')
+    && !line.message.startsWith('Starting download')
+    && !line.message.startsWith('Download report:')
+    && !line.message.startsWith('✓ Downloaded:')
+    && !line.message.startsWith('✗ Failed:'))
   const totalSpeed = activeTransfers.reduce((sum, event) => sum + (event.rate_bps ?? 0), 0)
+  const threadCount = running && activeWorkers !== null ? activeWorkers : downloadThreads
   const progress = current?.bytes_total && current.bytes_total > 0
     ? Math.min(100, Math.round((current.downloaded ?? 0) / current.bytes_total * 100))
     : 0
@@ -97,6 +118,12 @@ export function DownloadPage({ entries, events, jobOutput, running, busy, onStar
     onStart(job)
   }
 
+  const changeThreads = async (threads: number) => {
+    setSavingThreads(true)
+    await onDownloadThreadsChange(threads)
+    setSavingThreads(false)
+  }
+
   return <section className="download-page">
     <header className="download-heading">
       <div><p className="download-eyebrow"><ArrowDownToLine size={14} /> DOWNLOAD MANAGER</p><h1>Your library, ready to download.</h1><p>The library is the source of truth for missing episodes and movies.</p></div>
@@ -104,9 +131,10 @@ export function DownloadPage({ entries, events, jobOutput, running, busy, onStar
         <Button variant="outline" onClick={() => startJob('configs')} disabled={busy || running}>Update library</Button>
         <Button variant="outline" onClick={() => startJob('download-quick')} disabled={busy || running}><Play data-icon="inline-start" size={15} /> Download only</Button>
         <Button className="download-start" onClick={() => startJob('download')} disabled={busy || running}><Play data-icon="inline-start" size={15} />{running ? 'Downloads running' : busy ? 'Starting…' : 'Update & download'}</Button>
+        {downloadRunning && <Button variant="destructive" onClick={onStopDownloads} disabled={stopping}><Square data-icon="inline-start" size={14} />{stopping ? 'Stopping…' : 'Stop downloads'}</Button>}
       </div>
     </header>
-    <div className="download-summary"><div><span className="download-summary-icon is-live"><Wifi size={16} /></span><span><strong>{running ? 'Job running in background' : 'Ready when you are'}</strong><small>{current?.message ?? 'This job keeps running if you leave this page.'}</small></span></div><div><strong>{queue.length}</strong><span>missing library items</span></div><div><strong>{(totalSpeed / 1_000_000).toFixed(1)}<small> MB/s</small></strong><span>live speed</span></div><div><strong>{queue.reduce((sum, item) => sum + item.missing, 0)}</strong><span>episodes left</span></div></div>
+    <div className="download-summary"><div><span className="download-summary-icon is-live"><Wifi size={16} /></span><span><strong>{running ? 'Job running in background' : 'Ready when you are'}</strong><small>{current?.message ?? 'This job keeps running if you leave this page.'}</small></span></div><div><strong>{queue.length}</strong><span>missing library items</span></div><div><strong>{(totalSpeed / 1_000_000).toFixed(1)}<small> MB/s</small></strong><span>live speed</span></div><div><strong>{queue.reduce((sum, item) => sum + item.missing, 0)}</strong><span>episodes left</span></div><div className="download-thread-control"><span><strong>Simultaneous downloads</strong><small>{running ? 'Applies to this session' : 'Default for new jobs'}</small></span><div><Button variant="outline" size="icon-sm" aria-label="Decrease simultaneous downloads" disabled={threadCount <= 1 || (running ? activeWorkers === null : savingThreads)} onClick={() => running ? onActiveWorkersChange(Math.max(1, threadCount - 1)) : void changeThreads(Math.max(1, threadCount - 1))}><Minus /></Button><strong>{threadCount}</strong><Button variant="outline" size="icon-sm" aria-label="Increase simultaneous downloads" disabled={threadCount >= 16 || (running ? activeWorkers === null : savingThreads)} onClick={() => running ? onActiveWorkersChange(Math.min(16, threadCount + 1)) : void changeThreads(Math.min(16, threadCount + 1))}><Plus /></Button></div></div></div>
     <div className="download-layout">
       <aside className="download-queue-panel">
         <div className="download-panel-heading"><div><h2>Library queue</h2><Badge variant="outline">{queue.length}</Badge></div></div>
@@ -136,28 +164,21 @@ export function DownloadPage({ entries, events, jobOutput, running, busy, onStar
       setLogOpen(open)
       if (!open) setLogDismissed(true)
     }}>
-      <DrawerContent className="download-job-drawer">
+      <DrawerContent className={`download-job-drawer ${activeTransfers.length >= 4 ? 'has-many-transfers' : ''}`}>
         <DrawerHeader className="download-job-header">
           <div><span className={`download-job-indicator ${working ? 'is-running' : ''}`} />
             <DrawerTitle>{working ? 'Job in progress' : 'Job activity'}</DrawerTitle>
-            <DrawerDescription>{drawerDescription}</DrawerDescription>
+            <DrawerDescription>{jobOutput.at(-1)?.message ?? drawerDescription}</DrawerDescription>
           </div>
-          <DrawerClose render={<Button variant="ghost" size="icon" aria-label="Close job output"><X /></Button>} />
+          <div className="download-job-header-actions">
+            {downloadRunning && <Button variant="destructive" size="sm" onClick={onStopDownloads} disabled={stopping}><Square data-icon="inline-start" size={14} />{stopping ? 'Stopping…' : 'Stop downloads'}</Button>}
+            <DrawerClose render={<Button variant="ghost" size="icon" aria-label="Close job output"><X /></Button>} />
+          </div>
         </DrawerHeader>
-        <div className="download-job-activity" ref={logViewport} role="log" aria-live="polite" aria-label="Background job activity">
-          {jobOutput.length > 0 && <div className="download-job-current"><span className={working ? 'is-working' : ''}>{working ? <LoaderCircle size={19} /> : <Check size={19} />}</span><div><small>{working ? 'CURRENT STEP' : 'LATEST STEP'}</small><strong>{jobOutput.at(-1)?.message}</strong></div></div>}
-          {metadataRows.size > 0 && <Table className="download-job-table">
-            <TableHeader><TableRow><TableHead>Series</TableHead><TableHead>Season</TableHead><TableHead>Episodes</TableHead><TableHead>IMDb</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-            <TableBody>{[...metadataRows].map(([key, item]) => <TableRow key={key}>
-              <TableCell className="download-job-cell-title">{item.title}</TableCell>
-              <TableCell>{item.season}</TableCell>
-              <TableCell>{item.episodes}</TableCell>
-              <TableCell>{item.imdb_id}</TableCell>
-              <TableCell><Badge variant={item.status === 'Failed' ? 'destructive' : item.status === 'Checking' ? 'outline' : 'secondary'}>{item.status}</Badge></TableCell>
-            </TableRow>)}</TableBody>
-          </Table>}
+        <ResizablePanelGroup key={activeTransfers.length >= 4 ? 'expanded-transfers' : 'standard-transfers'} orientation="vertical" className="download-job-panels">
+        <ResizablePanel defaultSize={activeTransfers.length >= 4 ? '72%' : '60%'} minSize="30%" className="download-job-transfer-panel">
           {events.length > 0 && <section className="download-live-transfers" aria-label="Episode download progress">
-            <header><strong>Episode transfers</strong><Badge variant="outline">{activeTransfers.length} active</Badge></header>
+            <header><strong>Episode transfers</strong><Badge variant="outline">{activeTransfers.length} active · {events.length} total</Badge></header>
             <div className="download-live-transfer-list">{events.map((event) => {
               const episode = event.season !== null && event.season !== undefined && event.episode !== null && event.episode !== undefined
                 ? `S${String(event.season).padStart(2, '0')}E${String(event.episode).padStart(2, '0')}`
@@ -174,6 +195,21 @@ export function DownloadPage({ entries, events, jobOutput, running, busy, onStar
               </article>
             })}</div>
           </section>}
+          {!events.length && <div className="download-job-empty">{working && <LoaderCircle className="is-working" size={20} />}<span>{working ? jobOutput.at(-1)?.message ?? 'Waiting for transfer updates…' : 'No active transfers.'}</span></div>}
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize={activeTransfers.length >= 4 ? '28%' : '40%'} minSize="15%" className="download-job-activity-panel">
+        <div className="download-job-activity" ref={logViewport} role="log" aria-live="polite" aria-label="Background job activity">
+          {metadataRows.size > 0 && <Table className="download-job-table">
+            <TableHeader><TableRow><TableHead>Series</TableHead><TableHead>Season</TableHead><TableHead>Episodes</TableHead><TableHead>IMDb</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+            <TableBody>{[...metadataRows].map(([key, item]) => <TableRow key={key}>
+              <TableCell className="download-job-cell-title">{item.title}</TableCell>
+              <TableCell>{item.season}</TableCell>
+              <TableCell>{item.episodes}</TableCell>
+              <TableCell>{item.imdb_id}</TableCell>
+              <TableCell><Badge variant={item.status === 'Failed' ? 'destructive' : item.status === 'Checking' ? 'outline' : 'secondary'}>{item.status}</Badge></TableCell>
+            </TableRow>)}</TableBody>
+          </Table>}
           {recentActivity.length > 0
             ? <ol className="download-activity-list">{recentActivity.map((line, index) => {
               const isCurrent = working && index === recentActivity.length - 1
@@ -185,7 +221,14 @@ export function DownloadPage({ entries, events, jobOutput, running, busy, onStar
               </li>
             })}</ol>
             : !metadataRows.size && !events.length && <div className="download-job-empty">{working && <LoaderCircle className="is-working" size={20} />}<span>{working ? 'Waiting for the first scan or transfer update…' : 'No activity was returned for this job.'}</span></div>}
+          {downloadSummary && <section className="download-job-report" aria-label="Download summary">
+            <header><h3>Download summary</h3><Badge variant="outline">{downloadReportItems.length} item(s)</Badge></header>
+            <p>{downloadSummary.message.replace('Download report: ', '')}</p>
+            {downloadReportItems.length > 0 && <ul>{downloadReportItems.map((line) => <li className={line.message.startsWith('✗') ? 'is-failed' : ''} key={line.id}>{line.message.slice(2)}</li>)}</ul>}
+          </section>}
         </div>
+        </ResizablePanel>
+        </ResizablePanelGroup>
       </DrawerContent>
     </Drawer>
   </section>

@@ -114,6 +114,7 @@ class MetadataService:
         cache_hours: float | None = None,
         progress_callback: Callable[[str], None] | None = None,
         item_callback: Callable[[dict], None] | None = None,
+        clear_shutdown_flag: bool = True,
     ) -> int:
         """Update metadata for all series and movie folders. Returns number of configs updated.
 
@@ -122,7 +123,8 @@ class MetadataService:
         (``METADATA_CACHE_HOURS``) is used; the cron ``configs`` and
         ``download`` jobs pass ``CONFIGS_CACHE_HOURS`` instead.
         """
-        clear_shutdown()
+        if clear_shutdown_flag:
+            clear_shutdown()
         if folders is None:
             folders = self.scanner.scan()
         updated = 0

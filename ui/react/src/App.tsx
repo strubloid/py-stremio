@@ -135,13 +135,24 @@ export function App() {
       : jobsData.history.find((job) => ['configs', 'download', 'download-quick'].includes(job.job) && job.output?.length)
     const output = recentOperation?.output
     if (activeJob?.progress) {
-      setEvents(activeJob.progress.toSorted((left, right) =>
-        (right.updated_at ?? '').localeCompare(left.updated_at ?? '')
-      ).map((event) => ({
-        ...event,
-        id: nextEventId.current++,
-        message: progressMessage(event),
-      })).slice(0, 16))
+      setEvents((current) => {
+        const incoming = new Map(activeJob.progress?.map((event) => [
+          `${event.title ?? ''}\0${event.season ?? ''}\0${event.episode ?? ''}`,
+          event,
+        ]))
+        const merged = current.map((item) => {
+          const key = `${item.title ?? ''}\0${item.season ?? ''}\0${item.episode ?? ''}`
+          const latest = incoming.get(key)
+          if (!latest) return item
+          incoming.delete(key)
+          return { ...latest, id: item.id, message: progressMessage(latest) }
+        })
+        for (const event of activeJob.progress ?? []) {
+          const key = `${event.title ?? ''}\0${event.season ?? ''}\0${event.episode ?? ''}`
+          if (incoming.has(key)) merged.push({ ...event, id: nextEventId.current++, message: progressMessage(event) })
+        }
+        return merged
+      })
     }
     if (!output?.length) return
 
@@ -310,12 +321,14 @@ export function App() {
         live_total: typeof event.live_total === 'number' ? event.live_total : undefined,
         experimental_current: typeof event.experimental_current === 'number' ? event.experimental_current : undefined,
         experimental_total: typeof event.experimental_total === 'number' ? event.experimental_total : undefined,
+        updated_at: typeof event.updated_at === 'string' ? event.updated_at : undefined,
       }
       const eventKey = `${progressEvent.title ?? ''}\0${progressEvent.season ?? ''}\0${progressEvent.episode ?? ''}`
       const entry: ProgressEvent = { ...progressEvent, id: nextEventId.current++, message: progressMessage(progressEvent) }
       setEvents((current) => {
-        const withoutEvent = current.filter((item) => `${item.title ?? ''}\0${item.season ?? ''}\0${item.episode ?? ''}` !== eventKey)
-        return [entry, ...withoutEvent].slice(0, 16)
+        const existingIndex = current.findIndex((item) => `${item.title ?? ''}\0${item.season ?? ''}\0${item.episode ?? ''}` === eventKey)
+        if (existingIndex < 0) return [...current, entry]
+        return current.map((item, index) => index === existingIndex ? { ...entry, id: item.id } : item)
       })
     }
     return () => socket.close()
@@ -624,6 +637,24 @@ export function App() {
     }
   }
 
+  const stopDownloads = async (): Promise<boolean> => {
+    const headers = new Headers()
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    try {
+      const response = await fetch('/api/jobs/download/stop', { method: 'POST', headers })
+      if (!response.ok) {
+        const body = await response.json() as { detail?: string }
+        throw new Error(body.detail ?? 'Could not stop downloads.')
+      }
+      await refresh()
+      setError(null)
+      return true
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not stop downloads.')
+      return false
+    }
+  }
+
   const runJob = useCallback(async (name: 'configs' | 'download' | 'download-quick' | 'calendar-refresh') => {
     setBusyAction(name)
     if (name === 'configs' || name === 'download' || name === 'download-quick') {
@@ -691,6 +722,24 @@ export function App() {
       return false
     } finally {
       setSavingLayout(false)
+    }
+  }
+
+  const updateDownloadThreads = async (download_threads: number): Promise<boolean> => {
+    const previous = settings?.download_threads ?? 2
+    setSettings((current) => current ? { ...current, download_threads } : current)
+    const headers = new Headers({ 'Content-Type': 'application/json' })
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    try {
+      const response = await fetch('/api/settings', { method: 'PUT', headers, body: JSON.stringify({ download_threads }) })
+      if (!response.ok) throw new Error('Could not save the download limit.')
+      setSettings(await response.json() as SettingsValues)
+      setError(null)
+      return true
+    } catch (caught) {
+      setSettings((current) => current ? { ...current, download_threads: previous } : current)
+      setError(caught instanceof Error ? caught.message : 'Could not save the download limit.')
+      return false
     }
   }
 
@@ -800,7 +849,7 @@ export function App() {
               onSetWatched={(watched) => void setWatched({ id: selectedMovie.id, kind: 'movie' }, [0], watched)}
               onRedownload={() => void redownload({ id: selectedMovie.id, kind: 'movie' })}
                /> : <LibraryHome section="movies" series={series} movies={movies} spotlight={spotlight} search={search} layout={settings?.library_layout ?? 'stremio'} onOpenSeries={openSeries} onOpenMovie={openMovie} onOpenSpotlight={openSpotlight} onRefreshSpotlight={() => void runJob('calendar-refresh')} />
-                : section === 'download' ? <DownloadPage entries={library?.entries ?? []} events={events} jobOutput={jobOutput} running={Boolean(jobs?.active.some((job) => job.job === 'download' || job.job === 'download-quick' || job.job === 'configs'))} busy={busyAction !== null} onStart={(job) => void runJob(job)} onEnable={(entry) => void enableLibraryEntry(entry)} />
+                : section === 'download' ? <DownloadPage entries={library?.entries ?? []} events={events} jobOutput={jobOutput} running={Boolean(jobs?.active.some((job) => job.job === 'download' || job.job === 'download-quick' || job.job === 'configs'))} downloadRunning={Boolean(jobs?.active.some((job) => job.job === 'download' || job.job === 'download-quick'))} stopping={Boolean(jobs?.active.some((job) => (job.job === 'download' || job.job === 'download-quick') && job.status === 'stopping'))} onStopDownloads={() => void stopDownloads()} busy={busyAction !== null} downloadThreads={settings?.download_threads ?? 2} onDownloadThreadsChange={updateDownloadThreads} activeWorkers={controls?.threads ?? null} onActiveWorkersChange={(threads) => void updateControls({ threads })} onStart={(job) => void runJob(job)} onEnable={(entry) => void enableLibraryEntry(entry)} />
                : section === 'calendar' ? <CalendarPage
                 month={calendarMonth}
                 selectedDate={calendarDate}

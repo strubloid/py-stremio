@@ -2,8 +2,6 @@ import { useMemo, useState } from 'react'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, Plus, Search } from 'lucide-react'
 import {
   createColumnHelper,
-  createPaginatedRowModel,
-  rowPaginationFeature,
   tableFeatures,
   useTable,
   type PaginationState,
@@ -44,7 +42,8 @@ type Props = {
 export function LibraryManager({ series, movies, busy, onOpenMovie, onSetEnabled, onSetSeasonWatched, onSetKnownSeasonWatched, onAddSeason, onRemoveSeason, onRemoveSeries }: Props) {
   const [view, setView] = useState<'active' | 'excluded'>('active')
   const [query, setQuery] = useState('')
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 })
+  const [activePagination, setActivePagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 })
+  const [excludedPagination, setExcludedPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 })
   const [pendingSeasonRemoval, setPendingSeasonRemoval] = useState<{ entry: LibraryEntry; title: string } | null>(null)
   const [pendingSeriesRemoval, setPendingSeriesRemoval] = useState<SeriesSummary | null>(null)
   const [selectedSeriesId, setSelectedSeriesId] = useState<number | null>(null)
@@ -98,10 +97,12 @@ export function LibraryManager({ series, movies, busy, onOpenMovie, onSetEnabled
       onManage: () => onOpenMovie(movie),
     })),
   ]
-  const features = useMemo(() => tableFeatures({
-    rowPaginationFeature,
-    paginatedRowModel: createPaginatedRowModel(),
-  }), [])
+  const pagination = view === 'active' ? activePagination : excludedPagination
+  const setPagination = view === 'active' ? setActivePagination : setExcludedPagination
+  const pageCount = Math.max(1, Math.ceil(rows.length / pagination.pageSize))
+  const pageIndex = Math.min(pagination.pageIndex, pageCount - 1)
+  const pageRows = rows.slice(pageIndex * pagination.pageSize, (pageIndex + 1) * pagination.pageSize)
+  const features = useMemo(() => tableFeatures({}), [])
   const columnHelper = createColumnHelper<typeof features, LibraryTableRow>()
   const columns = columnHelper.columns([
     columnHelper.accessor('title', {
@@ -125,15 +126,11 @@ export function LibraryManager({ series, movies, busy, onOpenMovie, onSetEnabled
   ])
   const table = useTable({
     features,
-    data: rows,
+    data: pageRows,
     columns,
-    state: { pagination },
-    onPaginationChange: setPagination,
   })
-  const pageIndex = table.state.pagination.pageIndex
-  const pageRows = table.getRowModel().rows.length
-  const firstRow = rows.length === 0 ? 0 : pageIndex * table.state.pagination.pageSize + 1
-  const lastRow = firstRow + pageRows - 1
+  const firstRow = rows.length === 0 ? 0 : pageIndex * pagination.pageSize + 1
+  const lastRow = Math.min(firstRow + pageRows.length - 1, rows.length)
   const selectedSeries = series.find((item) => item.id === selectedSeriesId)
   const onDiskSeasonNumbers = new Set((selectedSeries?.seasons ?? [])
     .filter((season) => season.folder_exists !== false)
@@ -179,14 +176,13 @@ export function LibraryManager({ series, movies, busy, onOpenMovie, onSetEnabled
       <div><span className="browse-heading-icon"><FolderOpen size={19} /></span><h1>Library</h1><p>Manage the seasons and films that define your download queue.</p></div>
       <label className="library-manager-search"><Search size={16} /><Input aria-label="Filter library" placeholder="Filter titles" value={query} onChange={(event) => {
         setQuery(event.target.value)
-        table.setPageIndex(0)
+        setPagination((current) => ({ ...current, pageIndex: 0 }))
       }} /></label>
     </header>
     <div className="library-manager-toolbar">
       <Tabs value={view} onValueChange={(value) => {
         if (value === 'active' || value === 'excluded') {
           setView(value)
-          table.setPageIndex(0)
         }
       }}>
         <TabsList variant="line" aria-label="Library status">
@@ -213,7 +209,7 @@ export function LibraryManager({ series, movies, busy, onOpenMovie, onSetEnabled
     </div>
     <div className="library-table-pagination">
       <span>{rows.length === 0 ? 'No titles' : `Showing ${firstRow}–${lastRow} of ${rows.length} titles`}</span>
-      <div><Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}><ChevronLeft data-icon="inline-start" size={15} />Previous</Button><span>Page {pageIndex + 1} of {Math.max(1, table.getPageCount())}</span><Button variant="outline" size="sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>Next<ChevronRight data-icon="inline-end" size={15} /></Button></div>
+      <div><Button variant="outline" size="sm" onClick={() => setPagination((current) => ({ ...current, pageIndex: Math.max(0, pageIndex - 1) }))} disabled={pageIndex === 0}><ChevronLeft data-icon="inline-start" size={15} />Previous</Button><span>Page {pageIndex + 1} of {pageCount}</span><Button variant="outline" size="sm" onClick={() => setPagination((current) => ({ ...current, pageIndex: Math.min(pageCount - 1, pageIndex + 1) }))} disabled={pageIndex >= pageCount - 1}>Next<ChevronRight data-icon="inline-end" size={15} /></Button></div>
     </div>
     <Drawer open={selectedSeries !== undefined} onOpenChange={(open) => {
       if (!open) {

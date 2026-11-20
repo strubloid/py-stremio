@@ -83,6 +83,20 @@ def test_dashboard_download_sends_progress_to_web_clients_without_terminal_ui(tm
             kwargs["progress_callback"](event)
             active = api.jobs()["active"]
             observed.extend(active[0]["progress"])
+            return SimpleNamespace(
+                total_downloaded=1,
+                total_failed=0,
+                skipped_folders=0,
+                folders=[{
+                    "type": "series",
+                    "path": "/media/series/Below Deck/s13",
+                    "downloaded": ["Below Deck_s13e06.mkv"],
+                    "failed": [],
+                    "failed_reasons": [],
+                    "downloaded_count": 1,
+                    "failed_count": 0,
+                }],
+            )
 
     monkeypatch.setattr("py_stremio.app.AppService", lambda: SimpleNamespace(downloader=Downloader()))
 
@@ -93,5 +107,38 @@ def test_dashboard_download_sends_progress_to_web_clients_without_terminal_ui(tm
             assert observed[0]["title"] == "Below Deck"
             assert observed[0]["episode"] == 6
             assert observed[0]["downloaded"] == 65
+            completed = next(run for run in api.jobs()["history"] if run["job"] == "download-quick")
+            messages = [line["message"] for line in completed["output"]]
+            assert "Download report: 1 downloaded · 0 failed · 0 skipped" in messages
+            assert "✓ Downloaded: Below Deck s13 · Below Deck_s13e06.mkv" in messages
     finally:
         close_connection()
+
+
+def test_stop_download_endpoint_requests_cooperative_cancellation(tmp_path, monkeypatch):
+    from py_stremio.api import main as api
+    from py_stremio.utils.cancellation import clear_shutdown, shutdown_requested
+
+    monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "stop-download.sqlite"))
+    monkeypatch.setenv("PY_STREMIO_API_TOKEN", "")
+    monkeypatch.setattr(api, "_active_jobs", {
+        "download-quick": {
+            "job": "download-quick",
+            "status": "running",
+            "output": [],
+            "progress": {},
+        },
+    })
+    clear_shutdown()
+
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/jobs/download/stop")
+
+        assert response.status_code == 202
+        assert response.json() == {"job": "download-quick", "status": "stopping"}
+        assert api._active_jobs["download-quick"]["status"] == "stopping"
+        assert api._active_jobs["download-quick"]["stop_requested"] is True
+        assert shutdown_requested()
+    finally:
+        clear_shutdown()

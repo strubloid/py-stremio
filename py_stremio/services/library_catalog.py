@@ -55,6 +55,8 @@ def sync_catalog_from_folders(
     """Make catalog folders and file inventory match the completed filesystem scan."""
     init_db()
     root = settings.ROOT_FOLDER
+    initial_season_paths = {row["rel_path"] for row in fetchall("SELECT rel_path FROM seasons")}
+    initial_movie_paths = {row["rel_path"] for row in fetchall("SELECT rel_path FROM movies")}
     live_seasons: set[str] = set()
     live_movies: set[str] = set()
     series_ids: set[int] = set()
@@ -104,6 +106,8 @@ def sync_catalog_from_folders(
             live_seasons.add(rel_path)
             series_ids.add(series_id)
             label = f"{series_title} S{season:02d}"
+            if rel_path not in initial_season_paths and progress_callback:
+                progress_callback(f"Added to library: {label}")
         elif folder.folder_type == FolderType.MOVIES:
             title = config.title or folder.path.name
             movie_id = get_or_create_movie(title, rel_path, config.imdb_id, config_data)
@@ -124,6 +128,8 @@ def sync_catalog_from_folders(
             update_movie_inventory_synced(movie_id, folder_mtime_ns)
             live_movies.add(rel_path)
             label = title
+            if rel_path not in initial_movie_paths and progress_callback:
+                progress_callback(f"Added to library: {label}")
         else:
             continue
 
