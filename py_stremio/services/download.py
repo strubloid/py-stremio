@@ -1,5 +1,6 @@
 """DownloadService — orchestrate downloads across series/movie folders."""
 import inspect
+import io
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -89,18 +90,14 @@ class DownloadService:
         quiet: bool = True,
         max_workers: int = 1,
         speed_percent: int | None = None,
+        progress_callback=None,
+        terminal_output: bool = True,
     ) -> ReportData:
         """Download missing items for folders and return a report."""
         clear_shutdown()
         if folders is None:
-            from py_stremio.storage.compat import use_sqlite
-
-            if use_sqlite():
-                from py_stremio.services.ensure import EnsureFreshService
-
-                folders = EnsureFreshService().run(quiet=quiet)
-            else:
-                folders = self.scanner.scan()
+            self.scanner.ensure_folders()
+            folders = self.scanner.scan()
         folders = self._dedupe_duplicate_series_seasons(folders)
 
         if speed_percent is None:
@@ -115,21 +112,41 @@ class DownloadService:
         total_failed = 0
         processed = 0
         skipped = 0
+        catalog_synced = False
+
+        def sync_catalog_inventory() -> bool:
+            if settings.DRY_RUN:
+                return True
+            try:
+                from py_stremio.services.library_catalog import sync_catalog_from_folders
+
+                current_folders = self.scanner.scan(warn_about_ignored_subfolders=False)
+                sync_catalog_from_folders(current_folders, remove_missing=False)
+                return True
+            except Exception as exc:
+                from py_stremio.components.errors import report_error
+
+                report_error(context="download_catalog_sync", exception=exc)
+                return False
 
         runnable: list[ScannedFolder] = []
         restore_stdout = None
-        use_plain_output = not (
+        use_plain_output = not terminal_output or not (
             bool(getattr(sys.stdout, "isatty", lambda: False)())
             and bool(getattr(sys.stdin, "isatty", lambda: False)())
         )
-        if quiet and use_plain_output:
+        if not terminal_output:
+            _, restore_stdout = install_thread_stdout_filter()
+            progress_stream = io.StringIO()
+        elif quiet and use_plain_output:
             progress_stream, restore_stdout = install_thread_stdout_filter()
         else:
             progress_stream = sys.stdout
 
-        print(_c("\n⬇ Downloads", ACCENT))
-        speed_label = "unlimited" if speed_percent >= 100 else f"{max(1, speed_percent)}%"
-        print(f"  Worker limit: {max_workers} · speed: {speed_label}")
+        if terminal_output:
+            print(_c("\n⬇ Downloads", ACCENT))
+            speed_label = "unlimited" if speed_percent >= 100 else f"{max(1, speed_percent)}%"
+            print(f"  Worker limit: {max_workers} · speed: {speed_label}")
 
         ui = create_download_ui(
             progress_stream,
@@ -142,6 +159,8 @@ class DownloadService:
 
         def progress(event: dict[str, Any]) -> None:
             ui.progress(event)
+            if progress_callback:
+                progress_callback(event)
             try:
                 from py_stremio.api.progress import progress_hub
 
@@ -168,7 +187,7 @@ class DownloadService:
             return f"{display_name}{suffix}"
 
         table = self._series_completion_overviews(folders)
-        if table:
+        if table and terminal_output:
             print(table)
 
         for folder in folders:
@@ -263,6 +282,8 @@ class DownloadService:
                     folder, result = process_folder(folder)
                     record_result(folder, result)
 
+            catalog_synced = sync_catalog_inventory()
+
             report = ReportData(
                 timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 total_folders=len(folders),
@@ -273,9 +294,16 @@ class DownloadService:
                 folders=report_folders,
                 dry_run=settings.DRY_RUN,
             )
-            print_and_send_report(report)
+            if terminal_output:
+                print_and_send_report(report)
+            else:
+                from py_stremio.components.reports.report import send_email_report
+
+                send_email_report(report)
             return report
         finally:
+            if not catalog_synced:
+                sync_catalog_inventory()
             from py_stremio.services.session_controls import unregister_download_ui
 
             unregister_download_ui(ui)

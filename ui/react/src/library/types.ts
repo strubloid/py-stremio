@@ -20,6 +20,14 @@ export type LibraryEntry = {
   rel_path?: string
 }
 
+export type LibraryMetadataRow = {
+  title: string
+  season: string
+  episodes: string
+  imdb_id: string
+  status: string
+}
+
 export type SeriesSummary = {
   id: number
   title: string

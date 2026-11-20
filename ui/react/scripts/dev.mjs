@@ -13,6 +13,7 @@ const localBins = [
 ]
 const apiCommand = process.env.PY_STREMIO_API_BIN ?? localBins.find(existsSync) ?? executable
 const api = spawn(apiCommand, [], {
+  cwd: repositoryRoot,
   stdio: 'inherit',
   env: {
     ...process.env,

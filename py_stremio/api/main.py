@@ -25,7 +25,8 @@ from py_stremio.components.configs.app_settings import settings
 app = FastAPI(title="py-stremio API", version="0.1.0")
 _job_lock = threading.Lock()
 _active_jobs: dict[str, dict] = {}
-_ALLOWED_JOBS = ("configs", "download", "validate-addons", "discover-addons", "calendar-refresh")
+_completed_job_output: dict[tuple[str, str], list[dict]] = {}
+_ALLOWED_JOBS = ("configs", "download", "download-quick", "validate-addons", "discover-addons", "calendar-refresh")
 _artwork_refresh_lock = threading.Lock()
 _artwork_refresh_running = False
 
@@ -40,6 +41,10 @@ class WatchRequest(BaseModel):
     kind: Literal["season", "movie"]
     episodes: list[int] = Field(min_length=1, max_length=1000)
     watched: bool
+
+
+class LibraryEnabledRequest(BaseModel):
+    enabled: bool
 
 
 class RedownloadRequest(BaseModel):
@@ -186,15 +191,81 @@ def library(authorization: str | None = Header(default=None)) -> dict:
     return {"entries": entries, "series_seasons": len(seasons), "movies": len(movies), "missing": missing_total}
 
 
+@app.put("/api/library/{kind}/{item_id}/enabled")
+def set_library_item_enabled(
+    kind: Literal["season", "movie"],
+    item_id: int,
+    request: LibraryEnabledRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    from py_stremio.components.library.library_scanner import FolderType, ScannedFolder
+    from py_stremio.storage.db import fetchone
+
+    table = "seasons" if kind == "season" else "movies"
+    row = fetchone(f"SELECT rel_path FROM {table} WHERE id=?", (item_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Library item not found")
+    from py_stremio.components.configs.config_file import load_config, save_config
+
+    config, config_path = load_config(settings.ROOT_FOLDER / row["rel_path"])
+    config.enabled = request.enabled
+    save_config(config_path, config)
+    from py_stremio.services.library_catalog import sync_catalog_from_folders
+    from py_stremio.utils.media import parse_season_from_folder
+
+    folder_path = config_path.parent
+    folder_type = FolderType.SERIES if kind == "season" else FolderType.MOVIES
+    sync_catalog_from_folders([
+        ScannedFolder(
+            path=folder_path,
+            folder_type=folder_type,
+            parent_folder=folder_path.parent,
+            season_number=parse_season_from_folder(folder_path.name) if kind == "season" else None,
+        )
+    ], remove_missing=False)
+    return {"kind": kind, "id": item_id, "enabled": request.enabled}
+
+
 @app.delete("/api/library/{kind}/{item_id}")
 def remove_library_item(
-    kind: Literal["series", "movie"],
+    kind: Literal["series", "season", "movie"],
     item_id: int,
     authorization: str | None = Header(default=None),
 ) -> dict:
-    """Remove a catalog entry and its tracking data without touching media files."""
+    """Remove a library item and its tracking data; season removal deletes its folder."""
     _authorize(authorization)
-    from py_stremio.storage.db import transaction
+    from py_stremio.storage.db import fetchone, transaction
+
+    if kind == "season":
+        with _job_lock:
+            if any(name in _active_jobs for name in ("download", "download-quick", "configs")):
+                raise HTTPException(status_code=409, detail="Wait for the active library or download job before removing a season")
+        season = fetchone("SELECT id, series_id, rel_path FROM seasons WHERE id=?", (item_id,))
+        if not season:
+            raise HTTPException(status_code=404, detail="Season not found")
+        root = settings.ROOT_FOLDER.resolve()
+        folder_path = root / season["rel_path"]
+        resolved_path = folder_path.resolve()
+        if resolved_path == root or not resolved_path.is_relative_to(root) or folder_path.is_symlink():
+            raise HTTPException(status_code=400, detail="Season folder is outside the configured media root")
+        if folder_path.exists() and not folder_path.is_dir():
+            raise HTTPException(status_code=409, detail="Season path is not a directory")
+        if folder_path.exists():
+            try:
+                shutil.rmtree(folder_path)
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail="Could not delete the season folder") from exc
+
+        with transaction() as conn:
+            for table in ("files", "attempts", "episode_watch_state", "owner_state"):
+                conn.execute(f"DELETE FROM {table} WHERE owner_kind='season' AND owner_id=?", (item_id,))
+            conn.execute("DELETE FROM seasons WHERE id=?", (item_id,))
+            if not conn.execute("SELECT 1 FROM seasons WHERE series_id=? LIMIT 1", (season["series_id"],)).fetchone():
+                conn.execute("DELETE FROM calendar_episodes WHERE series_id=?", (season["series_id"],))
+                conn.execute("DELETE FROM calendar_sync WHERE series_id=?", (season["series_id"],))
+                conn.execute("DELETE FROM series WHERE id=?", (season["series_id"],))
+        return {"removed": True, "kind": kind, "id": item_id, "folder_deleted": True}
 
     with transaction() as conn:
         if kind == "series":
@@ -225,7 +296,10 @@ def jobs(authorization: str | None = Header(default=None)) -> dict:
     from py_stremio.services.job_log import read_job_runs
 
     with _job_lock:
-        active = list(_active_jobs.values())
+        active = [
+            {**job, "progress": list(job.get("progress", {}).values())}
+            for job in _active_jobs.values()
+        ]
     history = get_recent_job_runs()
     known = {(row["job"], row["started_at"]) for row in history}
     for record in read_job_runs(limit=100):
@@ -235,6 +309,11 @@ def jobs(authorization: str | None = Header(default=None)) -> dict:
         record["id"] = f"{key[0]}:{key[1]}"
         record["detail"] = record.get("error")
         history.append(record)
+    with _job_lock:
+        for record in history:
+            record["output"] = _completed_job_output.get(
+                (record.get("job", ""), record.get("started_at", "")), []
+            )
     from py_stremio.components.errors.error_reporter import redact_url
 
     for record in history:
@@ -429,7 +508,7 @@ def redownload_episode(
         raise HTTPException(status_code=404, detail="Movie not found")
     job_key = f"redownload:{request.kind}:{owner_id}:{request.episode or 0}"
     with _job_lock:
-        if "download" in _active_jobs or any(key.startswith("redownload:") for key in _active_jobs):
+        if any(key in _active_jobs for key in ("download", "download-quick")) or any(key.startswith("redownload:") for key in _active_jobs):
             raise HTTPException(status_code=409, detail="A download job is already running")
         if job_key in _active_jobs:
             raise HTTPException(status_code=409, detail="This item is already being re-downloaded")
@@ -641,23 +720,112 @@ def update_controls(
     return current
 
 
+def _publish_job_output(name: str, message: str, item: dict | None = None) -> None:
+    status = "failed" if message.startswith("✗") else (
+        "running" if message.startswith(("Starting", "Scanning", "Checking", "Refreshing", "Found")) else "complete"
+    )
+    line = {"message": message, "timestamp": datetime.now(timezone.utc).isoformat(), "status": status}
+    if item:
+        line["item"] = item
+    with _job_lock:
+        job = _active_jobs.get(name)
+        if job is not None:
+            job.setdefault("output", []).append(line)
+    progress_hub.publish({"type": "job_output", "job": name, **line})
+
+
+def _store_download_progress(name: str, event: dict) -> None:
+    title = str(event.get("title") or "Download")
+    season = event.get("season")
+    episode = event.get("episode")
+    key = (title, season, episode)
+    with _job_lock:
+        job = _active_jobs.get(name)
+        if job is not None:
+            job.setdefault("progress", {})[key] = {
+                **event,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+
 def _run_job(name: str) -> None:
     from py_stremio.storage.catalog import record_job_run
 
     started = datetime.now(timezone.utc).isoformat()
     with _job_lock:
-        _active_jobs[name] = {"job": name, "status": "running", "started_at": started}
+        job = _active_jobs.setdefault(name, {"job": name, "output": []})
+        job.update({"job": name, "status": "running", "started_at": started})
+        job.setdefault("progress", {})
     status = "ok"
     detail = None
     try:
         from py_stremio.app import AppService
 
         service = AppService()
+        _publish_job_output(name, f"Starting {name.replace('-', ' ')} job")
         if name == "configs":
-            service.ensure_fresh(quiet=True)
+            _publish_job_output(name, "Scanning folders and checking for new seasons")
+            folders = service.scanner.run(progress_callback=lambda message: _publish_job_output(name, message))
+            _publish_job_output(name, f"Found {len(folders)} managed folder(s); refreshing metadata")
+            updated = service.metadata.run(
+                folders=folders,
+                quiet=True,
+                progress_callback=lambda message: _publish_job_output(name, message),
+                item_callback=lambda item: _publish_job_output(
+                    name,
+                    f"{item['status']}: {item['title']} {item['season']}",
+                    item=item,
+                ),
+            )
+            service.scanner.sync_catalog(
+                folders,
+                progress_callback=lambda message: _publish_job_output(name, message),
+            )
+            _publish_job_output(name, f"Library update complete ({updated} metadata record(s) updated)")
         elif name == "download":
-            folders = service.ensure_fresh(quiet=True)
-            service.downloader.run(folders=folders, quiet=True, max_workers=settings.DOWNLOAD_THREADS)
+            _publish_job_output(name, "Scanning folders and checking for new seasons")
+            folders = service.scanner.run(progress_callback=lambda message: _publish_job_output(name, message))
+            _publish_job_output(name, f"Found {len(folders)} managed folder(s); refreshing metadata")
+            service.metadata.run(
+                folders=folders,
+                quiet=True,
+                progress_callback=lambda message: _publish_job_output(name, message),
+                item_callback=lambda item: _publish_job_output(
+                    name,
+                    f"{item['status']}: {item['title']} {item['season']}",
+                    item=item,
+                ),
+            )
+            service.scanner.sync_catalog(
+                folders,
+                progress_callback=lambda message: _publish_job_output(name, message),
+            )
+            _publish_job_output(name, "Validating addon URLs")
+            from py_stremio.components.addons.addon_validator import validate_and_update
+
+            validate_and_update()
+            _publish_job_output(name, f"Starting downloads for {len(folders)} managed folder(s)")
+            from py_stremio.components.reports.output_writer import suppress_all_output
+
+            with suppress_all_output():
+                service.downloader.run(
+                    folders=folders,
+                    quiet=True,
+                    max_workers=settings.DOWNLOAD_THREADS,
+                    progress_callback=lambda event: _store_download_progress(name, event),
+                    terminal_output=False,
+                )
+        elif name == "download-quick":
+            _publish_job_output(name, "Scanning existing library folders before download")
+            from py_stremio.components.reports.output_writer import suppress_all_output
+
+            with suppress_all_output():
+                service.downloader.run(
+                    quiet=True,
+                    max_workers=settings.DOWNLOAD_THREADS,
+                    progress_callback=lambda event: _store_download_progress(name, event),
+                    terminal_output=False,
+                )
         elif name == "validate-addons":
             from py_stremio.components.addons.addon_validator import validate_and_update
 
@@ -678,12 +846,20 @@ def _run_job(name: str) -> None:
         from py_stremio.components.errors.error_reporter import redact_url
 
         detail = redact_url(str(exc))
+        _publish_job_output(name, f"✗ Job failed: {detail}")
     finally:
+        if status == "ok":
+            _publish_job_output(name, "✓ Job completed")
         ended = datetime.now(timezone.utc).isoformat()
         try:
             record_job_run(name, status, started, ended, detail=detail)
         finally:
             with _job_lock:
+                output = _active_jobs.get(name, {}).get("output", [])
+                _completed_job_output[(name, started)] = list(output)
+                if len(_completed_job_output) > 50:
+                    oldest = next(iter(_completed_job_output))
+                    _completed_job_output.pop(oldest, None)
                 _active_jobs.pop(name, None)
 
 
@@ -710,9 +886,16 @@ def start_job(
         raise HTTPException(status_code=404, detail="Unknown job")
     with _job_lock:
         redownload_active = any(key.startswith("redownload:") for key in _active_jobs)
-        if name in _active_jobs or (name == "download" and redownload_active):
+        download_active = any(key in _active_jobs for key in ("download", "download-quick"))
+        if name in _active_jobs or (name in ("download", "download-quick") and (redownload_active or download_active)):
             raise HTTPException(status_code=409, detail="Job is already running")
-        _active_jobs[name] = {"job": name, "status": "queued", "started_at": datetime.now(timezone.utc).isoformat()}
+        _active_jobs[name] = {
+            "job": name,
+            "status": "queued",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "output": [],
+            "progress": {},
+        }
     background_tasks.add_task(_run_job, name)
     return {"job": name, "status": "queued"}
 
@@ -741,6 +924,12 @@ def dashboard() -> FileResponse:
     if not index.exists():
         raise HTTPException(status_code=404, detail="Dashboard assets are not built. Run npm run build in ui/react.")
     return FileResponse(index)
+
+
+@app.get("/libray", include_in_schema=False)
+@app.get("/library", include_in_schema=False)
+def library_dashboard() -> FileResponse:
+    return dashboard()
 
 
 assets = Path(__file__).resolve().parent / "static" / "assets"

@@ -7,6 +7,7 @@ from typing import Iterator, TextIO
 
 
 _quiet_thread_ids: set[int] = set()
+_quiet_all_output = 0
 _quiet_lock = threading.Lock()
 _proxy_lock = threading.Lock()
 _ansi_re = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -20,7 +21,7 @@ class ThreadFilteringStdout:
 
     def write(self, text: str) -> int:
         with _quiet_lock:
-            quiet = threading.get_ident() in _quiet_thread_ids
+            quiet = _quiet_all_output > 0 or threading.get_ident() in _quiet_thread_ids
         if quiet:
             return len(text)
         if not bool(getattr(self.target, "isatty", lambda: False)()):
@@ -48,6 +49,19 @@ def suppress_current_thread_output():
     finally:
         with _quiet_lock:
             _quiet_thread_ids.discard(thread_id)
+
+
+@contextlib.contextmanager
+def suppress_all_output():
+    """Silence stdout from a web-owned download and its worker threads."""
+    global _quiet_all_output
+    with _quiet_lock:
+        _quiet_all_output += 1
+    try:
+        yield
+    finally:
+        with _quiet_lock:
+            _quiet_all_output = max(0, _quiet_all_output - 1)
 
 
 def install_thread_stdout_filter() -> tuple[TextIO, TextIO | None]:

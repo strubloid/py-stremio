@@ -2,6 +2,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 from py_stremio.components.configs.app_settings import settings
 from py_stremio.components.configs.config_file import load_config, save_config
@@ -111,6 +112,8 @@ class MetadataService:
         quiet: bool = False,
         use_cache: bool = False,
         cache_hours: float | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+        item_callback: Callable[[dict], None] | None = None,
     ) -> int:
         """Update metadata for all series and movie folders. Returns number of configs updated.
 
@@ -128,6 +131,54 @@ class MetadataService:
         series_folders = [f for f in folders if f.folder_type == FolderType.SERIES]
         movie_folders = [f for f in folders if f.folder_type == FolderType.MOVIES]
 
+        def report_folder(folder, phase: str) -> None:
+            if progress_callback is None:
+                return
+            label = folder.path.parent.name if folder.folder_type == FolderType.SERIES else folder.path.name
+            season = getattr(folder, "season_number", None)
+            if season is not None:
+                label += f" S{season:02d}"
+            progress_callback(f"{phase}: {label}")
+
+        def update_series_folder(folder):
+            report_folder(folder, "Refreshing series metadata")
+            if item_callback:
+                season = getattr(folder, "season_number", None)
+                item_callback({
+                    "title": folder.path.parent.name,
+                    "season": f"S{season:02d}" if season is not None else "Season",
+                    "episodes": "—",
+                    "imdb_id": "—",
+                    "status": "Checking",
+                })
+            try:
+                result = self._update_folder_metadata(
+                    folder, quiet, use_cache=use_cache, cache_hours=cache_hours
+                )
+            except Exception:
+                report_folder(folder, "Failed series metadata")
+                if item_callback:
+                    season = getattr(folder, "season_number", None)
+                    item_callback({
+                        "title": folder.path.parent.name,
+                        "season": f"S{season:02d}" if season is not None else "Season",
+                        "episodes": "—",
+                        "imdb_id": "—",
+                        "status": "Failed",
+                    })
+                raise
+            report_folder(folder, "Updated series metadata" if result[0] else "Checked series metadata")
+            if item_callback and result[1]:
+                title, season, episodes, imdb_id, status = result[1]
+                item_callback({
+                    "title": title,
+                    "season": season,
+                    "episodes": episodes,
+                    "imdb_id": imdb_id,
+                    "status": status,
+                })
+            return result
+
         # ── Series metadata ────────────────────────────────────────────────
         series_start = time.monotonic()
         if len(series_folders) > 1:
@@ -136,11 +187,8 @@ class MetadataService:
             try:
                 future_map = {
                     executor.submit(
-                        self._update_folder_metadata,
+                        update_series_folder,
                         folder,
-                        quiet,
-                        use_cache=use_cache,
-                        cache_hours=cache_hours,
                     ): folder
                     for folder in series_folders
                 }
@@ -169,7 +217,7 @@ class MetadataService:
                 if shutdown_requested():
                     break
                 try:
-                    changed, status = self._update_folder_metadata(folder, quiet, use_cache=use_cache, cache_hours=cache_hours)
+                    changed, status = update_series_folder(folder)
                     if changed:
                         updated += 1
                         if status:
@@ -186,10 +234,38 @@ class MetadataService:
             if shutdown_requested():
                 break
             try:
+                report_folder(folder, "Refreshing movie metadata")
+                if item_callback:
+                    item_callback({
+                        "title": folder.path.name,
+                        "season": "Movie",
+                        "episodes": "1",
+                        "imdb_id": "—",
+                        "status": "Checking",
+                    })
                 changed = self._update_movie_metadata(folder, use_cache=use_cache, cache_hours=cache_hours)
+                report_folder(folder, "Updated movie metadata" if changed else "Checked movie metadata")
+                if item_callback:
+                    config_model, _ = load_config(folder.path)
+                    item_callback({
+                        "title": config_model.title or folder.path.name,
+                        "season": "Movie",
+                        "episodes": "1",
+                        "imdb_id": config_model.imdb_id or "—",
+                        "status": "✓" if changed else "Checked",
+                    })
                 if changed:
                     updated += 1
             except Exception as e:
+                report_folder(folder, "Failed movie metadata")
+                if item_callback:
+                    item_callback({
+                        "title": folder.path.name,
+                        "season": "Movie",
+                        "episodes": "1",
+                        "imdb_id": "—",
+                        "status": "Failed",
+                    })
                 from py_stremio.components.errors import report_error
 
                 report_error(context="metadata_update_movie", exception=e, url=str(folder.path / 'download-config.json'))

@@ -138,6 +138,7 @@ class AppService:
             library_start = time.monotonic()
             folders = self.scanner.run()
             self.metadata.run(folders=folders, quiet=False)
+            self.scanner.sync_catalog(folders)
             self._print_library_elapsed(library_start, len(folders))
             print_error_summary()
             return
@@ -236,6 +237,7 @@ class AppService:
             print(_c("\n📚 Update library", ACCENT))
             folders = self.scanner.run()
             self.metadata.run(folders=folders, quiet=False)
+            self.scanner.sync_catalog(folders)
             self.downloader.run(folders=folders, quiet=True, max_workers=max_workers, speed_percent=speed_percent)
             print_error_summary()
             return
@@ -415,6 +417,7 @@ class AppService:
                 library_start = time.monotonic()
                 folders = self.scanner.run()
                 self.metadata.run(folders=folders, quiet=False)
+                self.scanner.sync_catalog(folders)
                 self._print_library_elapsed(library_start, len(folders))
 
             elif choice == "3":

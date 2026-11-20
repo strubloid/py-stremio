@@ -317,6 +317,10 @@ def test_cron_entrypoint_update_and_download_uses_shared_parser(monkeypatch):
         lambda self: calls.append("scan") or folders,
     )
     monkeypatch.setattr(
+        "py_stremio.services.scanner.ScanService.sync_catalog",
+        lambda self, folders, progress_callback=None: calls.append(("sync_catalog", folders)),
+    )
+    monkeypatch.setattr(
         "py_stremio.services.metadata.MetadataService.run",
         lambda self, folders=None, quiet=False, **kwargs: calls.append(("metadata", folders)),
     )
@@ -329,7 +333,8 @@ def test_cron_entrypoint_update_and_download_uses_shared_parser(monkeypatch):
 
     assert calls[0] == "scan"
     assert calls[1] == ("metadata", folders)
-    assert calls[2] == ("download", folders, True, 5, 80)
+    assert calls[2] == ("sync_catalog", folders)
+    assert calls[3] == ("download", folders, True, 5, 80)
 
 
 def test_run_pipeline_ctrl_c_exits_cleanly(monkeypatch, capsys):

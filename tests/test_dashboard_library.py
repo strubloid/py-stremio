@@ -10,6 +10,7 @@ from py_stremio.storage.catalog import (
     update_season_artwork,
     update_series_artwork,
     upsert_files,
+    get_season_by_rel_path,
 )
 from py_stremio.storage.db import close_connection, fetchone, init_db
 
@@ -18,6 +19,75 @@ def test_dashboard_groups_season_and_persists_episode_watch_state(tmp_path, monk
     monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "dashboard.sqlite"))
     monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
     close_connection()
+
+
+def test_missing_disabled_library_entry_can_be_enabled_from_dashboard(tmp_path, monkeypatch):
+    monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "enable-library-item.sqlite"))
+    monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
+    monkeypatch.setattr("py_stremio.storage.compat._storage_backend", "sqlite")
+    monkeypatch.setattr("py_stremio.api.main._schedule_artwork_refresh", lambda: None)
+    close_connection()
+
+    with TestClient(app) as client:
+        series_id = get_or_create_series("Example Show", "series/Example Show")
+        season_id = get_or_create_season(
+            series_id,
+            1,
+            "series/Example Show/s01",
+            {"episode_count": 2, "available_episodes": [1, 2], "enabled": False},
+        )
+        assert fetchone("SELECT enabled FROM seasons WHERE id=?", (season_id,))["enabled"] == 0
+        headers = {"Authorization": "Bearer test-token"}
+        before = client.get("/api/library", headers=headers).json()
+        season = next(entry for entry in before["entries"] if entry["kind"] == "season")
+        assert season["missing"] == 2
+        assert season["enabled"] is False
+
+        response = client.put(
+            f"/api/library/season/{season_id}/enabled",
+            headers=headers,
+            json={"enabled": True},
+        )
+        assert response.status_code == 200
+        after = client.get("/api/library", headers=headers).json()
+        season = next(entry for entry in after["entries"] if entry["kind"] == "season")
+        assert season["missing"] == 2
+        assert season["enabled"] is True
+    close_connection()
+
+
+def test_remove_season_deletes_its_folder_and_catalog_item(tmp_path, monkeypatch):
+    root = tmp_path / "media"
+    season_folder = root / "series" / "Example Show" / "s01"
+    season_folder.mkdir(parents=True)
+    (season_folder / "Example.Show.S01E01.mkv").write_bytes(b"video")
+    monkeypatch.setattr("py_stremio.components.configs.app_settings.settings.ROOT_FOLDER", root)
+    monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "remove-season.sqlite"))
+    monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
+    monkeypatch.setattr("py_stremio.storage.compat._storage_backend", "sqlite")
+    close_connection()
+
+    try:
+        with TestClient(app) as client:
+            series_id = get_or_create_series("Example Show", "series/Example Show", "tt1234567")
+            season_id = get_or_create_season(
+                series_id,
+                1,
+                "series/Example Show/s01",
+                {"episode_count": 2, "available_episodes": [1, 2], "enabled": True},
+            )
+
+            response = client.delete(
+                f"/api/library/season/{season_id}",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+            assert response.status_code == 200
+            assert response.json()["folder_deleted"] is True
+            assert not season_folder.exists()
+            assert get_season_by_rel_path("series/Example Show/s01") is None
+    finally:
+        close_connection()
 
 
 def test_library_queues_background_artwork_refresh_for_missing_poster(tmp_path, monkeypatch):

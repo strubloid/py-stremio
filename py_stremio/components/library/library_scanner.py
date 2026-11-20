@@ -31,7 +31,7 @@ class Scanner:
         self.series_root.mkdir(parents=True, exist_ok=True)
         self.movies_root.mkdir(parents=True, exist_ok=True)
 
-    def scan(self) -> list[ScannedFolder]:
+    def scan(self, warn_about_ignored_subfolders: bool = True) -> list[ScannedFolder]:
         """Scan all supported folders recursively."""
         folders = []
         for season_path in self._find_series_folders():
@@ -40,7 +40,8 @@ class Scanner:
                 folders.append(folder)
         for movie_path in self._find_movie_folders():
             folders.append(self._create_movie_folder(movie_path))
-        self._warn_about_ignored_subfolders(folders)
+        if warn_about_ignored_subfolders:
+            self._warn_about_ignored_subfolders(folders)
         return folders
 
     def _warn_about_ignored_subfolders(self, folders: list[ScannedFolder]) -> None:

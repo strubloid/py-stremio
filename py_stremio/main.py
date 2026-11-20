@@ -166,10 +166,17 @@ def run_api() -> None:
         import uvicorn
     except ImportError as exc:
         raise SystemExit("Install the API extra with `pip install 'py-stremio[api]'`.") from exc
+    host = os.environ.get("PY_STREMIO_API_HOST", "127.0.0.1")
+    port = int(os.environ.get("PY_STREMIO_API_PORT", "8765"))
+    print(
+        f"[py-stremio-api pid={os.getpid()}] Dashboard server starting at "
+        f"http://{host}:{port} — stop this server with Ctrl+C in this terminal.",
+        flush=True,
+    )
     uvicorn.run(
         "py_stremio.api.main:app",
-        host=os.environ.get("PY_STREMIO_API_HOST", "127.0.0.1"),
-        port=int(os.environ.get("PY_STREMIO_API_PORT", "8765")),
+        host=host,
+        port=port,
         reload=os.environ.get("PY_STREMIO_API_RELOAD", "false").lower() in ("1", "true", "yes"),
     )
 
