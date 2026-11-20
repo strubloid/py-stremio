@@ -83,6 +83,9 @@ export function App() {
   const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null)
   const [section, setSection] = useState<Section>(() => {
     const path = window.location.pathname
+    if (path === '/series') return 'series'
+    if (path === '/films' || path === '/movies') return 'movies'
+    if (path === '/settings') return 'settings'
     if (path === '/download') return 'download'
     if (path === '/libray' || path === '/library') return 'library'
     return 'home'
@@ -246,7 +249,12 @@ export function App() {
   useEffect(() => {
     const syncSectionFromPath = () => {
       const path = window.location.pathname
-      setSection(path === '/download' ? 'download' : path === '/libray' || path === '/library' ? 'library' : 'home')
+      setSection(path === '/series' ? 'series'
+        : path === '/films' || path === '/movies' ? 'movies'
+          : path === '/settings' ? 'settings'
+            : path === '/download' ? 'download'
+              : path === '/libray' || path === '/library' ? 'library'
+                : 'home')
     }
     window.addEventListener('popstate', syncSectionFromPath)
     return () => window.removeEventListener('popstate', syncSectionFromPath)
@@ -420,6 +428,7 @@ export function App() {
     setSelectedMovieId(null)
     setHistory(null)
     setSection('series')
+    window.history.pushState({}, '', '/series')
     if (firstSeason) void loadEpisodeHistory({ id: firstSeason.id, kind: 'season' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -429,6 +438,7 @@ export function App() {
     setSelectedSeriesId(null)
     setHistory(null)
     setSection('movies')
+    window.history.pushState({}, '', '/films')
     void loadEpisodeHistory({ id: movie.id, kind: 'movie' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -447,6 +457,7 @@ export function App() {
     setSelectedMovieId(null)
     setHistory(null)
     setSection('series')
+    window.history.pushState({}, '', '/series')
     if (matchingSeason) void loadEpisodeHistory({ id: matchingSeason.id, kind: 'season' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -750,7 +761,13 @@ export function App() {
 
   const handleSectionChange = (value: string) => {
     if (value === 'home' || value === 'series' || value === 'movies' || value === 'library' || value === 'calendar' || value === 'activity' || value === 'download' || value === 'settings') {
-      window.history.pushState({}, '', value === 'download' ? '/download' : value === 'library' ? '/libray' : '/')
+      const path = value === 'series' ? '/series'
+        : value === 'movies' ? '/films'
+          : value === 'settings' ? '/settings'
+            : value === 'download' ? '/download'
+              : value === 'library' ? '/libray'
+                : '/'
+      window.history.pushState({}, '', path)
       setSection(value)
       setSelectedSeriesId(null)
       setSelectedMovieId(null)

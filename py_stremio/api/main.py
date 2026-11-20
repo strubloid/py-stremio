@@ -1220,6 +1220,10 @@ def dashboard() -> FileResponse:
 
 @app.get("/libray", include_in_schema=False)
 @app.get("/library", include_in_schema=False)
+@app.get("/series", include_in_schema=False)
+@app.get("/films", include_in_schema=False)
+@app.get("/movies", include_in_schema=False)
+@app.get("/settings", include_in_schema=False)
 def library_dashboard() -> FileResponse:
     return dashboard()
 

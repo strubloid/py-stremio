@@ -15,6 +15,19 @@ from py_stremio.storage.catalog import (
 from py_stremio.storage.db import close_connection, fetchone, init_db, transaction
 
 
+def test_page_routes_serve_dashboard_for_series_films_and_settings(monkeypatch):
+    from fastapi.responses import PlainTextResponse
+    from py_stremio.api import main as api
+
+    monkeypatch.setattr(api, "dashboard", lambda: PlainTextResponse("dashboard shell"))
+
+    with TestClient(app) as client:
+        for path in ("/series", "/films", "/settings"):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.text == "dashboard shell"
+
+
 def test_dashboard_groups_season_and_persists_episode_watch_state(tmp_path, monkeypatch):
     monkeypatch.setenv("PY_STREMIO_DB", str(tmp_path / "dashboard.sqlite"))
     monkeypatch.setenv("PY_STREMIO_API_TOKEN", "test-token")
