@@ -510,6 +510,24 @@ export function App() {
     }
   }
 
+  const removeLibrarySeries = async (item: SeriesSummary) => {
+    setBusyAction(`remove-series-${item.id}`)
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+    try {
+      const response = await fetch(`/api/library/series/${item.id}`, { method: 'DELETE', headers })
+      if (!response.ok) {
+        const body = await response.json() as { detail?: string }
+        throw new Error(body.detail || (response.status === 401 ? 'The API token was rejected.' : 'Could not remove this series record.'))
+      }
+      setError(null)
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not remove this series record.')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   const setLibraryEntryEnabled = async (entry: LibraryEntry, enabled: boolean) => {
     setBusyAction(`enable-${entry.kind}-${entry.id}`)
     const headers = new Headers({ 'Content-Type': 'application/json' })
@@ -758,6 +776,7 @@ export function App() {
             onSetKnownSeasonWatched={(seriesId, season, watched) => void setKnownSeasonWatched(seriesId, season, watched)}
             onAddSeason={(seriesId, season) => void addSeriesSeason(seriesId, season)}
             onRemoveSeason={(entry) => void removeLibrarySeason(entry)}
+            onRemoveSeries={(item) => void removeLibrarySeries(item)}
           />
           : section === 'series' ? selectedSeries ? <SeriesDetail
             key={`${selectedSeries.id}-${selectedSeasonId}-${focusedEpisode ?? ''}`}

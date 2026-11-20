@@ -718,6 +718,9 @@
 .library-add-season label { grid-column: 1 / -1; color: #b8bac3; font-size: .63rem; }
 .library-add-season input { height: 34px; background: #191a20; }
 .library-add-season button { height: 34px; font-size: .65rem; }
+.library-delete-series { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-top: 22px; padding: 16px 0 2px; border-top: 1px solid #3b2c30; }
+.library-delete-series h2 { margin: 0; color: #e7b4ba; font-size: .74rem; font-weight: 650; }
+.library-delete-series p { max-width: 45ch; margin: 5px 0 0; color: #92949d; font-size: .62rem; line-height: 1.5; }
 @media (max-width: 760px) {
   .library-manager-heading { align-items: start; flex-direction: column; }
   .library-manager-search { width: 100%; }
