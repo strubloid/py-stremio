@@ -491,6 +491,46 @@ def test_get_current_year_series_seasons_filters_unreleased_tba_season(monkeypat
     assert seasons == []
 
 
+def test_calendar_keeps_scheduled_tba_episodes_with_external_ids(monkeypatch):
+    from py_stremio.components.stremio.stremio_metadata import get_series_calendar_episodes
+
+    def fake_get(_url, timeout, **_kwargs):
+        return FakeResponse({
+            "meta": {
+                "videos": [
+                    {
+                        "season": 8,
+                        "episode": 4,
+                        "name": "TBA",
+                        "overview": "",
+                        "rating": "0",
+                        "tvdb_id": 123456,
+                        "released": "2026-11-24T21:00:00.000Z",
+                    },
+                    {
+                        "season": 8,
+                        "episode": 5,
+                        "name": "TBA",
+                        "overview": "",
+                        "rating": "0",
+                        "released": "2026-11-25T21:00:00.000Z",
+                    },
+                ],
+            },
+        })
+
+    monkeypatch.setattr("py_stremio.components.stremio.stremio_metadata.httpx.get", fake_get)
+    monkeypatch.setattr(
+        "py_stremio.components.stremio.stremio_metadata._current_datetime",
+        lambda: datetime(2026, 11, 20, tzinfo=timezone.utc),
+    )
+
+    episodes = get_series_calendar_episodes("tt9581768")
+
+    assert episodes is not None
+    assert [(episode["season"], episode["episode"]) for episode in episodes] == [(8, 4)]
+
+
 def test_get_series_metadata_marks_season_missing_when_only_placeholder_episodes_exist(monkeypatch):
     def fake_get(url, timeout, **kwargs):
         if "/catalog/" in url:

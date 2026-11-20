@@ -228,7 +228,7 @@ def _is_placeholder_episode(video: dict) -> bool:
     # For TBA/TBD rows, a release date in the past means the episode has
     # aired even if Cinemeta hasn't updated the name/description/rating yet.
     release_date = _video_release_datetime(video)
-    if release_date is not None and release_date <= _current_datetime():
+    if release_date is not None and (release_date <= _current_datetime() or has_external_episode_id):
         return False
 
     return tba_name and not has_description and rating in ("", "0", "0.0")
